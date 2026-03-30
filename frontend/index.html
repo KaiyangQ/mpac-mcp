@@ -3,72 +3,137 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MPAC Scenario Explorer</title>
+    <title>MPAC Story Demo</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="page">
-      <aside class="sidebar">
-        <p class="eyebrow">MPAC Appendix A</p>
-        <h1>Scenario Explorer</h1>
-        <p class="lede">Browse the five spec walkthroughs, inspect the message timeline, and compare final session state under this reference runtime.</p>
-        <nav id="scenario-list" class="scenario-list"></nav>
-      </aside>
-      <main class="content">
-        <section class="hero">
-          <div>
-            <p id="scenario-id" class="eyebrow"></p>
-            <h2 id="scenario-title"></h2>
-            <p id="scenario-summary" class="lede"></p>
+    <div class="shell">
+      <header class="hero">
+        <p class="eyebrow">MPAC Story Demo</p>
+        <h1>See How The Protocol Helps Agents Work Together</h1>
+        <p class="hero-copy">
+          Five scenarios from the spec, shown as application-level collaboration stories instead of raw protocol logs.
+        </p>
+        <div class="hero-pillars">
+          <span>Declare intent</span>
+          <span>Catch conflicts early</span>
+          <span>Resolve with governance</span>
+          <span>Commit safely</span>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="gallery-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Scenarios</p>
+              <h2>Choose A Collaboration Story</h2>
+            </div>
           </div>
-          <div class="assessment">
-            <h3>Protocol Fit</h3>
-            <p id="scenario-assessment"></p>
-          </div>
+          <div id="scenario-gallery" class="scenario-gallery"></div>
         </section>
 
-        <section class="panel">
-          <h3>Notes</h3>
-          <ul id="scenario-notes" class="notes"></ul>
-        </section>
-
-        <section class="panel">
-          <div class="panel-head">
-            <h3>Message Timeline</h3>
-            <span id="message-count" class="badge"></span>
+        <section id="scenario-view" class="scenario-view hidden">
+          <div class="section-head">
+            <div>
+              <p id="view-id" class="eyebrow"></p>
+              <h2 id="view-title"></h2>
+              <p id="view-tagline" class="section-copy"></p>
+            </div>
+            <button id="back-button" class="back-button" type="button">Back To All Scenarios</button>
           </div>
-          <div id="timeline" class="timeline"></div>
-        </section>
 
-        <section class="grid">
-          <article class="panel">
-            <div class="panel-head">
-              <h3>Participants</h3>
-              <span id="participant-count" class="badge"></span>
+          <section class="story-top">
+            <article class="story-card story-card-lg">
+              <p class="eyebrow" id="shared-title"></p>
+              <h3 id="shared-label"></h3>
+              <div class="shared-grid">
+                <div>
+                  <p class="mini-label">Before coordination</p>
+                  <pre id="shared-before"></pre>
+                </div>
+                <div>
+                  <p class="mini-label">After MPAC-mediated coordination</p>
+                  <pre id="shared-after"></pre>
+                </div>
+              </div>
+            </article>
+
+            <article class="story-card">
+              <p class="eyebrow">Actors</p>
+              <div id="actors" class="actors"></div>
+            </article>
+          </section>
+
+          <section class="steps-shell">
+            <div class="stepper-head">
+              <div>
+                <p class="eyebrow">Walkthrough</p>
+                <h3 id="step-title"></h3>
+                <p id="step-summary" class="section-copy"></p>
+              </div>
+              <div class="step-controls">
+                <button id="prev-step" type="button">Previous</button>
+                <span id="step-count" class="step-count"></span>
+                <button id="next-step" type="button">Next</button>
+              </div>
             </div>
-            <pre id="participants-json"></pre>
-          </article>
-          <article class="panel">
-            <div class="panel-head">
-              <h3>Intents</h3>
-              <span id="intent-count" class="badge"></span>
+
+            <div class="step-grid">
+              <article class="story-card">
+                <p class="eyebrow" id="left-title"></p>
+                <p id="left-body" class="story-copy"></p>
+              </article>
+              <article class="story-card">
+                <p class="eyebrow" id="right-title"></p>
+                <p id="right-body" class="story-copy"></p>
+              </article>
             </div>
-            <pre id="intents-json"></pre>
-          </article>
-          <article class="panel">
-            <div class="panel-head">
-              <h3>Operations</h3>
-              <span id="operation-count" class="badge"></span>
+
+            <article class="story-card">
+              <p class="eyebrow">Current State</p>
+              <div id="step-status" class="status-list"></div>
+              <div class="protocol-strip">
+                <span class="protocol-label">Protocol moments:</span>
+                <div id="step-protocol" class="protocol-tags"></div>
+              </div>
+            </article>
+          </section>
+
+          <section class="story-bottom">
+            <article class="story-card">
+              <p class="eyebrow">Why This Scenario Matters</p>
+              <h3 id="outcome-title"></h3>
+              <ul id="outcome-list" class="outcome-list"></ul>
+            </article>
+            <article class="story-card">
+              <p class="eyebrow">Protocol Fit</p>
+              <p id="assessment" class="story-copy"></p>
+              <ul id="notes" class="outcome-list"></ul>
+            </article>
+          </section>
+
+          <details class="trace-panel">
+            <summary>See Lightweight Protocol Trace</summary>
+            <div class="trace-grid">
+              <article>
+                <p class="mini-label">Participants</p>
+                <pre id="trace-participants"></pre>
+              </article>
+              <article>
+                <p class="mini-label">Intents</p>
+                <pre id="trace-intents"></pre>
+              </article>
+              <article>
+                <p class="mini-label">Operations</p>
+                <pre id="trace-operations"></pre>
+              </article>
+              <article>
+                <p class="mini-label">Conflicts and resolutions</p>
+                <pre id="trace-conflicts"></pre>
+              </article>
             </div>
-            <pre id="operations-json"></pre>
-          </article>
-          <article class="panel">
-            <div class="panel-head">
-              <h3>Conflicts & Resolutions</h3>
-              <span id="conflict-count" class="badge"></span>
-            </div>
-            <pre id="conflicts-json"></pre>
-          </article>
+          </details>
         </section>
       </main>
     </div>

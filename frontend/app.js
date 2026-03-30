@@ -1,64 +1,98 @@
 const scenarios = window.MPAC_SCENARIOS || [];
 
-const listEl = document.getElementById("scenario-list");
-const scenarioIdEl = document.getElementById("scenario-id");
-const titleEl = document.getElementById("scenario-title");
-const summaryEl = document.getElementById("scenario-summary");
-const assessmentEl = document.getElementById("scenario-assessment");
-const notesEl = document.getElementById("scenario-notes");
-const timelineEl = document.getElementById("timeline");
-const messageCountEl = document.getElementById("message-count");
-const participantCountEl = document.getElementById("participant-count");
-const intentCountEl = document.getElementById("intent-count");
-const operationCountEl = document.getElementById("operation-count");
-const conflictCountEl = document.getElementById("conflict-count");
-const participantsJsonEl = document.getElementById("participants-json");
-const intentsJsonEl = document.getElementById("intents-json");
-const operationsJsonEl = document.getElementById("operations-json");
-const conflictsJsonEl = document.getElementById("conflicts-json");
+const galleryEl = document.getElementById("scenario-gallery");
+const scenarioViewEl = document.getElementById("scenario-view");
+const backButtonEl = document.getElementById("back-button");
 
-function renderScenarioList() {
+const viewIdEl = document.getElementById("view-id");
+const viewTitleEl = document.getElementById("view-title");
+const viewTaglineEl = document.getElementById("view-tagline");
+const sharedTitleEl = document.getElementById("shared-title");
+const sharedLabelEl = document.getElementById("shared-label");
+const sharedBeforeEl = document.getElementById("shared-before");
+const sharedAfterEl = document.getElementById("shared-after");
+const actorsEl = document.getElementById("actors");
+const stepTitleEl = document.getElementById("step-title");
+const stepSummaryEl = document.getElementById("step-summary");
+const leftTitleEl = document.getElementById("left-title");
+const leftBodyEl = document.getElementById("left-body");
+const rightTitleEl = document.getElementById("right-title");
+const rightBodyEl = document.getElementById("right-body");
+const stepStatusEl = document.getElementById("step-status");
+const stepProtocolEl = document.getElementById("step-protocol");
+const stepCountEl = document.getElementById("step-count");
+const prevStepEl = document.getElementById("prev-step");
+const nextStepEl = document.getElementById("next-step");
+const outcomeTitleEl = document.getElementById("outcome-title");
+const outcomeListEl = document.getElementById("outcome-list");
+const assessmentEl = document.getElementById("assessment");
+const notesEl = document.getElementById("notes");
+const traceParticipantsEl = document.getElementById("trace-participants");
+const traceIntentsEl = document.getElementById("trace-intents");
+const traceOperationsEl = document.getElementById("trace-operations");
+const traceConflictsEl = document.getElementById("trace-conflicts");
+
+let activeScenarioIndex = 0;
+let activeStepIndex = 0;
+
+function renderGallery() {
+  galleryEl.innerHTML = "";
   scenarios.forEach((scenario, index) => {
-    const button = document.createElement("button");
-    button.className = "scenario-button";
-    button.textContent = `${index + 1}. ${scenario.title}`;
-    button.addEventListener("click", () => renderScenario(index));
-    listEl.appendChild(button);
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "gallery-card";
+    card.innerHTML = `
+      <p class="eyebrow">${scenario.id}</p>
+      <h3>${scenario.title}</h3>
+      <p class="card-copy">${scenario.presentation.tagline}</p>
+      <div class="card-foot">
+        <span>${scenario.presentation.steps.length} steps</span>
+        <span>Watch demo</span>
+      </div>
+    `;
+    card.addEventListener("click", () => openScenario(index));
+    galleryEl.appendChild(card);
   });
 }
 
-function timelineCard(message, index) {
-  const card = document.createElement("article");
-  card.className = "timeline-card";
-  card.innerHTML = `
-    <div class="timeline-meta">
-      <span class="timeline-index">#${index + 1}</span>
-      <span class="timeline-type">${message.message_type}</span>
-      <span class="timeline-sender">${message.sender.principal_id}</span>
-    </div>
-    <div class="timeline-body">
-      <p><strong>Payload</strong></p>
-      <pre>${escapeHtml(JSON.stringify(message.payload, null, 2))}</pre>
-    </div>
-  `;
-  return card;
+function openScenario(index) {
+  activeScenarioIndex = index;
+  activeStepIndex = 0;
+  scenarioViewEl.classList.remove("hidden");
+  window.scrollTo({ top: scenarioViewEl.offsetTop - 12, behavior: "smooth" });
+  renderScenario();
 }
 
-function renderScenario(index) {
-  const scenario = scenarios[index];
-  if (!scenario) {
-    return;
-  }
+function renderScenario() {
+  const scenario = scenarios[activeScenarioIndex];
+  const presentation = scenario.presentation;
+  const shared = presentation.shared_object;
 
-  [...listEl.children].forEach((node, nodeIndex) => {
-    node.classList.toggle("active", nodeIndex === index);
+  viewIdEl.textContent = scenario.id;
+  viewTitleEl.textContent = scenario.title;
+  viewTaglineEl.textContent = presentation.tagline;
+  sharedTitleEl.textContent = shared.title;
+  sharedLabelEl.textContent = shared.label;
+  sharedBeforeEl.textContent = shared.before;
+  sharedAfterEl.textContent = shared.after;
+
+  actorsEl.innerHTML = "";
+  presentation.actors.forEach((actor) => {
+    const item = document.createElement("div");
+    item.className = `actor actor-${actor.color}`;
+    item.innerHTML = `<strong>${actor.name}</strong><span>${actor.role}</span>`;
+    actorsEl.appendChild(item);
   });
 
-  scenarioIdEl.textContent = scenario.id;
-  titleEl.textContent = scenario.title;
-  summaryEl.textContent = scenario.summary;
+  outcomeTitleEl.textContent = presentation.outcome.title;
+  outcomeListEl.innerHTML = "";
+  presentation.outcome.bullets.forEach((bullet) => {
+    const item = document.createElement("li");
+    item.textContent = bullet;
+    outcomeListEl.appendChild(item);
+  });
+
   assessmentEl.textContent = scenario.assessment;
-
   notesEl.innerHTML = "";
   scenario.notes.forEach((note) => {
     const item = document.createElement("li");
@@ -67,35 +101,64 @@ function renderScenario(index) {
   });
 
   const snapshot = scenario.snapshot;
-  const messages = snapshot.message_log;
-  timelineEl.innerHTML = "";
-  messages.forEach((message, messageIndex) => timelineEl.appendChild(timelineCard(message, messageIndex)));
+  traceParticipantsEl.textContent = JSON.stringify(snapshot.participants, null, 2);
+  traceIntentsEl.textContent = JSON.stringify(snapshot.intents, null, 2);
+  traceOperationsEl.textContent = JSON.stringify(snapshot.operations, null, 2);
+  traceConflictsEl.textContent = JSON.stringify({ conflicts: snapshot.conflicts, resolutions: snapshot.resolutions }, null, 2);
 
-  messageCountEl.textContent = `${messages.length} messages`;
-  participantCountEl.textContent = `${Object.keys(snapshot.participants).length} tracked`;
-  intentCountEl.textContent = `${Object.keys(snapshot.intents).length} tracked`;
-  operationCountEl.textContent = `${Object.keys(snapshot.operations).length} tracked`;
-  conflictCountEl.textContent = `${Object.keys(snapshot.conflicts).length} conflicts / ${Object.keys(snapshot.resolutions).length} resolutions`;
-
-  participantsJsonEl.textContent = JSON.stringify(snapshot.participants, null, 2);
-  intentsJsonEl.textContent = JSON.stringify(snapshot.intents, null, 2);
-  operationsJsonEl.textContent = JSON.stringify(snapshot.operations, null, 2);
-  conflictsJsonEl.textContent = JSON.stringify(
-    {
-      conflicts: snapshot.conflicts,
-      resolutions: snapshot.resolutions,
-    },
-    null,
-    2
-  );
+  renderStep();
 }
 
-function escapeHtml(value) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+function renderStep() {
+  const scenario = scenarios[activeScenarioIndex];
+  const step = scenario.presentation.steps[activeStepIndex];
+
+  stepTitleEl.textContent = step.title;
+  stepSummaryEl.textContent = step.summary;
+  leftTitleEl.textContent = step.left_title;
+  leftBodyEl.textContent = step.left_body;
+  rightTitleEl.textContent = step.right_title;
+  rightBodyEl.textContent = step.right_body;
+  stepCountEl.textContent = `${activeStepIndex + 1} / ${scenario.presentation.steps.length}`;
+
+  stepStatusEl.innerHTML = "";
+  step.status.forEach((status) => {
+    const chip = document.createElement("span");
+    chip.className = "status-chip";
+    chip.textContent = status;
+    stepStatusEl.appendChild(chip);
+  });
+
+  stepProtocolEl.innerHTML = "";
+  step.protocol.forEach((item) => {
+    const tag = document.createElement("span");
+    tag.className = "protocol-tag";
+    tag.textContent = item;
+    stepProtocolEl.appendChild(tag);
+  });
+
+  prevStepEl.disabled = activeStepIndex === 0;
+  nextStepEl.disabled = activeStepIndex === scenario.presentation.steps.length - 1;
 }
 
-renderScenarioList();
-renderScenario(0);
+prevStepEl.addEventListener("click", () => {
+  if (activeStepIndex > 0) {
+    activeStepIndex -= 1;
+    renderStep();
+  }
+});
+
+nextStepEl.addEventListener("click", () => {
+  const total = scenarios[activeScenarioIndex].presentation.steps.length;
+  if (activeStepIndex < total - 1) {
+    activeStepIndex += 1;
+    renderStep();
+  }
+});
+
+backButtonEl.addEventListener("click", () => {
+  scenarioViewEl.classList.add("hidden");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+});
+
+renderGallery();
