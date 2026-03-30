@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MPAC Scenario Explorer</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <aside class="sidebar">
+        <p class="eyebrow">MPAC Appendix A</p>
+        <h1>Scenario Explorer</h1>
+        <p class="lede">Browse the five spec walkthroughs, inspect the message timeline, and compare final session state under this reference runtime.</p>
+        <nav id="scenario-list" class="scenario-list"></nav>
+      </aside>
+      <main class="content">
+        <section class="hero">
+          <div>
+            <p id="scenario-id" class="eyebrow"></p>
+            <h2 id="scenario-title"></h2>
+            <p id="scenario-summary" class="lede"></p>
+          </div>
+          <div class="assessment">
+            <h3>Protocol Fit</h3>
+            <p id="scenario-assessment"></p>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h3>Notes</h3>
+          <ul id="scenario-notes" class="notes"></ul>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h3>Message Timeline</h3>
+            <span id="message-count" class="badge"></span>
+          </div>
+          <div id="timeline" class="timeline"></div>
+        </section>
+
+        <section class="grid">
+          <article class="panel">
+            <div class="panel-head">
+              <h3>Participants</h3>
+              <span id="participant-count" class="badge"></span>
+            </div>
+            <pre id="participants-json"></pre>
+          </article>
+          <article class="panel">
+            <div class="panel-head">
+              <h3>Intents</h3>
+              <span id="intent-count" class="badge"></span>
+            </div>
+            <pre id="intents-json"></pre>
+          </article>
+          <article class="panel">
+            <div class="panel-head">
+              <h3>Operations</h3>
+              <span id="operation-count" class="badge"></span>
+            </div>
+            <pre id="operations-json"></pre>
+          </article>
+          <article class="panel">
+            <div class="panel-head">
+              <h3>Conflicts & Resolutions</h3>
+              <span id="conflict-count" class="badge"></span>
+            </div>
+            <pre id="conflicts-json"></pre>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <script src="./scenarios-data.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
