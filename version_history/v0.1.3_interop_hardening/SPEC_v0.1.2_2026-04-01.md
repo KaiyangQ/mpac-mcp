@@ -1,8 +1,8 @@
-# MPAC Specification v0.1.3
+# MPAC Specification v0.1
 
 ## 1. Status
 
-This document defines version `0.1.3` of the Multi-Principal Agent Coordination Protocol (`MPAC`).
+This document defines version `0.1` of the Multi-Principal Agent Coordination Protocol (`MPAC`).
 
 Status of this document:
 - Draft
@@ -157,9 +157,7 @@ Implementations MAY merge these layers internally, but their externally visible 
 
 ### 7.1 Intent Before Action
 
-In sessions using the Governance Profile (Section 20.2), participants MUST announce intent via `INTENT_ANNOUNCE` before issuing `OP_PROPOSE` or `OP_COMMIT`, unless explicitly exempted by session policy. In Core Profile sessions, participants SHOULD announce intent before committing non-trivial operations.
-
-Operations submitted without a corresponding active intent SHOULD be flagged as `uncoordinated` by the session coordinator. Implementations MAY apply lower priority or additional governance scrutiny to uncoordinated operations.
+Participants SHOULD announce intent before committing non-trivial operations.
 
 ### 7.2 Attributable Actions
 
@@ -167,7 +165,7 @@ Every operation, conflict report, and resolution decision MUST be attributable t
 
 ### 7.3 Causal Context
 
-`OP_COMMIT`, `CONFLICT_REPORT`, and `RESOLUTION` messages MUST include causal context via a watermark in the message envelope. Other message types SHOULD include causal context when available.
+Committed operations and conflict reports SHOULD include causal context via a watermark or equivalent reference.
 
 ### 7.4 Human Override
 
@@ -209,24 +207,7 @@ MPAC responsibilities include:
 Transport is responsible for delivery.
 MPAC is responsible for meaning.
 
-### 8.1 Session Coordinator
-
-Many MPAC features — including heartbeat-based unavailability detection (Section 14.4), sender identity binding (Section 23.3), frozen scope enforcement (Section 18.6), and tamper-evident logging (Section 23.1.3) — require a component with a unified view of session state and the authority to enforce protocol-level decisions.
-
-MPAC defines this component as the **session coordinator**. A session coordinator is a `service`-type principal responsible for:
-- maintaining the authoritative session state (participant roster, intent registry, conflict state)
-- enforcing message ordering constraints (Section 8.2)
-- performing liveness detection and unavailability transitions (Section 14.4)
-- validating sender identity binding in Authenticated and Verified profiles (Section 23.1)
-- maintaining audit logs
-
-Every session MUST have exactly one logical session coordinator. The coordinator MAY be implemented as a dedicated server, a message broker, or a designated participant, but its responsibilities MUST NOT be split across multiple independent components without a consensus mechanism.
-
-In deployments where a centralized coordinator is unavailable, implementations MUST provide an equivalent distributed mechanism (e.g., consensus protocol) that satisfies the same guarantees. The specifics of such mechanisms are outside the scope of MPAC.
-
-Note: MPAC remains transport-independent. The session coordinator is a logical role, not a transport requirement. It MAY be co-located with a WebSocket server, message broker, or any other infrastructure component.
-
-### 8.2 Protocol-Level Ordering Constraints
+### 8.1 Protocol-Level Ordering Constraints
 
 While message delivery order is a transport concern, MPAC imposes the following semantic ordering constraints that implementations MUST respect regardless of transport:
 
@@ -400,7 +381,7 @@ An MPAC message MAY include:
 - `protocol` MUST be `MPAC`
 - `version` MUST identify the MPAC message format version
 - `message_id` MUST be unique within practical system scope
-- `ts` MUST use RFC 3339 / ISO 8601 UTC timestamps
+- `ts` SHOULD use RFC 3339 / ISO 8601 UTC timestamps
 - `watermark` SHOULD describe the causal state known to the sender at send time
 
 ## 12. Watermarks and Causality
@@ -416,36 +397,20 @@ A watermark expresses what prior state was known when a participant produced:
 ### 12.2 Allowed Watermark Kinds
 
 MPAC v0.1 recognizes the following watermark kinds:
-- `lamport_clock` **(baseline — MUST support)**
 - `vector_clock`
+- `lamport_clock`
 - `causal_frontier`
 - `opaque`
 
-### 12.3 Baseline Watermark Kind
+### 12.3 Interoperability Rule
 
-All MPAC implementations MUST support `lamport_clock` as the baseline watermark kind. A Lamport clock watermark value is a single non-negative integer. Comparison semantics: if watermark A has value `a` and watermark B has value `b`, then `a < b` implies A happened-before B; `a == b` or incomparable values imply concurrent or indeterminate ordering.
+If a participant receives a watermark kind it cannot interpret, it MAY still process the message, but SHOULD treat causally sensitive judgments as partial.
 
-Implementations MAY additionally support other watermark kinds (`vector_clock`, `causal_frontier`, `opaque`). When two participants in a session use different watermark kinds, both MUST be able to fall back to `lamport_clock` for causal comparison. Implementations SHOULD include a `lamport_value` field alongside any non-`lamport_clock` watermark to enable this fallback:
+### 12.4 Conflict Judgment Rule
 
-```json
-{
-  "watermark": {
-    "kind": "vector_clock",
-    "value": { "alice": 3, "bob": 5 },
-    "lamport_value": 8
-  }
-}
-```
+A `CONFLICT_REPORT` SHOULD include a `based_on_watermark` field indicating the state frontier on which the judgment relied.
 
-### 12.4 Interoperability Rule
-
-If a participant receives a watermark kind it cannot interpret, it MUST fall back to the `lamport_value` field for causal comparison. If `lamport_value` is absent and the kind is uninterpretable, the participant SHOULD treat causally sensitive judgments (conflict detection, resolution validation) as partial and MAY request the sender to re-transmit with a `lamport_clock` watermark.
-
-### 12.5 Conflict Judgment Rule
-
-A `CONFLICT_REPORT` MUST include a `based_on_watermark` field indicating the state frontier on which the judgment relied.
-
-### 12.6 Minimal Requirement
+### 12.5 Minimal Requirement
 
 MPAC does not require all implementations to use the same causal algorithm.
 MPAC requires only that causally relevant messages carry an explicit causal reference when possible.
@@ -472,203 +437,6 @@ MPAC v0.1 defines the following core message types:
 - `PROTOCOL_ERROR`
 
 Implementations MAY support a subset, subject to compliance profile rules.
-
-### 13.1 Payload Schema Reference
-
-This section defines the required and optional fields for each message type's payload. Field requirement levels: **R** = required (MUST be present), **O** = optional (MAY be omitted).
-
-#### `HELLO` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `display_name` | string | R | Human-readable participant name |
-| `roles` | string[] | R | Requested roles (Section 10.3) |
-| `capabilities` | string[] | R | Supported capabilities (Section 19.1) |
-| `implementation` | object | O | `{ "name": string, "version": string }` |
-
-#### `HEARTBEAT` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `status` | string | R | One of: `idle`, `working`, `blocked`, `awaiting_review`, `offline` |
-| `active_intent_id` | string | O | Currently active intent |
-| `summary` | string | O | Human-readable activity summary |
-
-#### `GOODBYE` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `reason` | string | R | One of: `user_exit`, `session_complete`, `error`, `timeout` |
-| `active_intents` | string[] | O | List of the departing participant's active intent IDs |
-| `intent_disposition` | string | O | One of: `withdraw`, `transfer`, `expire`. Default: `withdraw` |
-
-#### `INTENT_ANNOUNCE` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `intent_id` | string | R | Unique intent identifier |
-| `objective` | string | R | Human-readable description of planned work |
-| `scope` | Scope object | R | Expected target set (Section 15.2) |
-| `assumptions` | string[] | O | Important unstated dependencies. Default: `[]` |
-| `priority` | string | O | One of: `low`, `normal`, `high`, `critical`. Default: `normal` |
-| `ttl_sec` | integer | O | Time-to-live in wall-clock seconds. Default: `300` |
-| `parent_intent_id` | string | O | Parent intent if hierarchically related |
-| `supersedes_intent_id` | string | O | Intent this one replaces |
-
-#### `INTENT_UPDATE` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `intent_id` | string | R | Intent to update |
-| `objective` | string | O | Updated objective |
-| `scope` | Scope object | O | Updated scope |
-| `assumptions` | string[] | O | Updated assumptions |
-| `ttl_sec` | integer | O | Updated TTL |
-
-At least one field besides `intent_id` SHOULD be present.
-
-#### `INTENT_WITHDRAW` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `intent_id` | string | R | Intent to withdraw |
-| `reason` | string | O | Reason for withdrawal |
-
-#### `INTENT_CLAIM` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `claim_id` | string | R | Unique claim identifier |
-| `original_intent_id` | string | R | Suspended intent being claimed |
-| `original_principal_id` | string | R | Principal who owned the original intent |
-| `new_intent_id` | string | R | New intent that will replace the original |
-| `objective` | string | R | Objective of the new intent |
-| `scope` | Scope object | R | Scope (must be equal to or narrower than original) |
-| `justification` | string | O | Reason for claiming |
-
-#### `OP_PROPOSE` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `op_id` | string | R | Unique operation identifier |
-| `intent_id` | string | O | Associated intent |
-| `target` | string | R | Resource being mutated |
-| `op_kind` | string | R | Mutation type (e.g., `replace`, `insert`, `delete`, `patch`) |
-| `change_ref` | string | O | Reference to the proposed change content |
-| `summary` | string | O | Human-readable summary |
-
-#### `OP_COMMIT` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `op_id` | string | R | Unique operation identifier |
-| `intent_id` | string | O | Associated intent (MUST in Governance Profile) |
-| `target` | string | R | Resource being mutated |
-| `op_kind` | string | R | Mutation type |
-| `state_ref_before` | string | R | State reference before mutation |
-| `state_ref_after` | string | R | State reference after mutation |
-| `change_ref` | string | O | Reference to the change content |
-| `summary` | string | O | Human-readable summary |
-
-#### `OP_REJECT` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `op_id` | string | R | Operation being rejected |
-| `reason` | string | R | Rejection reason |
-
-#### `OP_SUPERSEDE` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `op_id` | string | R | New operation identifier |
-| `supersedes_op_id` | string | R | Previously committed operation being superseded |
-| `intent_id` | string | O | Associated intent |
-| `target` | string | R | Resource being targeted |
-| `reason` | string | O | Reason for supersession |
-
-#### `CONFLICT_REPORT` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `conflict_id` | string | R | Unique conflict identifier |
-| `related_intents` | string[] | O | Related intent IDs. Default: `[]` |
-| `related_ops` | string[] | O | Related operation IDs. Default: `[]` |
-| `category` | string | R | Conflict category (Section 17.5) |
-| `severity` | string | R | Severity level (Section 17.6) |
-| `basis` | object | R | Detection basis (Section 17.7) |
-| `based_on_watermark` | Watermark | R | Causal state when conflict was detected |
-| `description` | string | R | Human-readable conflict description |
-| `suggested_action` | string | O | Recommended next step |
-
-At least one of `related_intents` or `related_ops` MUST be non-empty.
-
-#### `CONFLICT_ACK` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `conflict_id` | string | R | Conflict being acknowledged |
-| `ack_type` | string | R | One of: `seen`, `accepted`, `disputed` |
-
-#### `CONFLICT_ESCALATE` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `conflict_id` | string | R | Conflict being escalated |
-| `escalate_to` | string | R | Principal ID of escalation target |
-| `reason` | string | R | Reason for escalation |
-| `context` | string | O | Additional context for the escalation target |
-
-#### `RESOLUTION` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `resolution_id` | string | R | Unique resolution identifier |
-| `conflict_id` | string | R | Conflict being resolved |
-| `decision` | string | R | One of: `approved`, `rejected`, `dismissed`, `human_override`, `policy_override`, `merged`, `deferred` |
-| `outcome` | Outcome | O | Structured outcome (see below) |
-| `rationale` | string | R | Human-readable explanation |
-
-Outcome object:
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `accepted` | string[] | O | Intent/operation IDs accepted |
-| `rejected` | string[] | O | Intent/operation IDs rejected |
-| `merged` | string[] | O | Intent/operation IDs merged |
-| `rollback` | string | O | `"not_required"` or reference to compensating operation |
-
-#### `PROTOCOL_ERROR` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `error_code` | string | R | Error code (Section 22.1) |
-| `refers_to` | string | O | `message_id` of the problematic message |
-| `description` | string | R | Human-readable error description |
-
-#### Scope Object
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `kind` | string | R | Scope kind (Section 15.2) |
-| `resources` | string[] | C | Required when `kind` = `file_set` |
-| `pattern` | string | C | Required when `kind` = `resource_path` |
-| `task_ids` | string[] | C | Required when `kind` = `task_set` |
-| `expression` | string | C | Required when `kind` = `query` |
-| `language` | string | C | Required when `kind` = `query` |
-| `entities` | string[] | C | Required when `kind` = `entity_set` |
-| `canonical_uris` | string[] | O | Canonical resource URIs (Section 15.2.2) |
-| `extensions` | object | O | Implementation-specific data |
-
-(**C** = conditionally required, based on `kind` value)
-
-#### Watermark Object
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `kind` | string | R | Watermark kind (Section 12.2) |
-| `value` | any | R | Kind-specific value (integer for `lamport_clock`, object for `vector_clock`, string for others) |
-| `lamport_value` | integer | O | Lamport clock fallback value. SHOULD be present when `kind` is not `lamport_clock` (Section 12.3) |
 
 ## 14. Session Layer Messages
 
@@ -698,8 +466,8 @@ Payload:
 ```
 
 Semantics:
-- a participant MUST send `HELLO` as its first message when entering a session
-- a receiver MUST use `HELLO` to register the participant; messages from unregistered participants (other than `HELLO`) MUST be rejected with a `PROTOCOL_ERROR` (`error_code`: `INVALID_REFERENCE`)
+- a participant SHOULD send `HELLO` when entering a session
+- a receiver MAY use `HELLO` to update presence and compatibility state
 
 ### 14.2 `HEARTBEAT`
 
@@ -822,7 +590,6 @@ Semantics:
 - `INTENT_CLAIM` is subject to governance approval: in sessions using the Governance profile, a participant with `owner` or `arbiter` role MUST approve the claim before the new intent becomes active. In Core profile sessions, the claim is automatically approved after a configurable grace period (default: 30 seconds) if no objection is raised
 - upon approval, the original suspended intent transitions to `TRANSFERRED` state and the new intent becomes `ACTIVE`
 - if the original participant reconnects before the claim is approved, the claim SHOULD be automatically withdrawn and the original intent restored to `ACTIVE`
-- **concurrent claims**: if multiple participants submit `INTENT_CLAIM` for the same suspended intent, the session coordinator MUST accept only the first claim received (first-claim-wins) and reject subsequent claims with a `PROTOCOL_ERROR` (`error_code`: `CLAIM_CONFLICT`). The ordering is determined by the session coordinator's receipt order
 
 #### 14.4.5 Session Policy for Unavailability
 
@@ -871,37 +638,11 @@ Recommended `kind` values:
 
 Implementations MAY define additional scope kinds. Unknown scope kinds SHOULD be treated as opaque but preserved for audit purposes.
 
-### 15.2.1 Scope Overlap Determination
-
-Scope overlap is the foundation of conflict detection. To ensure interoperable conflict judgments, MPAC defines mandatory overlap rules for common scope kinds and a fallback mechanism for others.
-
-#### 15.2.1.1 Mandatory Overlap Rules
-
-For the following scope kinds, implementations MUST use the specified overlap determination algorithm:
-
-**`file_set`**: Two `file_set` scopes overlap if and only if the set intersection of their `resources` arrays is non-empty. Before comparison, resource paths MUST be normalized: leading `./` removed, consecutive `/` collapsed, trailing `/` removed. Comparison is case-sensitive byte-level string matching on the normalized paths.
-
-**`entity_set`**: Two `entity_set` scopes overlap if and only if the set intersection of their `entities` arrays is non-empty. Comparison is case-sensitive exact string matching.
-
-**`task_set`**: Two `task_set` scopes overlap if and only if the set intersection of their `task_ids` arrays is non-empty. Comparison is case-sensitive exact string matching.
-
-#### 15.2.1.2 Best-Effort Overlap Rules
-
-For the following scope kinds, overlap determination is implementation-dependent, but implementations SHOULD apply at least the specified minimum logic:
-
-**`resource_path`**: Implementations SHOULD support at minimum the glob operators `*` (match any sequence within a path segment) and `**` (match any sequence of path segments). Two `resource_path` scopes SHOULD be considered overlapping if either pattern matches any resource that the other pattern also matches.
-
-**`query`** and **`custom`**: Overlap determination for these kinds is outside the scope of MPAC v0.1. Implementations SHOULD treat two scopes of these kinds as potentially overlapping (conservative default) unless canonical URIs (Section 15.2.2) are available to determine otherwise.
-
-#### 15.2.1.3 Cross-Kind Overlap
-
-When two scopes have different `kind` values, implementations MUST NOT assume they are non-overlapping based on kind mismatch alone. Cross-kind overlap MUST be determined via canonical URIs (Section 15.2.2) or the session resource registry (Section 15.2.3). If neither is available, implementations SHOULD treat cross-kind scopes as potentially overlapping when their scope descriptions appear to reference similar resources, and MAY use `semantic_match` (Section 17.7.1) to make this determination.
-
-### 15.2.2 Canonical Resource URIs
+### 15.2.1 Canonical Resource URIs
 
 Different scope kinds may refer to the same underlying resource using different representations (e.g., `file_set ["src/routes/auth.ts"]` and `entity_set ["api.auth.routes"]`). When scope kinds differ, overlap detection based on kind-specific fields alone will fail to identify true overlaps.
 
-To enable cross-kind overlap detection, scope objects SHOULD include a `canonical_uris` field when the session involves participants using heterogeneous scope kinds. In sessions where all participants use the same scope kind, `canonical_uris` is optional. The field is an array of canonical resource identifiers that the scope covers, independent of representation.
+To enable cross-kind overlap detection, scope objects MAY include a `canonical_uris` field: an array of canonical resource identifiers that the scope covers, independent of representation.
 
 ```json
 {
@@ -928,7 +669,7 @@ URI format requirements:
 
 When `canonical_uris` is absent, implementations SHOULD fall back to kind-specific comparison (e.g., string matching within the same `kind`) or to semantic matching via `model_inference` (Section 17.7).
 
-### 15.2.3 Session Resource Registry
+### 15.2.2 Session Resource Registry
 
 For sessions where participants use heterogeneous scope kinds, implementations MAY provide a **resource registry** — a session-level mapping from various scope representations to canonical URIs.
 
@@ -1090,11 +831,6 @@ Payload:
   "summary": "Adjust optimizer settings"
 }
 ```
-
-Additional requirements:
-- `state_ref_before` MUST be present in `OP_COMMIT` messages. It SHOULD be a content-addressable identifier (e.g., a SHA-256 hash of the target's content before mutation) or a version identifier meaningful to the shared state backend. The format is implementation-defined but MUST be consistent within a session.
-- `state_ref_after` MUST be present in `OP_COMMIT` messages, using the same format as `state_ref_before`.
-- When a receiver processes an `OP_COMMIT` and cannot verify that its local view of the target matches `state_ref_before`, it SHOULD mark the operation as `causally_unverifiable` in its local state and SHOULD NOT use this operation as a basis for conflict judgments until the local state is synchronized. The `causally_unverifiable` marker is a local processing hint, not a protocol-level state.
 
 ### 16.4 `OP_REJECT`
 
@@ -1385,7 +1121,7 @@ The `outcome` object SHOULD contain:
 
 All three fields are optional. At least one SHOULD be present.
 
-When a `RESOLUTION` rejects an operation that is already in `COMMITTED` state (i.e., the mutation has already been applied to shared state), the resolver SHOULD accompany the resolution with a compensating `OP_COMMIT` that reverses the effect, or include an explicit `"rollback": "not_required"` field in the `outcome` to indicate that no state reversal is needed. MPAC does not define shared state rollback semantics — this is the responsibility of the application layer — but the protocol requires that the resolution makes its rollback expectation explicit for auditability.
+For simple binary conflicts, implementations MAY use the shorthand fields `winner` and `loser` instead of `outcome`. When both `outcome` and `winner`/`loser` are present, `outcome` takes precedence.
 
 Recommended `decision` values:
 - `approved`
@@ -1431,19 +1167,9 @@ Recommended default: `resolution_timeout_sec: 300` (5 minutes). Sessions MAY ove
 When a scope enters frozen state due to resolution timeout:
 
 - `OP_PROPOSE` and `OP_COMMIT` messages targeting resources within the frozen scope MUST be rejected with a `PROTOCOL_ERROR` (`error_code`: `SCOPE_FROZEN`)
-- `INTENT_ANNOUNCE` messages whose scope is fully contained within the frozen scope MUST be rejected with a `PROTOCOL_ERROR` (`error_code`: `SCOPE_FROZEN`). `INTENT_ANNOUNCE` messages with partially overlapping scope SHOULD be accepted but participants MUST be warned that the overlapping portion is frozen
+- `INTENT_ANNOUNCE` messages with overlapping scope SHOULD be accepted but participants SHOULD be warned that the scope is frozen
 - the frozen state is lifted when a valid `RESOLUTION` is received for the underlying conflict
 - participants MAY still send `CONFLICT_ACK`, `CONFLICT_ESCALATE`, and `RESOLUTION` messages for the frozen conflict
-
-#### 18.6.2.1 Frozen Scope Fallback
-
-To prevent indefinite freezing when no arbiter is available, sessions SHOULD define a `frozen_scope_timeout_sec` in session policy (recommended default: 1800 seconds / 30 minutes). When a frozen scope exceeds this timeout without resolution:
-
-1. The conflicting operations that triggered the freeze SHOULD be automatically rejected (`OP_REJECT` with `reason`: `frozen_scope_timeout`)
-2. The underlying conflict SHOULD be transitioned to `CLOSED` with a system-generated `RESOLUTION` (`decision`: `rejected`, `rationale`: `frozen_scope_timeout_exceeded`)
-3. The frozen scope is released, and participants may re-propose operations
-
-This fallback prevents a single unavailable arbiter from permanently blocking progress. Sessions MAY disable this fallback by setting `frozen_scope_timeout_sec: 0`.
 
 #### 18.6.3 Session Policy Example
 
@@ -1453,15 +1179,14 @@ This fallback prevents a single unavailable arbiter from permanently blocking pr
     "require_arbiter": true,
     "resolution_timeout_sec": 300,
     "timeout_action": "escalate_then_freeze",
-    "frozen_scope_behavior": "reject_writes_and_intents",
-    "frozen_scope_timeout_sec": 1800
+    "frozen_scope_behavior": "reject_writes"
   }
 }
 ```
 
 ### 18.7 Resolution Causal Context
 
-A `RESOLUTION` MUST include a `watermark` in the message envelope indicating the causal state known to the resolver at the time of the decision. This is critical for auditability: it allows participants to verify that the resolver had sufficient context when making the decision. Resolutions without a watermark SHOULD be rejected by implementations operating under the Authenticated or Verified security profile.
+A `RESOLUTION` SHOULD include a `watermark` in the message envelope indicating the causal state known to the resolver at the time of the decision. This is critical for auditability: it allows participants to verify that the resolver had sufficient context when making the decision.
 
 ### 18.8 Governance Auditability
 
@@ -1587,8 +1312,7 @@ Recommended `error_code` values:
 - `AUTHORIZATION_FAILED`: the sender lacks the authority for the attempted action
 - `PARTICIPANT_UNAVAILABLE`: a participant has been detected as unavailable (Section 14.4.1)
 - `RESOLUTION_TIMEOUT`: a conflict resolution has exceeded the configured timeout (Section 18.6.1)
-- `SCOPE_FROZEN`: an operation or intent targets a scope that is frozen due to an unresolved conflict timeout (Section 18.6.2)
-- `CLAIM_CONFLICT`: an `INTENT_CLAIM` targets a suspended intent that has already been claimed by another participant (Section 14.4.4)
+- `SCOPE_FROZEN`: an operation targets a scope that is frozen due to an unresolved conflict timeout (Section 18.6.2)
 
 Semantics:
 - the `refers_to` field SHOULD reference the `message_id` of the problematic message when available
@@ -1632,8 +1356,7 @@ Requirements:
 - sessions MUST reject `HELLO` messages from principals whose identity cannot be verified
 - implementations MUST bind each `sender` field to the authenticated identity, preventing principal impersonation
 - the `signature` envelope field (Section 11.3) SHOULD be populated with a message authentication code (MAC) or digital signature on every message
-- implementations MUST implement replay protection by rejecting messages with duplicate `message_id` values or timestamps outside an acceptable window (RECOMMENDED: 5 minutes)
-- role assertions in `HELLO` messages MUST be validated by the session coordinator against the session's role policy before the participant is admitted. Participants MUST NOT be granted roles they are not authorized for, regardless of what they declare in `HELLO`
+- implementations SHOULD implement replay protection by rejecting messages with duplicate `message_id` values or timestamps outside an acceptable window (RECOMMENDED: 5 minutes)
 - audit trail logs MUST be retained for at least the session duration and SHOULD be retained for a configurable period after session completion
 
 #### 23.1.3 Verified Profile
@@ -1687,7 +1410,6 @@ Beyond the security profiles, implementations SHOULD consider:
 - message size limits to prevent resource exhaustion
 - secure transport (TLS 1.3 or equivalent) for all message delivery channels
 - credential and key material storage following platform security best practices
-- end-to-end encryption of message payloads in deployments where the session coordinator or transport intermediaries are not fully trusted. In such deployments, participants SHOULD encrypt payload contents using recipient-specific keys, leaving only the envelope fields (which the coordinator needs for routing and ordering) in plaintext
 
 ## 24. Privacy Considerations
 
@@ -1734,10 +1456,6 @@ To maximize interoperability, implementations SHOULD:
 10. Implement unavailability detection and orphaned intent recovery (Section 14.4)
 11. Include `canonical_uris` in scope objects when participants use heterogeneous scope kinds (Section 15.2.1)
 12. Use the `semantic_match` basis kind with standardized output format for assumption contradiction detection (Section 17.7.1)
-13. Support `lamport_clock` as the baseline watermark kind and include `lamport_value` in non-lamport watermarks (Section 12.3)
-14. Use the mandatory scope overlap rules for `file_set`, `entity_set`, and `task_set` (Section 15.2.1.1)
-15. Require `state_ref_before` and `state_ref_after` in all `OP_COMMIT` messages (Section 16.3)
-16. Validate role assertions against session policy in Authenticated and Verified profiles (Section 23.1.2)
 
 ## 27. Example Minimal Flow
 
@@ -1937,12 +1655,11 @@ This flow illustrates that MPAC treats coordination and conflict handling as exp
 
 The following areas are explicitly deferred from MPAC v0.1 and may be addressed in future versions:
 
-- formal JSON Schema files (machine-readable) corresponding to the payload schema tables in Section 13.1
-- richer session negotiation and discovery protocols, including capability compatibility verification at join time
+- formal JSON Schema definitions
+- richer session negotiation and discovery protocols
 - standard conflict ontology extensions
 - conflict confidence scoring
 - operation diff payload standards
-- atomic multi-target operations (batch mutations spanning multiple resources in a single logical operation)
 - ownership lease semantics
 - protocol conformance test suite
 - session transfer and migration
@@ -1950,22 +1667,21 @@ The following areas are explicitly deferred from MPAC v0.1 and may be addressed 
 - session-level resource registry auto-population and discovery mechanisms
 - standard assumption ontology or vocabulary for common domains (to improve `semantic_match` accuracy across implementations)
 - hierarchical vector clocks or interval tree clocks for reduced causal metadata overhead in large sessions
-- integration architecture guidance for deployments combining MPAC with MCP (agent-to-tool) and A2A (agent-to-agent) protocols
-- end-to-end payload encryption specification for deployments with untrusted coordinators
+- session policy configurations for intent broadcast exemption on low-risk operations
 
-Note: Security profiles and trust enforcement (Section 23), governance deadlock prevention (Sections 18.5–18.6), participant unavailability recovery (Section 14.4), semantic interoperability foundations (Sections 15.2.1–15.2.3, 17.7.1), payload schema tables (Section 13.1), scope overlap standardization (Section 15.2.1), baseline watermark interoperability (Section 12.3), session coordinator role (Section 8.1), and frozen scope fallback (Section 18.6.2.1) were identified as gaps in review and have been addressed in this version of the specification.
+Note: Security profiles and trust enforcement (Section 23), governance deadlock prevention (Sections 18.5–18.6), participant unavailability recovery (Section 14.4), and semantic interoperability foundations (Sections 15.2.1–15.2.2, 17.7.1) were identified as gaps in early review and have been addressed in this version of the specification.
 
 ## 30. Summary
 
-MPAC v0.1.3 defines a minimal but structured protocol for multi-agent collaboration centered on:
-- sessions and session coordination
-- intents with mandatory pre-execution declaration (Governance Profile)
-- operations with required state references
-- conflicts with standardized scope overlap rules
-- governance with deadlock prevention and frozen scope fallback
-- causal context with baseline watermark interoperability
-- security and trust with role assertion verification
-- failure recovery with concurrent claim resolution
+MPAC v0.1 defines a minimal but structured protocol for multi-agent collaboration centered on:
+- sessions
+- intents
+- operations
+- conflicts
+- governance
+- causal context
+- security and trust
+- failure recovery
 
-Its central design claim is that collaborative agent systems become more interoperable, auditable, and governable when intent, mutation, conflict, and resolution are represented as explicit protocol messages rather than hidden inside application logic. The protocol provides security profiles for deployments ranging from intra-team to cross-organizational, governance mechanisms to prevent deadlock between equal-authority principals, recovery semantics to handle participant failure without orphaning in-flight work, semantic interoperability mechanisms (canonical resource URIs and standardized semantic matching output) to enable cross-kind scope overlap detection and assumption contradiction identification, and payload schema definitions to ensure cross-implementation field-level compatibility.
+Its central design claim is that collaborative agent systems become more interoperable, auditable, and governable when intent, mutation, conflict, and resolution are represented as explicit protocol messages rather than hidden inside application logic. The protocol provides security profiles for deployments ranging from intra-team to cross-organizational, governance mechanisms to prevent deadlock between equal-authority principals, recovery semantics to handle participant failure without orphaning in-flight work, and semantic interoperability mechanisms (canonical resource URIs and standardized semantic matching output) to enable cross-kind scope overlap detection and assumption contradiction identification.
 

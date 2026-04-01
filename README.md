@@ -54,3 +54,45 @@ Open `http://localhost:8000/frontend/` to browse the scenario explorer. The page
 - protocol-fit notes for each scenario
 - the full message timeline
 - final participants, intents, operations, conflicts, and resolutions
+
+## Run the live playground with real agents
+
+The repository now also includes a separate interactive playground that keeps the static scenario browser intact while adding a real API-backed coordination demo.
+
+Start the local server:
+
+```bash
+python3 -m mpac.web.server --port 8000
+```
+
+Then open:
+
+- `http://localhost:8000/frontend/` for the original static story demo
+- `http://localhost:8000/playground/` for the live interactive playground
+- `http://localhost:8000/guided/` for the five step-by-step Appendix A guided scenarios
+
+For the live playground, provide an Anthropic API key in one of these ways:
+
+```bash
+export ANTHROPIC_API_KEY=your_key_here
+python3 -m mpac.web.server --port 8000
+```
+
+Or create a local config file in the repo root:
+
+```bash
+cp local_config.example.json local_config.json
+```
+
+Then edit `local_config.json` and fill in your key:
+
+```json
+{
+  "anthropic": {
+    "api_key": "your_key_here",
+    "model": "claude-sonnet-4-20250514"
+  }
+}
+```
+
+Or paste the key directly into the playground form, which sends it only to your local server process.

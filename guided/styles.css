@@ -1,0 +1,71 @@
+:root {
+  --bg: #f4efe8;
+  --ink: #1f2830;
+  --muted: #625e57;
+  --line: #d9cdbd;
+  --panel: rgba(255, 252, 247, 0.92);
+  --accent: #a2482d;
+  --accent-soft: #f4dfd5;
+  --teal: #1d6a62;
+  --shadow: 0 20px 50px rgba(55, 41, 25, 0.12);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(162, 72, 45, 0.12), transparent 24%),
+    radial-gradient(circle at 85% 15%, rgba(29, 106, 98, 0.12), transparent 20%),
+    linear-gradient(180deg, #fbf8f3 0%, var(--bg) 100%);
+}
+.shell { max-width: 1500px; margin: 0 auto; padding: 28px; }
+.hero, .panel { border: 1px solid var(--line); border-radius: 28px; background: var(--panel); box-shadow: var(--shadow); }
+.hero { display: flex; justify-content: space-between; gap: 24px; padding: 30px; }
+.hero-links { display: grid; gap: 12px; align-content: start; }
+.hero-links a, button { font: inherit; }
+.hero-links a, button {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 18px;
+  border-radius: 999px; border: 1px solid var(--line); background: white; color: var(--ink); text-decoration: none;
+}
+.hero-links a:hover, button:hover:not(:disabled) { border-color: var(--accent); }
+.eyebrow, .mini-label { margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); font-size: 12px; font-weight: 700; }
+h1, h2, h3, p, pre { margin: 0; }
+h1 { font-size: clamp(2rem, 3vw, 3.4rem); line-height: 1.05; }
+.hero-copy, .body-copy, .tip { color: var(--muted); line-height: 1.6; }
+.layout { display: grid; grid-template-columns: 420px minmax(0, 1fr); gap: 22px; margin-top: 22px; }
+.panel { padding: 24px; }
+.inset { padding: 18px; }
+.section-head, .actions, .metric-grid, .state-grid, .scenario-list, .tags { display: grid; gap: 14px; }
+.section-head { grid-template-columns: 1fr auto; align-items: start; }
+.actions { grid-auto-flow: column; }
+.health-pill { min-height: 40px; padding: 10px 14px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.scenario-card {
+  width: 100%; padding: 18px; text-align: left; border: 1px solid var(--line); border-radius: 22px; background: white; cursor: pointer;
+}
+.scenario-card.active { border-color: var(--accent); box-shadow: var(--shadow); }
+.card-foot { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; color: var(--teal); font-size: 13px; font-weight: 700; }
+.coach, .step-info, .metric-card { border: 1px solid var(--line); border-radius: 22px; background: white; }
+.coach, .step-info { margin-top: 18px; padding: 18px; }
+.metric-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 18px; }
+.metric-card { padding: 16px; }
+.metric-card strong { display: block; margin-top: 8px; font-size: 1.8rem; }
+.tag {
+  display: inline-flex; align-items: center; min-height: 34px; padding: 0 14px; border-radius: 999px;
+  background: #f5ecdf; color: #8a5d2a; font-size: 13px; font-weight: 700;
+}
+.tags { grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; margin-top: 12px; }
+.state-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 18px; }
+pre {
+  white-space: pre-wrap; word-break: break-word; color: #243248; font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-size: 12px; line-height: 1.55;
+}
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+@media (max-width: 1100px) {
+  .layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .hero, .section-head, .actions, .metric-grid, .state-grid { grid-template-columns: 1fr; }
+  .actions { grid-auto-flow: row; }
+}
