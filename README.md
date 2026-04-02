@@ -1,6 +1,12 @@
-# MPAC Reference Runtime
+# MPAC — Multi-Principal Agent Coordination Protocol
 
-This repository contains a Python reference runtime for the Multi-Principal Agent Coordination Protocol (`MPAC`) described in [SPEC.md](./SPEC.md).
+**[SPEC.md](./SPEC.md) 是 MPAC 协议的最新规范（当前版本 v0.1.3）。** 协议的完整演进历史、每轮改动记录和独立评审报告保存在 [version_history/](./version_history/) 文件夹中，详见 [version_history/README.md](./version_history/README.md)。
+
+---
+
+## Reference Runtime
+
+This repository also contains a Python reference runtime for MPAC.
 
 ## What is implemented
 
