@@ -4,93 +4,20 @@
 
 ---
 
-## Reference Runtime
+## Repository Structure
 
-This repository also contains a Python reference runtime for MPAC.
-
-## What is implemented
-
-- Common MPAC message envelope and typed payload models
-- Session join, leave, heartbeat, and presence tracking
-- Intent lifecycle management
-- Operation proposal, commit, reject, and supersede flows
-- Rule-based conflict detection and reporting
-- Basic governance resolution with escalation to an owner or arbiter
-- Mock agents that consume and emit MPAC messages
-- A runnable end-to-end demo and unit tests
-
-## Run the tests
-
-```bash
-python3 -m unittest discover -s tests
+```
+SPEC.md                     ← 协议规范（source of truth）
+README.md                   ← 本文件
+local_config.json           ← API key 配置（不要提交到公开仓库）
+local_config.example.json   ← 配置模板
+pyproject.toml              ← 项目元数据
+version_history/            ← 协议演进历史和评审报告
 ```
 
-## Run the demo
+## API Key Configuration
 
-```bash
-python3 examples/demo_basic.py
-```
-
-The demo starts a session, joins two contributor agents and one owner, creates overlapping intents, triggers a conflict, escalates it, and resolves it through a mock owner agent.
-
-## Run the Appendix A scenario tests
-
-```bash
-python3 -m unittest discover -s tests
-```
-
-This includes five executable tests for the five Appendix A walkthroughs in `SPEC.md`.
-
-## Explore the five spec scenarios in a browser
-
-First export the scenario traces:
-
-```bash
-python3 scripts/export_scenarios.py
-```
-
-Then serve the repo root as static files:
-
-```bash
-python3 -m http.server 8000
-```
-
-Open `http://localhost:8000/frontend/` to browse the scenario explorer. The page shows:
-
-- protocol-fit notes for each scenario
-- the full message timeline
-- final participants, intents, operations, conflicts, and resolutions
-
-## Run the live playground with real agents
-
-The repository now also includes a separate interactive playground that keeps the static scenario browser intact while adding a real API-backed coordination demo.
-
-Start the local server:
-
-```bash
-python3 -m mpac.web.server --port 8000
-```
-
-Then open:
-
-- `http://localhost:8000/frontend/` for the original static story demo
-- `http://localhost:8000/playground/` for the live interactive playground
-- `http://localhost:8000/guided/` for the five step-by-step Appendix A guided scenarios
-
-For the live playground, provide an Anthropic API key in one of these ways:
-
-```bash
-export ANTHROPIC_API_KEY=your_key_here
-python3 -m mpac.web.server --port 8000
-```
-
-Or create a local config file in the repo root:
-
-```bash
-cp local_config.example.json local_config.json
-```
-
-Then edit `local_config.json` and fill in your key:
+Anthropic API key 保存在 `local_config.json` 中，供后续参考实现和测试使用：
 
 ```json
 {
@@ -101,4 +28,6 @@ Then edit `local_config.json` and fill in your key:
 }
 ```
 
-Or paste the key directly into the playground form, which sends it only to your local server process.
+## Note
+
+旧版参考实现代码（基于 v0.1.2 之前的协议）已清理。新的参考实现将基于 v0.1.3 规范重新构建。
