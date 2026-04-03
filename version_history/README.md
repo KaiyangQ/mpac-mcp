@@ -113,6 +113,7 @@ Five-dimension audit of v0.1.3 covering efficiency, robustness, scalability, sem
 |------|-------------|
 | `SPEC_v0.1.3_2026-04-02.md` | Archived SPEC.md snapshot before this update |
 | `MPAC_v0.1.3_Audit_Report.md` | Full five-dimension audit report with scoring and recommendations |
+| `MPAC_v0.1.4_Update_Record.md` | Detailed changelog: what was resolved, what was deferred, and why |
 
 ---
 
