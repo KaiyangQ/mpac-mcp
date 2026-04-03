@@ -14,6 +14,9 @@ version_history/
 
 The current source of truth is always **SPEC.md** in the project root.
 
+Companion documents in the project root (not versioned in this folder, always reflects the latest spec):
+- **MPAC_Developer_Reference.md** — Developer-facing data dictionary: all data objects, field definitions, cross-entity references, state machines, enum registries, and implementation checklist. Updated in sync with SPEC.md.
+
 ---
 
 ## v0.1 — Baseline (2026-03-29)
