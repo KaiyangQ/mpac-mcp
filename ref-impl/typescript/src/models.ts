@@ -4,6 +4,8 @@ export enum MessageType {
   SESSION_INFO = "SESSION_INFO",
   HEARTBEAT = "HEARTBEAT",
   GOODBYE = "GOODBYE",
+  SESSION_CLOSE = "SESSION_CLOSE",
+  COORDINATOR_STATUS = "COORDINATOR_STATUS",
   INTENT_ANNOUNCE = "INTENT_ANNOUNCE",
   INTENT_UPDATE = "INTENT_UPDATE",
   INTENT_WITHDRAW = "INTENT_WITHDRAW",
@@ -36,6 +38,7 @@ export enum OperationState {
   REJECTED = "REJECTED",
   ABANDONED = "ABANDONED",
   FROZEN = "FROZEN",
+  SUPERSEDED = "SUPERSEDED",
 }
 
 // Conflict States
@@ -67,6 +70,39 @@ export enum ComplianceProfile {
   CORE = "core",
   GOVERNANCE = "governance",
   SEMANTIC = "semantic",
+}
+
+// Credential Types
+export enum CredentialType {
+  BEARER_TOKEN = "bearer_token",
+  MTLS_FINGERPRINT = "mtls_fingerprint",
+  API_KEY = "api_key",
+  X509_CHAIN = "x509_chain",
+  CUSTOM = "custom",
+}
+
+// Coordinator Events
+export enum CoordinatorEvent {
+  HEARTBEAT = "heartbeat",
+  RECOVERED = "recovered",
+  HANDOVER = "handover",
+  ASSUMED = "assumed",
+}
+
+// Session Health
+export enum SessionHealth {
+  HEALTHY = "healthy",
+  DEGRADED = "degraded",
+  RECOVERING = "recovering",
+}
+
+// Session Close Reason
+export enum SessionCloseReason {
+  COMPLETED = "completed",
+  TIMEOUT = "timeout",
+  POLICY = "policy",
+  COORDINATOR_SHUTDOWN = "coordinator_shutdown",
+  MANUAL = "manual",
 }
 
 // Roles
@@ -122,6 +158,10 @@ export enum ErrorCode {
   RESOLUTION_TIMEOUT = "resolution_timeout",
   SCOPE_FROZEN = "scope_frozen",
   CLAIM_CONFLICT = "claim_conflict",
+  COORDINATOR_CONFLICT = "coordinator_conflict",
+  STATE_DIVERGENCE = "state_divergence",
+  SESSION_CLOSED = "session_closed",
+  CREDENTIAL_REJECTED = "credential_rejected",
 }
 
 // Principal
@@ -289,4 +329,37 @@ export interface ProtocolErrorPayload {
   message: string;
   details?: unknown;
   related_message_id?: string;
+}
+
+export interface Credential {
+  type: string;
+  value: string;
+  issuer?: string;
+  expires_at?: string;
+}
+
+export interface SessionClosePayload {
+  reason: string;
+  final_lamport_clock: number;
+  summary?: SessionSummary;
+  active_intents_disposition?: string;
+  transcript_ref?: string;
+}
+
+export interface SessionSummary {
+  total_intents: number;
+  total_operations: number;
+  total_conflicts: number;
+  total_participants: number;
+  duration_sec: number;
+}
+
+export interface CoordinatorStatusPayload {
+  event: string;
+  coordinator_id: string;
+  session_health: string;
+  active_participants?: number;
+  open_conflicts?: number;
+  snapshot_lamport_clock?: number;
+  successor_coordinator_id?: string;
 }

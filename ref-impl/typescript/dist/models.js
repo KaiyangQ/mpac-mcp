@@ -5,6 +5,8 @@ export var MessageType;
     MessageType["SESSION_INFO"] = "SESSION_INFO";
     MessageType["HEARTBEAT"] = "HEARTBEAT";
     MessageType["GOODBYE"] = "GOODBYE";
+    MessageType["SESSION_CLOSE"] = "SESSION_CLOSE";
+    MessageType["COORDINATOR_STATUS"] = "COORDINATOR_STATUS";
     MessageType["INTENT_ANNOUNCE"] = "INTENT_ANNOUNCE";
     MessageType["INTENT_UPDATE"] = "INTENT_UPDATE";
     MessageType["INTENT_WITHDRAW"] = "INTENT_WITHDRAW";
@@ -69,6 +71,39 @@ export var ComplianceProfile;
     ComplianceProfile["GOVERNANCE"] = "governance";
     ComplianceProfile["SEMANTIC"] = "semantic";
 })(ComplianceProfile || (ComplianceProfile = {}));
+// Credential Types
+export var CredentialType;
+(function (CredentialType) {
+    CredentialType["BEARER_TOKEN"] = "bearer_token";
+    CredentialType["MTLS_FINGERPRINT"] = "mtls_fingerprint";
+    CredentialType["API_KEY"] = "api_key";
+    CredentialType["X509_CHAIN"] = "x509_chain";
+    CredentialType["CUSTOM"] = "custom";
+})(CredentialType || (CredentialType = {}));
+// Coordinator Events
+export var CoordinatorEvent;
+(function (CoordinatorEvent) {
+    CoordinatorEvent["HEARTBEAT"] = "heartbeat";
+    CoordinatorEvent["RECOVERED"] = "recovered";
+    CoordinatorEvent["HANDOVER"] = "handover";
+    CoordinatorEvent["ASSUMED"] = "assumed";
+})(CoordinatorEvent || (CoordinatorEvent = {}));
+// Session Health
+export var SessionHealth;
+(function (SessionHealth) {
+    SessionHealth["HEALTHY"] = "healthy";
+    SessionHealth["DEGRADED"] = "degraded";
+    SessionHealth["RECOVERING"] = "recovering";
+})(SessionHealth || (SessionHealth = {}));
+// Session Close Reason
+export var SessionCloseReason;
+(function (SessionCloseReason) {
+    SessionCloseReason["COMPLETED"] = "completed";
+    SessionCloseReason["TIMEOUT"] = "timeout";
+    SessionCloseReason["POLICY"] = "policy";
+    SessionCloseReason["COORDINATOR_SHUTDOWN"] = "coordinator_shutdown";
+    SessionCloseReason["MANUAL"] = "manual";
+})(SessionCloseReason || (SessionCloseReason = {}));
 // Roles
 export var Role;
 (function (Role) {
@@ -123,5 +158,9 @@ export var ErrorCode;
     ErrorCode["RESOLUTION_TIMEOUT"] = "resolution_timeout";
     ErrorCode["SCOPE_FROZEN"] = "scope_frozen";
     ErrorCode["CLAIM_CONFLICT"] = "claim_conflict";
+    ErrorCode["COORDINATOR_CONFLICT"] = "coordinator_conflict";
+    ErrorCode["STATE_DIVERGENCE"] = "state_divergence";
+    ErrorCode["SESSION_CLOSED"] = "session_closed";
+    ErrorCode["CREDENTIAL_REJECTED"] = "credential_rejected";
 })(ErrorCode || (ErrorCode = {}));
 //# sourceMappingURL=models.js.map

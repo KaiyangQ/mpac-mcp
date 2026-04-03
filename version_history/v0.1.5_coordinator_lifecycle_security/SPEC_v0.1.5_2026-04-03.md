@@ -1,8 +1,8 @@
-# MPAC Specification v0.1.6
+# MPAC Specification v0.1.5
 
 ## 1. Status
 
-This document defines version `0.1.6` of the Multi-Principal Agent Coordination Protocol (`MPAC`).
+This document defines version `0.1.5` of the Multi-Principal Agent Coordination Protocol (`MPAC`).
 
 Status of this document:
 - Draft
@@ -248,7 +248,7 @@ The coordinator MUST persist session state to durable storage at least once per 
 {
   "snapshot_version": 1,
   "session_id": "sess-001",
-  "protocol_version": "0.1.6",
+  "protocol_version": "0.1.5",
   "captured_at": "2026-04-03T12:00:00Z",
   "lamport_clock": 42,
   "participants": [
@@ -446,7 +446,7 @@ The transcript format:
 ```json
 {
   "session_id": "sess-001",
-  "protocol_version": "0.1.6",
+  "protocol_version": "0.1.5",
   "exported_at": "2026-04-03T12:00:00Z",
   "security_profile": "authenticated",
   "participants": [ /* Principal objects */ ],
@@ -922,7 +922,7 @@ Payload:
 ```json
 {
   "session_id": "sess-001",
-  "protocol_version": "0.1.6",
+  "protocol_version": "0.1.5",
   "security_profile": "authenticated",
   "compliance_profile": "governance",
   "watermark_kind": "lamport_clock",
@@ -2407,6 +2407,7 @@ This flow illustrates that MPAC treats coordination and conflict handling as exp
 
 The following areas are explicitly deferred from MPAC v0.1 and may be addressed in future versions:
 
+- formal JSON Schema files (machine-readable) corresponding to the payload schema tables in Section 13.1
 - standard conflict ontology extensions
 - conflict confidence scoring
 - operation diff payload standards
@@ -2423,13 +2424,13 @@ The following areas are explicitly deferred from MPAC v0.1 and may be addressed 
 - post-commit rollback semantics (OP_ROLLBACK message type or OP_SUPERSEDE rollback flag)
 - cross-session coordination and scope conflict detection across independent sessions
 
-Note: The following gaps were identified in prior reviews and have been addressed across v0.1.1–v0.1.6: security profiles and trust enforcement (Section 23), credential exchange and trust establishment (Section 23.1.4), role assignment and verification (Section 23.1.5), key distribution and rotation (Section 23.1.6), governance deadlock prevention (Sections 18.5–18.6), participant unavailability recovery (Section 14.7), semantic interoperability foundations (Sections 15.2.1–15.2.3, 17.7.1), payload schema tables (Section 13.1), scope overlap standardization (Section 15.2.1), baseline watermark interoperability (Section 12.3), session coordinator role (Section 8.1), coordinator fault recovery and handover (Section 8.1.1), session lifecycle and close (Section 9.6), frozen scope fallback (Section 18.6.2.1), formal JSON Schema definitions (ref-impl/schema/), OP_SUPERSEDE handler implementation, and coordinator fault recovery with snapshot + audit log replay.
+Note: The following gaps were identified in prior reviews and have been addressed across v0.1.1–v0.1.5: security profiles and trust enforcement (Section 23), credential exchange and trust establishment (Section 23.1.4), role assignment and verification (Section 23.1.5), key distribution and rotation (Section 23.1.6), governance deadlock prevention (Sections 18.5–18.6), participant unavailability recovery (Section 14.7), semantic interoperability foundations (Sections 15.2.1–15.2.3, 17.7.1), payload schema tables (Section 13.1), scope overlap standardization (Section 15.2.1), baseline watermark interoperability (Section 12.3), session coordinator role (Section 8.1), coordinator fault recovery and handover (Section 8.1.1), session lifecycle and close (Section 9.6), and frozen scope fallback (Section 18.6.2.1).
 
 ## 30. Summary
 
-MPAC v0.1.6 defines a structured protocol for multi-agent collaboration centered on:
+MPAC v0.1.5 defines a structured protocol for multi-agent collaboration centered on:
 - sessions with defined lifecycle (creation, discovery, close, audit export)
-- session coordination with fault tolerance (state snapshots, recovery, handover, audit log replay)
+- session coordination with fault tolerance (state snapshots, recovery, handover)
 - intents with mandatory pre-execution declaration (Governance Profile)
 - operations with required state references
 - conflicts with standardized scope overlap rules
@@ -2438,5 +2439,5 @@ MPAC v0.1.6 defines a structured protocol for multi-agent collaboration centered
 - security with credential exchange, role verification, key distribution, and watermark integrity
 - failure recovery with concurrent claim resolution
 
-Its central design claim is that collaborative agent systems become more interoperable, auditable, and governable when intent, mutation, conflict, and resolution are represented as explicit protocol messages rather than hidden inside application logic. The protocol provides security profiles with concrete trust establishment mechanisms for deployments ranging from intra-team to cross-organizational, coordinator fault tolerance with snapshot-based recovery and audit log replay for production reliability, governance mechanisms to prevent deadlock between equal-authority principals, recovery semantics to handle participant failure without orphaning in-flight work, operation supersession for safe post-commit revisions, semantic interoperability mechanisms (canonical resource URIs and standardized semantic matching output) to enable cross-kind scope overlap detection and assumption contradiction identification, session lifecycle management with transcript export for compliance, formal JSON Schema definitions for machine-enforceable wire format compatibility, and payload schema definitions to ensure cross-implementation field-level compatibility.
+Its central design claim is that collaborative agent systems become more interoperable, auditable, and governable when intent, mutation, conflict, and resolution are represented as explicit protocol messages rather than hidden inside application logic. The protocol provides security profiles with concrete trust establishment mechanisms for deployments ranging from intra-team to cross-organizational, coordinator fault tolerance for production reliability, governance mechanisms to prevent deadlock between equal-authority principals, recovery semantics to handle participant failure without orphaning in-flight work, semantic interoperability mechanisms (canonical resource URIs and standardized semantic matching output) to enable cross-kind scope overlap detection and assumption contradiction identification, session lifecycle management with transcript export for compliance, and payload schema definitions to ensure cross-implementation field-level compatibility.
 

@@ -1,0 +1,29 @@
+{
+  "$id": "https://mpac-protocol.org/schema/messages/session_close.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SESSION_CLOSE Payload",
+  "type": "object",
+  "required": ["reason"],
+  "properties": {
+    "reason": {
+      "type": "string",
+      "enum": ["completed", "timeout", "error", "admin_close", "policy", "coordinator_shutdown", "manual"]
+    },
+    "final_lamport_clock": { "type": "integer" },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "total_intents": { "type": "integer" },
+        "total_operations": { "type": "integer" },
+        "total_conflicts": { "type": "integer" },
+        "total_participants": { "type": "integer" },
+        "duration_sec": { "type": "integer" }
+      }
+    },
+    "active_intents_disposition": {
+      "type": "string",
+      "enum": ["withdraw_all", "expire_all", "transfer"]
+    },
+    "transcript_ref": { "type": "string" }
+  }
+}

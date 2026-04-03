@@ -3,6 +3,8 @@ export declare enum MessageType {
     SESSION_INFO = "SESSION_INFO",
     HEARTBEAT = "HEARTBEAT",
     GOODBYE = "GOODBYE",
+    SESSION_CLOSE = "SESSION_CLOSE",
+    COORDINATOR_STATUS = "COORDINATOR_STATUS",
     INTENT_ANNOUNCE = "INTENT_ANNOUNCE",
     INTENT_UPDATE = "INTENT_UPDATE",
     INTENT_WITHDRAW = "INTENT_WITHDRAW",
@@ -55,6 +57,31 @@ export declare enum ComplianceProfile {
     GOVERNANCE = "governance",
     SEMANTIC = "semantic"
 }
+export declare enum CredentialType {
+    BEARER_TOKEN = "bearer_token",
+    MTLS_FINGERPRINT = "mtls_fingerprint",
+    API_KEY = "api_key",
+    X509_CHAIN = "x509_chain",
+    CUSTOM = "custom"
+}
+export declare enum CoordinatorEvent {
+    HEARTBEAT = "heartbeat",
+    RECOVERED = "recovered",
+    HANDOVER = "handover",
+    ASSUMED = "assumed"
+}
+export declare enum SessionHealth {
+    HEALTHY = "healthy",
+    DEGRADED = "degraded",
+    RECOVERING = "recovering"
+}
+export declare enum SessionCloseReason {
+    COMPLETED = "completed",
+    TIMEOUT = "timeout",
+    POLICY = "policy",
+    COORDINATOR_SHUTDOWN = "coordinator_shutdown",
+    MANUAL = "manual"
+}
 export declare enum Role {
     OBSERVER = "observer",
     CONTRIBUTOR = "contributor",
@@ -98,7 +125,11 @@ export declare enum ErrorCode {
     PARTICIPANT_UNAVAILABLE = "participant_unavailable",
     RESOLUTION_TIMEOUT = "resolution_timeout",
     SCOPE_FROZEN = "scope_frozen",
-    CLAIM_CONFLICT = "claim_conflict"
+    CLAIM_CONFLICT = "claim_conflict",
+    COORDINATOR_CONFLICT = "coordinator_conflict",
+    STATE_DIVERGENCE = "state_divergence",
+    SESSION_CLOSED = "session_closed",
+    CREDENTIAL_REJECTED = "credential_rejected"
 }
 export interface Principal {
     principal_id: string;
@@ -246,5 +277,34 @@ export interface ProtocolErrorPayload {
     message: string;
     details?: unknown;
     related_message_id?: string;
+}
+export interface Credential {
+    type: string;
+    value: string;
+    issuer?: string;
+    expires_at?: string;
+}
+export interface SessionClosePayload {
+    reason: string;
+    final_lamport_clock: number;
+    summary?: SessionSummary;
+    active_intents_disposition?: string;
+    transcript_ref?: string;
+}
+export interface SessionSummary {
+    total_intents: number;
+    total_operations: number;
+    total_conflicts: number;
+    total_participants: number;
+    duration_sec: number;
+}
+export interface CoordinatorStatusPayload {
+    event: string;
+    coordinator_id: string;
+    session_health: string;
+    active_participants?: number;
+    open_conflicts?: number;
+    snapshot_lamport_clock?: number;
+    successor_coordinator_id?: string;
 }
 //# sourceMappingURL=models.d.ts.map

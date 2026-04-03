@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 
 from ai_agent import AIAgent
 from mpac.coordinator import SessionCoordinator
+from mpac.models import Scope
 
 SESSION_ID = "live-ai-session-001"
 
@@ -75,7 +76,7 @@ def main():
     print_phase("MPAC Live Demo — AI Agent Coordination")
     print(f"  Session: {SESSION_ID}")
     print(f"  Scenario: Two AI agents independently decide how to fix a Python web app.")
-    print(f"  Protocol: MPAC v0.1.4 with coordinator-managed conflict detection.\n")
+    print(f"  Protocol: MPAC v0.1.6 with coordinator-managed conflict detection.\n")
 
     # ---- Setup ----
     coordinator = SessionCoordinator(SESSION_ID)
@@ -216,6 +217,145 @@ def main():
     process(bob_commit, "Bob commit")
     print()
 
+    # ════════════════ Phase 5: OP_SUPERSEDE (v0.1.6) ════════════════
+    print_phase("Phase 5: OP_SUPERSEDE — Alice Revises Her Operation (v0.1.6)")
+
+    print("  Alice realizes her first commit needs a revision...")
+    print(f"  Superseding op: {alice_op.get('op_id', 'op-alice-?')}\n")
+
+    supersede_msg = agent_a.participant.supersede_op(
+        SESSION_ID,
+        op_id=f"{alice_op.get('op_id', 'op-alice')}-v2",
+        supersedes_op_id=alice_op.get("op_id", ""),
+        target=alice_op.get("target", "src/auth.py"),
+        intent_id=alice_intent.get("intent_id"),
+        reason="revised_approach",
+        state_ref_after=f"sha256:{alice_op.get('op_id', 'v2')[:8]}-revised",
+    )
+    print_message("  OP_SUPERSEDE", supersede_msg)
+    supersede_responses = process(supersede_msg, "Alice OP_SUPERSEDE")
+
+    if not supersede_responses:
+        print("  ✓ OP_SUPERSEDE accepted — old op SUPERSEDED, new op COMMITTED")
+    else:
+        print(f"  ✗ Unexpected response: {supersede_responses}")
+
+    # Verify states
+    old_op_id = alice_op.get("op_id", "")
+    new_op_id = f"{old_op_id}-v2"
+    old_op_obj = coordinator.operations.get(old_op_id)
+    new_op_obj = coordinator.operations.get(new_op_id)
+    if old_op_obj:
+        print(f"  Old op ({old_op_id}): state={old_op_obj.state_machine.current_state.value}")
+    if new_op_obj:
+        print(f"  New op ({new_op_id}): state={new_op_obj.state_machine.current_state.value}")
+    print()
+
+    # ════════════════ Phase 6: Coordinator Status (v0.1.5) ════════════════
+    print_phase("Phase 6: Coordinator Status")
+
+    status_msgs = coordinator.coordinator_status("heartbeat")
+    for s in status_msgs:
+        print_message("  COORDINATOR_STATUS", s)
+        transcript.append({"direction": "← coordinator", "label": "coordinator_status", "envelope": s})
+    print()
+
+    # ════════════════ Phase 7: State Snapshot (v0.1.5) ════════════════
+    print_phase("Phase 7: State Snapshot")
+
+    snap = coordinator.snapshot()
+    print(f"  snapshot_version: {snap['snapshot_version']}")
+    print(f"  protocol_version: {snap['protocol_version']}")
+    print(f"  lamport_clock: {snap['lamport_clock']}")
+    print(f"  participants: {len(snap['participants'])}")
+    print(f"  intents: {len(snap['intents'])}")
+    for intent in snap['intents']:
+        print(f"    {intent['intent_id']}: state={intent['state']}")
+    print(f"  operations: {len(snap['operations'])}")
+    for op in snap['operations']:
+        print(f"    {op['op_id']}: state={op['state']}")
+    print(f"  conflicts: {len(snap['conflicts'])}")
+    for c in snap['conflicts']:
+        print(f"    {c['conflict_id'][:12]}...: state={c['state']}")
+    print()
+
+    # ════════════════ Phase 8: Fault Recovery (v0.1.6) ════════════════
+    print_phase("Phase 8: Fault Recovery — Snapshot + Audit Log Replay (v0.1.6)")
+
+    # Take snapshot + capture audit log position
+    pre_crash_snap = coordinator.snapshot()
+    audit_log_len_at_snap = len(coordinator.audit_log)
+    print(f"  Snapshot taken: {len(pre_crash_snap['participants'])} participants, "
+          f"{len(pre_crash_snap['intents'])} intents, "
+          f"{len(pre_crash_snap['operations'])} operations")
+    print(f"  Audit log position at snapshot: message #{audit_log_len_at_snap}")
+    print()
+
+    # Simulate new coordinator recovering from crash
+    print("  💥 Simulating coordinator crash...")
+    print("  🔄 New coordinator recovering from snapshot...\n")
+
+    recovered = SessionCoordinator(SESSION_ID)
+    recovered.recover_from_snapshot(pre_crash_snap)
+
+    # Verify recovery
+    recovered_snap = recovered.snapshot()
+    print(f"  Recovered state:")
+    print(f"    participants: {len(recovered_snap['participants'])}")
+    print(f"    intents: {len(recovered_snap['intents'])}")
+    print(f"    operations: {len(recovered_snap['operations'])}")
+    print(f"    conflicts: {len(recovered_snap['conflicts'])}")
+    print(f"    lamport_clock: {recovered_snap['lamport_clock']}")
+
+    # Verify operation states survived recovery
+    all_ops_match = True
+    for orig_op in pre_crash_snap["operations"]:
+        rec_op = recovered.operations.get(orig_op["op_id"])
+        if rec_op is None or rec_op.state_machine.current_state.value != orig_op["state"]:
+            all_ops_match = False
+            break
+
+    if all_ops_match:
+        print("  ✓ All operation states correctly recovered (including SUPERSEDED)")
+    else:
+        print("  ✗ Operation state mismatch after recovery")
+
+    # Verify the recovered coordinator can process new messages
+    print("\n  Testing recovered coordinator accepts new messages...")
+    test_heartbeat = agent_a.participant.heartbeat(SESSION_ID, status="idle")
+    hb_responses = recovered.process_message(test_heartbeat)
+    if not hb_responses:  # heartbeat produces no response
+        print("  ✓ Recovered coordinator processing messages normally")
+    else:
+        print(f"  ✗ Unexpected response from recovered coordinator")
+    print()
+
+    # ════════════════ Phase 9: Session Close ════════════════
+    print_phase("Phase 9: Session Close")
+
+    close_msgs = coordinator.close_session("completed")
+    for c in close_msgs:
+        print_message("  SESSION_CLOSE", c)
+        transcript.append({"direction": "← coordinator", "label": "session_close", "envelope": c})
+        summary = c.get("payload", {}).get("summary", {})
+        print(f"\n  Session summary:")
+        for k, v in summary.items():
+            print(f"    {k}: {v}")
+    print()
+
+    # Verify session is closed — try sending a message
+    print("  Verifying session is closed...")
+    test_msg = agent_a.participant.announce_intent(
+        SESSION_ID, "intent-test-after-close", "should fail",
+        Scope(kind="file_set", resources=["test.py"]),
+    )
+    reject = coordinator.process_message(test_msg)
+    if reject and reject[0].get("payload", {}).get("error_code") == "SESSION_CLOSED":
+        print("  ✓ Post-close message correctly rejected with SESSION_CLOSED error")
+    else:
+        print("  ✗ Post-close message was NOT rejected (unexpected)")
+    print()
+
     # ════════════════ Summary ════════════════
     print_phase("Session Summary")
     print(f"  Total MPAC messages exchanged: {len(transcript)}")
@@ -234,6 +374,14 @@ def main():
         print(f"  Conflict was {'detected and resolved' if conflicts else 'NOT detected (bug?)'}.")
     else:
         print(f"\n  No file overlap — agents naturally partitioned work.")
+
+    print(f"\n  v0.1.6 features exercised:")
+    print(f"    ✓ COORDINATOR_STATUS heartbeat")
+    print(f"    ✓ State snapshot ({len(snap['participants'])} participants, {len(snap['intents'])} intents, {len(snap['operations'])} ops)")
+    print(f"    ✓ OP_SUPERSEDE (Alice revised her commit)")
+    print(f"    ✓ Fault recovery (snapshot → crash → recover → verify)")
+    print(f"    ✓ SESSION_CLOSE with summary")
+    print(f"    ✓ Post-close message rejection")
 
     # Write full transcript
     transcript_path = os.path.join(os.path.dirname(__file__), "ai_demo_transcript.json")

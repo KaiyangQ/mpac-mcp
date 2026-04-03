@@ -8,8 +8,10 @@ version_history/
 ├── v0.1_baseline/                         ← original specification and review materials
 ├── v0.1.1_trust_governance_recovery/      ← first update round
 ├── v0.1.2_semantic_interop/               ← second update round
-├── v0.1.3_interop_hardening/              ← third update round
-└── v0.1.4_state_machine_audit/            ← five-dimension audit + state machine cross-safety
+├── v0.1.3_interop_hardening/              ← v0.1.3 spec, audit report, reviews, update record
+├── v0.1.4_state_machine_audit/            ← v0.1.4 spec, update record, protocol gap analysis
+├── v0.1.5_coordinator_lifecycle_security/ ← v0.1.5 spec, update record
+└── v0.1.6_p0_completion/                  ← v0.1.6 spec, update record
 ```
 
 The current source of truth is always **SPEC.md** in the project root.
@@ -65,6 +67,7 @@ Addressed the remaining gap: semantic interoperability across scope kinds and as
 
 | File | Description |
 |------|-------------|
+| `SPEC_v0.1.2_2026-04-01.md` | Archived SPEC.md snapshot of the final v0.1.2 spec |
 | `MPAC Specification Update Record 2026-03-31 (Semantic Interoperability).docx` | Detailed changelog for this round |
 
 ---
@@ -92,31 +95,78 @@ Comprehensive update addressing cross-implementation interoperability gaps, norm
 
 | File | Description |
 |------|-------------|
-| `SPEC_v0.1.2_2026-04-01.md` | Archived SPEC.md snapshot before this update |
+| `SPEC_v0.1.3_2026-04-02.md` | Archived SPEC.md snapshot of the final v0.1.3 spec |
 | `MPAC_v0.1.3_Update_Record.md` | Detailed changelog with rationale for each change |
+| `MPAC_v0.1.3_Audit_Report.md` | Five-dimension audit of v0.1.3: efficiency, robustness, scalability, semantic alignment, state machine cross-safety |
+| `MPAC_Independent_Review_2026-04-01.md` | Independent protocol review identifying interoperability gaps |
+| `MPAC_Re-evaluation_v0.1.3_2026-04-01.md` | Re-evaluation after interoperability hardening |
 
 ---
 
-## v0.1.4 — State Machine Audit (2026-04-02)
+## v0.1.4 — State Machine Cross-Safety & Session Negotiation (2026-04-02)
 
-Five-dimension audit of v0.1.3 covering efficiency, robustness, scalability, semantic alignment, and **state machine cross-safety**. The state machine analysis identified multiple unresolved cross-lifecycle gaps that will drive the v0.1.4 spec revision.
+Spec revision driven by the v0.1.3 five-dimension audit. Resolved state machine cross-lifecycle gaps (Intent Expiry Cascade, Conflict Auto-Dismiss), added coordinator fault recovery guidance, and introduced SESSION_INFO for session negotiation.
 
-**Key findings:**
-- Section 15.6 / 16.6: Intent TTL expiry does not cascade to associated pending OP_PROPOSE (orphan proposal)
-- Section 14.4.2 / 16.6: Intent SUSPENDED state does not address third-party pending proposals referencing that intent
-- Section 18.6.2 / 15.6: Frozen scope can outlive all related intents, creating semantically void conflicts
-- Section 18.4: RESOLUTION rejecting a COMMITTED operation only SHOULD (not MUST) declare rollback expectation
-- Timeout cascade between intent TTL, resolution_timeout, and frozen_scope_timeout can produce liveness violation (activity loop with zero effective progress)
-- Efficiency concerns: heavyweight envelope for high-frequency messages, no batching, no scope-based subscription
-- Scalability: broadcast model and O(n²) conflict detection limit practical session size
+**Key changes:**
+- Section 15.7 (new): Intent Expiry Cascade — intent terminal → associated PROPOSED ops auto-reject, SUSPENDED → ops FROZEN
+- Section 17.9 (new): Conflict Auto-Dismissal — all related intents and ops terminal → conflict auto-DISMISS, frozen scope released
+- Section 8.1.1 (new): Coordinator Fault Recovery — state persistence SHOULD, restart state rebuild, participant behavior during coordinator unavailability
+- Section 14.2 (new): SESSION_INFO message type — coordinator response to HELLO with session config and compatibility check
+- Multiple normative upgrades from audit recommendations
+
+**Protocol gap analysis (2026-04-03):** After completing ~85% reference implementation coverage (16/17 message types, full state machine lifecycle, liveness, arbiter workflow, intent claim), six protocol-level design gaps were identified for future spec revisions.
 
 **Contents:**
 
 | File | Description |
 |------|-------------|
-| `SPEC_v0.1.3_2026-04-02.md` | Archived SPEC.md snapshot before this update |
-| `MPAC_v0.1.3_Audit_Report.md` | Full five-dimension audit report with scoring and recommendations |
-| `MPAC_v0.1.4_Update_Record.md` | Detailed changelog: what was resolved, what was deferred, and why |
+| `SPEC_v0.1.4_2026-04-02.md` | SPEC.md snapshot of the current v0.1.4 spec |
+| `MPAC_v0.1.4_Update_Record.md` | Detailed changelog: what was resolved from audit, what was deferred, and why |
+| `MPAC_v0.1.4_Gap_Analysis.md` | Protocol-level gap analysis: 6 design gaps identified after reference implementation |
+
+---
+
+## v0.1.5 — Coordinator Fault Tolerance, Session Lifecycle, Security Trust Establishment (2026-04-03)
+
+Protocol-level revision driven by the v0.1.4 gap analysis. Addresses three of six identified protocol design gaps: coordinator fault tolerance (the most critical structural gap), session lifecycle (no defined end for sessions), and security trust establishment (no concrete credential exchange mechanism).
+
+**Key changes:**
+- Section 8.1.1 (rewritten): Coordinator liveness via `COORDINATOR_STATUS` heartbeat, mandatory state snapshot format (JSON), recovery procedure (snapshot + audit log replay), planned/unplanned handover protocol, split-brain prevention via Lamport clock comparison
+- Section 9.6 (new): Session lifecycle — `SESSION_CLOSE` conditions (manual, auto-close on completion, session TTL, coordinator shutdown), session summary, transcript export format, lifecycle policy
+- Section 23.1.4 (new): Credential exchange in HELLO handshake — five credential types (bearer_token, mtls_fingerprint, api_key, x509_chain, custom), coordinator validation, CREDENTIAL_REJECTED error
+- Section 23.1.5 (new): Role assignment and verification — four-step process (request → policy evaluation → grant → enforcement), role policy configuration format
+- Section 23.1.6 (new): Key distribution and rotation — coordinator key in SESSION_INFO, participant key registry, rotation via HEARTBEAT, watermark integrity binding in Verified profile
+- Two new message types: `SESSION_CLOSE`, `COORDINATOR_STATUS` (total: 19)
+- Four new error codes: `COORDINATOR_CONFLICT`, `STATE_DIVERGENCE`, `SESSION_CLOSED`, `CREDENTIAL_REJECTED`
+- Section 14.5–14.7 renumbered (old 14.5 → 14.7) with all cross-references updated
+
+**Contents:**
+
+| File | Description |
+|------|-------------|
+| `SPEC_v0.1.5_2026-04-03.md` | SPEC.md snapshot of the current v0.1.5 spec |
+| `MPAC_v0.1.5_Update_Record.md` | Detailed changelog: gap analysis → resolution map, impact on reference implementations |
+
+---
+
+## v0.1.6 — P0 Completion: OP_SUPERSEDE, Fault Recovery, JSON Schema (2026-04-03)
+
+Resolves all P0 priority items from v0.1.5's coverage assessment. After this version, all 19 message types have full handler implementations, the coordinator supports snapshot-based fault recovery with audit log replay, and machine-readable JSON Schema definitions cover all 11 message payload types.
+
+**Key changes:**
+- `OP_SUPERSEDE` handler implemented: validates superseded op is COMMITTED, transitions to SUPERSEDED state, chains state references, supports supersession chains
+- `SUPERSEDED` added to `OperationState` enum and state machine (`COMMITTED → SUPERSEDED` transition)
+- Coordinator fault recovery: `recover_from_snapshot()` restores all internal state (participants, intents, operations, conflicts, Lamport clock, session status); `replay_audit_log()` replays messages received after snapshot
+- Audit log recording: all processed messages stored for replay on recovery
+- JSON Schema: added `session_close.schema.json`, `coordinator_status.schema.json`, `op_supersede.schema.json`; updated `envelope.schema.json` with new message types
+- Tests: Python 55 → 70 (+15), TypeScript 44 → 56 (+12)
+
+**Contents:**
+
+| File | Description |
+|------|-------------|
+| `SPEC_v0.1.6_2026-04-03.md` | SPEC.md snapshot of the v0.1.6 spec |
+| `MPAC_v0.1.6_Update_Record.md` | Detailed changelog: P0 items → resolution, coverage impact |
 
 ---
 

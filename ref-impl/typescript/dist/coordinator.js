@@ -19,6 +19,8 @@ export class SessionCoordinator {
     unavailabilityTimeoutMs;
     resolutionTimeoutMs;
     claims = new Map(); // original_intent_id → claim_id
+    sessionClosed;
+    sessionStartedAt;
     constructor(sessionId, securityProfile = SecurityProfile.OPEN, complianceProfile = ComplianceProfile.CORE, intentExpiryGraceSec = 30, unavailabilityTimeoutSec = 90, resolutionTimeoutSec = 300) {
         this.sessionId = sessionId;
         this.securityProfile = securityProfile;
@@ -28,6 +30,9 @@ export class SessionCoordinator {
         this.intentExpiryGraceSec = intentExpiryGraceSec;
         this.unavailabilityTimeoutMs = unavailabilityTimeoutSec * 1000;
         this.resolutionTimeoutMs = resolutionTimeoutSec * 1000;
+        this.coordinatorId = `service:coordinator-${sessionId}`;
+        this.sessionClosed = false;
+        this.sessionStartedAt = Date.now();
     }
     // ================================================================
     //  Main message processing
@@ -42,7 +47,16 @@ export class SessionCoordinator {
         const pInfo = this.participants.get(pid);
         if (pInfo)
             pInfo.last_seen = Date.now();
-        switch (envelope.message_type) {
+        const mt = envelope.message_type;
+        // Reject messages for closed sessions
+        if (this.sessionClosed && mt !== MessageType.SESSION_CLOSE && mt !== MessageType.GOODBYE) {
+            return [this.makeEnvelope(MessageType.PROTOCOL_ERROR, {
+                    error_code: "SESSION_CLOSED",
+                    refers_to: envelope.message_id,
+                    description: `Session ${this.sessionId} has been closed`,
+                })];
+        }
+        switch (mt) {
             case MessageType.HELLO:
                 responses.push(...this.handleHello(envelope));
                 break;
@@ -82,6 +96,12 @@ export class SessionCoordinator {
             case MessageType.RESOLUTION:
                 responses.push(...this.handleResolution(envelope));
                 break;
+            case MessageType.SESSION_CLOSE:
+                // SESSION_CLOSE is coordinator-originated only
+                return [];
+            case MessageType.COORDINATOR_STATUS:
+                // COORDINATOR_STATUS is outbound-only
+                return [];
         }
         return responses;
     }
@@ -663,6 +683,142 @@ export class SessionCoordinator {
                 return pid;
         }
         return undefined;
+    }
+    // ================================================================
+    //  Session lifecycle (v0.1.5)
+    // ================================================================
+    closeSession(reason = "manual") {
+        if (this.sessionClosed)
+            return [];
+        this.sessionClosed = true;
+        // Withdraw all active intents
+        for (const intent of this.intents.values()) {
+            if (!intent.stateMachine.isTerminal() && intent.stateMachine.currentState !== IntentState.ANNOUNCED) {
+                try {
+                    intent.stateMachine.transition("withdraw");
+                }
+                catch { }
+            }
+        }
+        // Abandon all in-flight operations
+        for (const op of this.operations.values()) {
+            if (op.stateMachine.currentState === OperationState.PROPOSED || op.stateMachine.currentState === OperationState.FROZEN) {
+                try {
+                    op.stateMachine.transition("abandon");
+                }
+                catch { }
+            }
+        }
+        const summary = this.buildSessionSummary();
+        return [this.makeEnvelope(MessageType.SESSION_CLOSE, {
+                reason,
+                final_lamport_clock: this.lamportClock.value,
+                summary,
+                active_intents_disposition: "withdraw_all",
+            })];
+    }
+    checkAutoClose() {
+        if (this.sessionClosed)
+            return [];
+        for (const intent of this.intents.values()) {
+            if (!intent.stateMachine.isTerminal())
+                return [];
+        }
+        for (const op of this.operations.values()) {
+            if (op.stateMachine.currentState === OperationState.PROPOSED || op.stateMachine.currentState === OperationState.FROZEN)
+                return [];
+        }
+        for (const conflict of this.conflicts.values()) {
+            if (conflict.stateMachine.currentState !== ConflictState.CLOSED && conflict.stateMachine.currentState !== ConflictState.DISMISSED)
+                return [];
+        }
+        if (this.intents.size === 0)
+            return [];
+        return this.closeSession("completed");
+    }
+    coordinatorStatus(event = "heartbeat") {
+        let openConflicts = 0;
+        for (const c of this.conflicts.values()) {
+            if (c.stateMachine.currentState !== ConflictState.CLOSED && c.stateMachine.currentState !== ConflictState.DISMISSED)
+                openConflicts++;
+        }
+        let activeParticipants = 0;
+        for (const p of this.participants.values()) {
+            if (p.is_available)
+                activeParticipants++;
+        }
+        return [this.makeEnvelope(MessageType.COORDINATOR_STATUS, {
+                event,
+                coordinator_id: this.coordinatorId,
+                session_health: openConflicts === 0 ? "healthy" : "degraded",
+                active_participants: activeParticipants,
+                open_conflicts: openConflicts,
+                snapshot_lamport_clock: this.lamportClock.value,
+            })];
+    }
+    snapshot() {
+        const participants = [];
+        for (const [pid, info] of this.participants.entries()) {
+            participants.push({
+                principal_id: pid,
+                display_name: info.principal.display_name,
+                roles: info.principal.roles,
+                status: info.status,
+                is_available: info.is_available,
+                last_seen: new Date(info.last_seen).toISOString(),
+            });
+        }
+        const intents = [];
+        for (const intent of this.intents.values()) {
+            intents.push({
+                intent_id: intent.intent_id,
+                principal_id: intent.principal_id,
+                state: intent.stateMachine.currentState,
+                scope: intent.scope,
+                expires_at: intent.expires_at ? new Date(intent.expires_at).toISOString() : null,
+            });
+        }
+        const operations = [];
+        for (const op of this.operations.values()) {
+            operations.push({
+                op_id: op.op_id,
+                intent_id: op.intent_id,
+                state: op.stateMachine.currentState,
+                target: op.target,
+            });
+        }
+        const conflicts = [];
+        for (const c of this.conflicts.values()) {
+            conflicts.push({
+                conflict_id: c.conflict_id,
+                state: c.stateMachine.currentState,
+                related_intents: c.related_intents || [c.intent_a, c.intent_b],
+                related_ops: c.related_ops || [],
+            });
+        }
+        return {
+            snapshot_version: 1,
+            session_id: this.sessionId,
+            protocol_version: "0.1.5",
+            captured_at: new Date().toISOString(),
+            lamport_clock: this.lamportClock.value,
+            participants,
+            intents,
+            operations,
+            conflicts,
+            session_closed: this.sessionClosed,
+        };
+    }
+    buildSessionSummary() {
+        const nowMs = Date.now();
+        const durationSec = Math.floor((nowMs - this.sessionStartedAt) / 1000);
+        return {
+            total_intents: this.intents.size,
+            total_operations: this.operations.size,
+            total_conflicts: this.conflicts.size,
+            total_participants: this.participants.size,
+            duration_sec: durationSec,
+        };
     }
     // Accessors for testing
     getParticipant(id) { return this.participants.get(id); }

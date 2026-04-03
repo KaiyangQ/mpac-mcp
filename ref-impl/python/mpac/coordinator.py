@@ -24,6 +24,7 @@ from .models import (
     IntentState,
     OperationState,
     ConflictState,
+    Credential,
 )
 from .envelope import MessageEnvelope
 from .watermark import LamportClock
@@ -132,6 +133,15 @@ class SessionCoordinator:
         self.conflicts: Dict[str, Conflict] = {}
         self.lamport_clock = LamportClock()
         self.claims: Dict[str, str] = {}  # original_intent_id → claim_id
+        self.coordinator_id = f"service:coordinator-{session_id}"
+        self.session_closed = False
+        self.session_started_at = _now()
+        self.lifecycle_policy = {
+            "auto_close": False,
+            "auto_close_grace_sec": 60,
+            "session_ttl_sec": 0,
+        }
+        self.audit_log: List[Dict[str, Any]] = []
 
     # ================================================================
     #  Main message processing
@@ -140,6 +150,9 @@ class SessionCoordinator:
     def process_message(self, envelope_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Process incoming message and generate responses."""
         envelope = MessageEnvelope.from_dict(envelope_dict)
+
+        # Append to audit log for fault recovery
+        self.audit_log.append(envelope_dict)
 
         # Update lamport clock
         if envelope.watermark and envelope.watermark.kind == "lamport_clock":
@@ -153,6 +166,17 @@ class SessionCoordinator:
         # Route message by type
         mt = envelope.message_type
         responses: List[MessageEnvelope] = []
+
+        # Reject messages for closed sessions
+        if self.session_closed and mt != MessageType.GOODBYE.value:
+            return [self._make_envelope(
+                MessageType.PROTOCOL_ERROR.value,
+                {
+                    "error_code": "SESSION_CLOSED",
+                    "refers_to": envelope.message_id,
+                    "description": f"Session {self.session_id} has been closed",
+                },
+            ).to_dict()]
 
         if mt == MessageType.HELLO.value:
             responses = self._handle_hello(envelope)
@@ -172,6 +196,8 @@ class SessionCoordinator:
             responses = self._handle_op_propose(envelope)
         elif mt == MessageType.OP_COMMIT.value:
             responses = self._handle_op_commit(envelope)
+        elif mt == MessageType.OP_SUPERSEDE.value:
+            responses = self._handle_op_supersede(envelope)
         elif mt == MessageType.CONFLICT_REPORT.value:
             responses = self._handle_conflict_report(envelope)
         elif mt == MessageType.CONFLICT_ACK.value:
@@ -180,6 +206,10 @@ class SessionCoordinator:
             responses = self._handle_conflict_escalate(envelope)
         elif mt == MessageType.RESOLUTION.value:
             responses = self._handle_resolution(envelope)
+        elif mt == MessageType.SESSION_CLOSE.value:
+            responses = self._handle_session_close(envelope)
+        elif mt == MessageType.COORDINATOR_STATUS.value:
+            responses = []  # Coordinator status is outbound-only
 
         return [r.to_dict() for r in responses]
 
@@ -768,6 +798,61 @@ class SessionCoordinator:
 
         return []
 
+    def _handle_op_supersede(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
+        """Handle OP_SUPERSEDE (Section 16.5).
+
+        Marks a previously committed operation as superseded by a new one.
+        """
+        op_id = envelope.payload.get("op_id")
+        supersedes_op_id = envelope.payload.get("supersedes_op_id")
+        intent_id = envelope.payload.get("intent_id")
+        target = envelope.payload.get("target")
+        reason = envelope.payload.get("reason")
+
+        # Validate the superseded operation exists and is COMMITTED
+        if supersedes_op_id not in self.operations:
+            return [self._make_protocol_error(
+                "INVALID_REFERENCE",
+                envelope.message_id,
+                f"Operation {supersedes_op_id} does not exist",
+            )]
+
+        old_op = self.operations[supersedes_op_id]
+        if old_op.state_machine.current_state != OperationState.COMMITTED:
+            return [self._make_protocol_error(
+                "INVALID_REFERENCE",
+                envelope.message_id,
+                f"Operation {supersedes_op_id} is not COMMITTED (state: {old_op.state_machine.current_state.value})",
+            )]
+
+        # Transition the old operation to SUPERSEDED
+        old_op.state_machine.transition("SUPERSEDED")
+
+        # Create the new operation as COMMITTED directly
+        state_machine = OperationStateMachine()
+        new_op = Operation(
+            op_id=op_id,
+            intent_id=intent_id or old_op.intent_id,
+            principal_id=envelope.sender.principal_id,
+            target=target or old_op.target,
+            op_kind=envelope.payload.get("op_kind", old_op.op_kind),
+            state_machine=state_machine,
+            state_ref_before=old_op.state_ref_after,  # chain state refs
+            state_ref_after=envelope.payload.get("state_ref_after"),
+        )
+        state_machine.transition("COMMITTED")
+        self.operations[op_id] = new_op
+
+        # Track in related conflicts
+        effective_intent_id = intent_id or old_op.intent_id
+        if effective_intent_id:
+            for conflict in self.conflicts.values():
+                if effective_intent_id in (conflict.intent_a, conflict.intent_b):
+                    if op_id not in conflict.related_ops:
+                        conflict.related_ops.append(op_id)
+
+        return []
+
     # ================================================================
     #  Conflict layer handlers
     # ================================================================
@@ -1060,3 +1145,327 @@ class SessionCoordinator:
             if "arbiter" in info.principal.roles:
                 return pid
         return None
+
+    # ================================================================
+    #  Fault Recovery (Section 8.1.1)
+    # ================================================================
+
+    def recover_from_snapshot(self, snapshot_data: Dict[str, Any]) -> None:
+        """Restore coordinator state from a snapshot (Section 8.1.1.3).
+
+        Reconstructs all internal state from a previously captured snapshot.
+        After recovery, the audit log should be replayed for any messages
+        received after the snapshot was taken.
+        """
+        # Restore lamport clock
+        self.lamport_clock = LamportClock()
+        self.lamport_clock.reset(snapshot_data.get("lamport_clock", 0))
+
+        # Restore session state
+        self.session_closed = snapshot_data.get("session_closed", False)
+
+        # Restore participants
+        self.participants.clear()
+        for p_data in snapshot_data.get("participants", []):
+            principal = Principal(
+                principal_id=p_data["principal_id"],
+                principal_type="agent",  # default; snapshot doesn't store type
+                display_name=p_data.get("display_name", ""),
+                roles=p_data.get("roles", ["participant"]),
+            )
+            self.participants[p_data["principal_id"]] = ParticipantInfo(
+                principal=principal,
+                last_seen=datetime.fromisoformat(p_data["last_seen"]) if isinstance(p_data.get("last_seen"), str) else _now(),
+                status=p_data.get("status", "idle"),
+                is_available=p_data.get("is_available", True),
+            )
+
+        # Restore intents
+        self.intents.clear()
+        for i_data in snapshot_data.get("intents", []):
+            state_str = i_data.get("state", "ACTIVE")
+            initial_state = IntentState.ANNOUNCED
+            sm = IntentStateMachine(initial_state)
+            # Walk to target state
+            if state_str == "ACTIVE":
+                sm.transition("ACTIVE")
+            elif state_str == "EXPIRED":
+                sm.transition("ACTIVE")
+                sm.transition("EXPIRED")
+            elif state_str == "WITHDRAWN":
+                sm.transition("ACTIVE")
+                sm.transition("WITHDRAWN")
+            elif state_str == "SUPERSEDED":
+                sm.transition("ACTIVE")
+                sm.transition("SUPERSEDED")
+            elif state_str == "SUSPENDED":
+                sm.transition("ACTIVE")
+                sm.transition("SUSPENDED")
+
+            scope_data = i_data.get("scope", {})
+            scope = Scope.from_dict(scope_data) if isinstance(scope_data, dict) else Scope(kind="file_set")
+
+            expires_at = None
+            if i_data.get("expires_at"):
+                try:
+                    expires_at = datetime.fromisoformat(i_data["expires_at"])
+                except (ValueError, TypeError):
+                    pass
+
+            intent = Intent(
+                intent_id=i_data["intent_id"],
+                principal_id=i_data.get("principal_id", ""),
+                objective=i_data.get("objective", ""),
+                scope=scope,
+                state_machine=sm,
+                expires_at=expires_at,
+            )
+            self.intents[i_data["intent_id"]] = intent
+
+        # Restore operations
+        self.operations.clear()
+        for o_data in snapshot_data.get("operations", []):
+            state_str = o_data.get("state", "PROPOSED")
+            sm = OperationStateMachine()
+            if state_str == "COMMITTED":
+                sm.transition("COMMITTED")
+            elif state_str == "REJECTED":
+                sm.transition("REJECTED")
+            elif state_str == "ABANDONED":
+                sm.transition("ABANDONED")
+            elif state_str == "FROZEN":
+                sm.transition("FROZEN")
+            elif state_str == "SUPERSEDED":
+                sm.transition("COMMITTED")
+                sm.transition("SUPERSEDED")
+
+            op = Operation(
+                op_id=o_data["op_id"],
+                intent_id=o_data.get("intent_id", ""),
+                principal_id=o_data.get("principal_id", ""),
+                target=o_data.get("target", ""),
+                op_kind=o_data.get("op_kind", ""),
+                state_machine=sm,
+            )
+            self.operations[o_data["op_id"]] = op
+
+        # Restore conflicts
+        self.conflicts.clear()
+        for c_data in snapshot_data.get("conflicts", []):
+            state_str = c_data.get("state", "OPEN")
+            sm = ConflictStateMachine()
+            if state_str == "ACKED":
+                sm.transition("ACKED")
+            elif state_str == "ESCALATED":
+                sm.transition("ACKED")
+                sm.transition("ESCALATED")
+            elif state_str == "RESOLVED":
+                sm.transition("ACKED")
+                sm.transition("RESOLVED")
+            elif state_str == "CLOSED":
+                sm.transition("ACKED")
+                sm.transition("RESOLVED")
+                sm.transition("CLOSED")
+            elif state_str == "DISMISSED":
+                sm.transition("DISMISSED")
+
+            conflict = Conflict(
+                conflict_id=c_data["conflict_id"],
+                category=c_data.get("category", "scope_overlap"),
+                severity=c_data.get("severity", "medium"),
+                principal_a=c_data.get("principal_a", ""),
+                principal_b=c_data.get("principal_b", ""),
+                intent_a=c_data.get("intent_a", ""),
+                intent_b=c_data.get("intent_b", ""),
+                state_machine=sm,
+                related_intents=c_data.get("related_intents", []),
+                related_ops=c_data.get("related_ops", []),
+            )
+            self.conflicts[c_data["conflict_id"]] = conflict
+
+    def replay_audit_log(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Replay audit log messages after snapshot recovery (Section 8.1.1.3).
+
+        Processes a list of messages that were received after the snapshot
+        was taken, in order. Returns all responses generated.
+        """
+        all_responses: List[Dict[str, Any]] = []
+        for msg in messages:
+            responses = self.process_message(msg)
+            all_responses.extend(responses)
+        return all_responses
+
+    # ================================================================
+    #  Session lifecycle (Section 9.6)
+    # ================================================================
+
+    def close_session(self, reason: str = "manual") -> List[Dict[str, Any]]:
+        """Close the session (Section 9.6 / 14.5).
+
+        Called externally to close the session. Generates SESSION_CLOSE message.
+        """
+        if self.session_closed:
+            return []
+
+        self.session_closed = True
+
+        # Withdraw all active intents
+        for intent in self.intents.values():
+            if not intent.state_machine.is_terminal() and intent.state_machine.current_state != IntentState.ANNOUNCED:
+                try:
+                    intent.state_machine.transition("WITHDRAWN")
+                except ValueError:
+                    pass
+
+        # Abandon all in-flight operations
+        for op in self.operations.values():
+            if op.state_machine.current_state in (OperationState.PROPOSED, OperationState.FROZEN):
+                try:
+                    op.state_machine.transition("ABANDONED")
+                except ValueError:
+                    pass
+
+        summary = self._build_session_summary()
+
+        close_msg = self._make_envelope(
+            MessageType.SESSION_CLOSE.value,
+            {
+                "reason": reason,
+                "final_lamport_clock": self.lamport_clock.value,
+                "summary": summary,
+                "active_intents_disposition": "withdraw_all",
+            },
+        )
+
+        return [close_msg.to_dict()]
+
+    def _handle_session_close(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
+        """Handle incoming SESSION_CLOSE (only valid from coordinator itself)."""
+        # SESSION_CLOSE is coordinator-originated; if received from participant, ignore
+        return []
+
+    def check_auto_close(self) -> List[Dict[str, Any]]:
+        """Check if session should auto-close (Section 9.6.1).
+
+        Auto-closes when all intents terminal, all ops terminal, all conflicts closed.
+        """
+        if self.session_closed:
+            return []
+
+        # Check if all intents are terminal
+        for intent in self.intents.values():
+            if not intent.state_machine.is_terminal():
+                return []
+
+        # Check if all operations are terminal
+        for op in self.operations.values():
+            if op.state_machine.current_state in (OperationState.PROPOSED, OperationState.FROZEN):
+                return []
+
+        # Check if all conflicts are closed/dismissed
+        for conflict in self.conflicts.values():
+            if conflict.state_machine.current_state not in (ConflictState.CLOSED, ConflictState.DISMISSED):
+                return []
+
+        # Must have at least one intent to auto-close (empty session doesn't auto-close)
+        if not self.intents:
+            return []
+
+        return self.close_session("completed")
+
+    def coordinator_status(self, event: str = "heartbeat") -> List[Dict[str, Any]]:
+        """Generate a COORDINATOR_STATUS message (Section 14.6 / 8.1.1.1)."""
+        open_conflicts = sum(
+            1 for c in self.conflicts.values()
+            if c.state_machine.current_state not in (ConflictState.CLOSED, ConflictState.DISMISSED)
+        )
+        active_participants = sum(
+            1 for p in self.participants.values()
+            if p.is_available
+        )
+
+        msg = self._make_envelope(
+            MessageType.COORDINATOR_STATUS.value,
+            {
+                "event": event,
+                "coordinator_id": self.coordinator_id,
+                "session_health": "healthy" if open_conflicts == 0 else "degraded",
+                "active_participants": active_participants,
+                "open_conflicts": open_conflicts,
+                "snapshot_lamport_clock": self.lamport_clock.value,
+            },
+        )
+        return [msg.to_dict()]
+
+    def snapshot(self) -> Dict[str, Any]:
+        """Generate a state snapshot (Section 8.1.1.2)."""
+        return {
+            "snapshot_version": 1,
+            "session_id": self.session_id,
+            "protocol_version": "0.1.6",
+            "captured_at": _now().isoformat(),
+            "lamport_clock": self.lamport_clock.value,
+            "participants": [
+                {
+                    "principal_id": info.principal.principal_id,
+                    "display_name": info.principal.display_name,
+                    "roles": info.principal.roles,
+                    "status": info.status,
+                    "is_available": info.is_available,
+                    "last_seen": info.last_seen.isoformat(),
+                }
+                for info in self.participants.values()
+            ],
+            "intents": [
+                {
+                    "intent_id": intent.intent_id,
+                    "principal_id": intent.principal_id,
+                    "state": intent.state_machine.current_state.value,
+                    "scope": intent.scope.to_dict() if hasattr(intent.scope, 'to_dict') else intent.scope,
+                    "expires_at": intent.expires_at.isoformat() if intent.expires_at else None,
+                }
+                for intent in self.intents.values()
+            ],
+            "operations": [
+                {
+                    "op_id": op.op_id,
+                    "intent_id": op.intent_id,
+                    "state": op.state_machine.current_state.value,
+                    "target": op.target,
+                }
+                for op in self.operations.values()
+            ],
+            "conflicts": [
+                {
+                    "conflict_id": c.conflict_id,
+                    "state": c.state_machine.current_state.value,
+                    "related_intents": c.related_intents,
+                    "related_ops": c.related_ops,
+                }
+                for c in self.conflicts.values()
+            ],
+            "session_closed": self.session_closed,
+        }
+
+    def _build_session_summary(self) -> Dict[str, Any]:
+        """Build session summary for SESSION_CLOSE."""
+        now = _now()
+        duration = (now - self.session_started_at).total_seconds()
+
+        intent_states = {}
+        for intent in self.intents.values():
+            state = intent.state_machine.current_state.value
+            intent_states[state] = intent_states.get(state, 0) + 1
+
+        op_states = {}
+        for op in self.operations.values():
+            state = op.state_machine.current_state.value
+            op_states[state] = op_states.get(state, 0) + 1
+
+        return {
+            "total_intents": len(self.intents),
+            "total_operations": len(self.operations),
+            "total_conflicts": len(self.conflicts),
+            "total_participants": len(self.participants),
+            "duration_sec": int(duration),
+        }

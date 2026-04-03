@@ -60,6 +60,8 @@ export declare class SessionCoordinator {
     private unavailabilityTimeoutMs;
     private resolutionTimeoutMs;
     private claims;
+    private sessionClosed;
+    private sessionStartedAt;
     constructor(sessionId: string, securityProfile?: SecurityProfile, complianceProfile?: ComplianceProfile, intentExpiryGraceSec?: number, unavailabilityTimeoutSec?: number, resolutionTimeoutSec?: number);
     processMessage(envelope: MessageEnvelope): MessageEnvelope[];
     checkExpiry(nowMs?: number): MessageEnvelope[];
@@ -85,6 +87,11 @@ export declare class SessionCoordinator {
     private makeOpReject;
     private detectScopeOverlaps;
     private findArbiter;
+    closeSession(reason?: string): MessageEnvelope[];
+    checkAutoClose(): MessageEnvelope[];
+    coordinatorStatus(event?: string): MessageEnvelope[];
+    snapshot(): any;
+    private buildSessionSummary;
     getParticipant(id: string): ParticipantInfo | undefined;
     getIntent(id: string): Intent | undefined;
     getOperation(id: string): Operation | undefined;

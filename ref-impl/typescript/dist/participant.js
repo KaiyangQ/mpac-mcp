@@ -8,13 +8,15 @@ export class Participant {
     roles;
     capabilities;
     lamportClock;
-    constructor(principalId, principalType, displayName, roles = [], capabilities = []) {
+    credential;
+    constructor(principalId, principalType, displayName, roles = [], capabilities = [], credential) {
         this.principalId = principalId;
         this.principalType = principalType;
         this.displayName = displayName;
         this.roles = roles;
         this.capabilities = capabilities;
         this.lamportClock = new LamportClock();
+        this.credential = credential;
     }
     sender() {
         return { principal_id: this.principalId, principal_type: this.principalType };
@@ -26,9 +28,12 @@ export class Participant {
     //  Session layer
     // ================================================================
     hello(sessionId) {
-        return this.make(MessageType.HELLO, sessionId, {
+        const payload = {
             display_name: this.displayName, roles: this.roles, capabilities: this.capabilities,
-        });
+        };
+        if (this.credential)
+            payload.credential = this.credential;
+        return this.make(MessageType.HELLO, sessionId, payload);
     }
     heartbeat(sessionId, status = "idle", activeIntentId, summary) {
         const payload = { status };

@@ -4,13 +4,13 @@
       "protocol": "MPAC",
       "version": "0.1.4",
       "message_type": "HELLO",
-      "message_id": "0b5b3bf5-8ddc-4ebb-8e78-95fa3a463662",
+      "message_id": "97804319-45cf-468d-8567-d5cf687b2750",
       "session_id": "interop-test-session-001",
       "sender": {
         "principal_id": "agent:alice",
         "principal_type": "agent"
       },
-      "ts": "2026-04-03T20:57:32.453655Z",
+      "ts": "2026-04-03T23:17:20.851426Z",
       "payload": {
         "display_name": "Alice Coder",
         "roles": [
@@ -31,13 +31,13 @@
         "protocol": "MPAC",
         "version": "0.1.4",
         "message_type": "SESSION_INFO",
-        "message_id": "199b1aba-8773-448f-88a1-d63fb74db5fb",
+        "message_id": "e9931908-131f-4698-b8d2-67f537ff88ff",
         "session_id": "interop-test-session-001",
         "sender": {
           "principal_id": "coordinator",
           "principal_type": "coordinator"
         },
-        "ts": "2026-04-03T20:57:32.458440Z",
+        "ts": "2026-04-03T23:17:20.856140Z",
         "payload": {
           "security_profile": "open",
           "compliance_profile": "core"
@@ -55,13 +55,13 @@
       "protocol": "MPAC",
       "version": "0.1.4",
       "message_type": "HELLO",
-      "message_id": "c9b13044-b553-4242-b4f3-c6fd72db0bc9",
+      "message_id": "be3711cf-cf49-43a6-8cba-8bc69cb38dd9",
       "session_id": "interop-test-session-001",
       "sender": {
         "principal_id": "agent:bob",
         "principal_type": "agent"
       },
-      "ts": "2026-04-03T20:57:32.453689Z",
+      "ts": "2026-04-03T23:17:20.851457Z",
       "payload": {
         "display_name": "Bob Reviewer",
         "roles": [
@@ -83,13 +83,13 @@
         "protocol": "MPAC",
         "version": "0.1.4",
         "message_type": "SESSION_INFO",
-        "message_id": "933f7e18-fe5e-43d2-9cc4-c97dd00ea7f4",
+        "message_id": "dd0f5bb2-1273-4b23-beb4-05d869bf1d75",
         "session_id": "interop-test-session-001",
         "sender": {
           "principal_id": "coordinator",
           "principal_type": "coordinator"
         },
-        "ts": "2026-04-03T20:57:32.458471Z",
+        "ts": "2026-04-03T23:17:20.856219Z",
         "payload": {
           "security_profile": "open",
           "compliance_profile": "core"
@@ -107,13 +107,13 @@
       "protocol": "MPAC",
       "version": "0.1.4",
       "message_type": "INTENT_ANNOUNCE",
-      "message_id": "957071e3-d99d-4c7a-8f07-8cdd3927049a",
+      "message_id": "4e68919f-b6e8-4ec5-bf64-337ad16241f6",
       "session_id": "interop-test-session-001",
       "sender": {
         "principal_id": "agent:alice",
         "principal_type": "agent"
       },
-      "ts": "2026-04-03T20:57:32.453703Z",
+      "ts": "2026-04-03T23:17:20.851467Z",
       "payload": {
         "intent_id": "intent-alice-001",
         "objective": "Refactor auth module",
@@ -138,13 +138,13 @@
       "protocol": "MPAC",
       "version": "0.1.4",
       "message_type": "INTENT_ANNOUNCE",
-      "message_id": "1936572a-f928-4e3e-8889-cf4bcd8ba6c5",
+      "message_id": "916fad7e-9997-48a2-8721-629c9d6a5b90",
       "session_id": "interop-test-session-001",
       "sender": {
         "principal_id": "agent:bob",
         "principal_type": "agent"
       },
-      "ts": "2026-04-03T20:57:32.453711Z",
+      "ts": "2026-04-03T23:17:20.851476Z",
       "payload": {
         "intent_id": "intent-bob-001",
         "objective": "Update database schema",
@@ -169,13 +169,13 @@
       "protocol": "MPAC",
       "version": "0.1.4",
       "message_type": "INTENT_ANNOUNCE",
-      "message_id": "e5ba1a1a-29b4-42de-9cb5-5c5d2ab76445",
+      "message_id": "f72c3b72-a17a-410b-8b40-a4b8a16f929e",
       "session_id": "interop-test-session-001",
       "sender": {
         "principal_id": "agent:bob",
         "principal_type": "agent"
       },
-      "ts": "2026-04-03T20:57:32.453718Z",
+      "ts": "2026-04-03T23:17:20.851482Z",
       "payload": {
         "intent_id": "intent-bob-002",
         "objective": "Fix auth bug",
@@ -197,15 +197,15 @@
         "protocol": "MPAC",
         "version": "0.1.4",
         "message_type": "CONFLICT_REPORT",
-        "message_id": "1817c97c-3d67-4a3f-8ec9-ea7b3ccfb3c8",
+        "message_id": "f6a68209-e350-49f1-960c-02fab418d29d",
         "session_id": "interop-test-session-001",
         "sender": {
           "principal_id": "coordinator",
           "principal_type": "coordinator"
         },
-        "ts": "2026-04-03T20:57:32.458575Z",
+        "ts": "2026-04-03T23:17:20.856311Z",
         "payload": {
-          "conflict_id": "a26229b9-c3f5-45cf-b307-613702accea0",
+          "conflict_id": "2c01ee2e-d394-42ae-88d8-c6aad37d0b4c",
           "category": "scope_overlap",
           "severity": "medium",
           "principal_a": "agent:bob",
@@ -226,13 +226,13 @@
       "protocol": "MPAC",
       "version": "0.1.4",
       "message_type": "OP_PROPOSE",
-      "message_id": "5b4f01fb-bf4e-411d-b91b-10b25a45d9ff",
+      "message_id": "492b74e0-2fa3-40bd-9d60-d73a301e9caf",
       "session_id": "interop-test-session-001",
       "sender": {
         "principal_id": "agent:alice",
         "principal_type": "agent"
       },
-      "ts": "2026-04-03T20:57:32.453726Z",
+      "ts": "2026-04-03T23:17:20.851489Z",
       "payload": {
         "op_id": "op-alice-001",
         "intent_id": "intent-alice-001",
@@ -252,13 +252,13 @@
       "protocol": "MPAC",
       "version": "0.1.4",
       "message_type": "OP_COMMIT",
-      "message_id": "aeb0e335-9615-45f5-81a6-5300de9379f4",
+      "message_id": "c7fbf56c-e157-4795-8989-2328d0442144",
       "session_id": "interop-test-session-001",
       "sender": {
         "principal_id": "agent:alice",
         "principal_type": "agent"
       },
-      "ts": "2026-04-03T20:57:32.453732Z",
+      "ts": "2026-04-03T23:17:20.851496Z",
       "payload": {
         "op_id": "op-alice-001",
         "intent_id": "intent-alice-001",

@@ -4,7 +4,7 @@
 
 MPAC is an application-layer protocol that provides coordination semantics for AI agents serving **multiple independent principals**. It handles the gap that MCP (tool invocation) and A2A (single-principal delegation) don't cover: structured coordination across organizational and trust boundaries.
 
-**Current version: v0.1.4** — draft protocol with working reference implementations. Not yet a production standard.
+**Current version: v0.1.6** — draft protocol with working reference implementations. Not yet a production standard.
 
 → [Read the introduction](./blog/introducing-mpac.md) for a full overview of the problem, design, and demo walkthrough.
 
@@ -22,7 +22,7 @@ MPAC organizes multi-agent coordination into five layers:
 | **Conflict** | Overlapping scopes or contradictory goals are detected and surfaced as structured objects |
 | **Governance** | Conflicts are resolved through arbitration, escalation, or policy — with human override always available |
 
-The protocol defines 17 message types, 3 state machines (Intent, Operation, Conflict), Lamport clock watermarking for causal ordering, and three security/compliance profiles.
+The protocol defines 19 message types, 3 state machines (Intent, Operation, Conflict), Lamport clock watermarking for causal ordering, and three security/compliance profiles.
 
 ---
 
@@ -37,14 +37,14 @@ blog/
 ref-impl/
   schema/                        ← JSON Schema (wire format definitions, Draft 2020-12)
     envelope.schema.json
-    messages/                    ← 8 message payload schemas
+    messages/                    ← 11 message payload schemas
     objects/                     ← 4 shared object schemas (Watermark, Scope, Basis, Outcome)
   python/                        ← Python reference implementation
     mpac/                        ← 8 core modules
-    tests/                       ← 7 test files (40 test cases)
+    tests/                       ← 9 test files (70 test cases)
   typescript/                    ← TypeScript reference implementation
     src/                         ← 8 source files
-    tests/                       ← 7 test files (34 test cases)
+    tests/                       ← 9 test files (56 test cases)
   demo/
     run_interop.sh               ← Cross-language interoperability test
     run_ai_agents.py             ← AI agent demo (2 Claude agents coordinating via MPAC)
@@ -59,9 +59,9 @@ daily_reports/                   ← Development logs
 
 ### Read the Spec
 
-The full protocol specification lives in [SPEC.md](./SPEC.md) — 24 sections covering all five layers, security profiles, compliance profiles, and cross-lifecycle state machine rules.
+The full protocol specification lives in [SPEC.md](./SPEC.md) — 30 sections covering all five layers, security profiles, compliance profiles, coordinator fault tolerance, session lifecycle, and cross-lifecycle state machine rules.
 
-For implementation, the [Developer Reference](./MPAC_Developer_Reference.md) provides a complete data dictionary: 10 core objects, 17 message types, 3 state machines, 8 enum registries, and an implementation checklist.
+For implementation, the [Developer Reference](./MPAC_Developer_Reference.md) provides a complete data dictionary: 10 core objects, 19 message types, 3 state machines, 8 enum registries, and an implementation checklist.
 
 ### Run the Reference Implementations
 
@@ -91,7 +91,7 @@ This exchanges 14 messages bidirectionally between the two implementations with 
 
 ### AI Agent Demo
 
-Two Claude agents (Alice: security engineer, Bob: code quality engineer) independently decide what to work on in a shared codebase, announce intents through MPAC, and negotiate when the coordinator detects a scope overlap conflict:
+Two Claude agents (Alice: security engineer, Bob: code quality engineer) independently decide what to work on in a shared codebase, announce intents through MPAC, negotiate when the coordinator detects a scope overlap conflict, and exercise v0.1.5+ features (coordinator status, state snapshot, session close):
 
 ```bash
 # Requires Anthropic API key in local_config.json
@@ -126,32 +126,32 @@ Do not commit `local_config.json` to a public repository.
 
 ## Current Coverage
 
-The reference implementations cover ~85% of protocol semantics across both Python and TypeScript (40 + 34 tests, 14-message cross-language interop):
+The reference implementations cover ~90% of protocol semantics across both Python and TypeScript (70 + 56 tests, 14-message cross-language interop, real Claude API end-to-end verification):
 
 | Dimension | Covered | Not yet covered |
 |-----------|---------|-----------------|
-| Message types | 16 of 17 (all except OP_SUPERSEDE) | OP_SUPERSEDE handler |
-| State machines | Full lifecycle: Expiry Cascade, Auto-Dismiss, FROZEN/SUSPENDED, resume/unfreeze | — |
+| Message types | **19 of 19** (100%) | — |
+| State machines | Full lifecycle: Expiry Cascade, Auto-Dismiss, FROZEN/SUSPENDED, resume/unfreeze, SUPERSEDED | — |
 | Liveness | Heartbeat tracking, unavailability detection, intent suspension, proposal abandonment, reconnection restoration | — |
 | Governance | ACK → ESCALATE → Arbiter RESOLUTION, auto-escalation on resolution timeout | Frozen scope enforcement |
 | Intent lifecycle | Announce, Update (objective/scope/TTL), Withdraw, Claim (first-claim-wins) | — |
-| Security | Enum definitions | Signature verification, replay detection, role-based access |
-| Robustness | Liveness detection, INTENT_CLAIM, disconnection recovery | Coordinator failover |
+| Security | Credential exchange (5 types), enum definitions | Signature verification, replay detection, role-based access |
+| Session lifecycle | SESSION_CLOSE, auto-close, summary, post-close rejection | Transcript export, lifecycle policy persistence |
+| Fault recovery | Coordinator status/heartbeat, state snapshot, snapshot recovery + audit log replay | Split-brain detection, multi-coordinator election |
+| Robustness | Liveness detection, INTENT_CLAIM, disconnection recovery, OP_SUPERSEDE chains | — |
 
 ---
 
 ## What's Next
 
-**P0 — Remaining gaps:**
-- OP_SUPERSEDE handler (last unimplemented message type)
-- Publish JSON Schema as standalone referenceable artifacts
-
 **P1 — Security and enforcement:**
-- Authenticated security profile (signing, replay detection)
+- Authenticated security profile (signing, replay detection, role-based access — credential exchange already done)
 - Frozen scope enforcement (block OP_COMMIT while conflict OPEN/ESCALATED)
+- Split-brain detection and multi-coordinator election
 - Multi-agent scenarios (3+ agents, governance conflicts, timeouts)
 
-**P2 — Conformance and verification:**
+**P2 — Protocol evolution and verification:**
+- v0.2.0 protocol advancement (scope expressiveness, post-commit rollback, cross-session coordination)
 - Conformance test suite (automated compliance testing via JSON Schema + interop messages)
 - TLA+ formal verification of state machine interactions
 - Performance benchmarks (scope overlap detection at scale)

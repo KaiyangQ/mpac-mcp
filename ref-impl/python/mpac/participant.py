@@ -18,12 +18,14 @@ class Participant:
         display_name: str,
         roles: List[str] = None,
         capabilities: List[str] = None,
+        credential: Optional[Dict[str, Any]] = None,
     ):
         self.principal_id = principal_id
         self.principal_type = principal_type
         self.display_name = display_name
         self.roles = roles or ["participant"]
         self.capabilities = capabilities or []
+        self.credential = credential  # {"type": "...", "value": "...", ...}
         self.lamport_clock = LamportClock()
 
     def _sender(self) -> Sender:
@@ -45,11 +47,14 @@ class Participant:
 
     def hello(self, session_id: str) -> Dict[str, Any]:
         """Send HELLO to join session."""
-        return self._make(MessageType.HELLO.value, session_id, {
+        payload = {
             "display_name": self.display_name,
             "roles": self.roles,
             "capabilities": self.capabilities,
-        })
+        }
+        if self.credential:
+            payload["credential"] = self.credential
+        return self._make(MessageType.HELLO.value, session_id, payload)
 
     def heartbeat(
         self,
@@ -197,6 +202,30 @@ class Participant:
             "state_ref_before": state_ref_before,
             "state_ref_after": state_ref_after,
         })
+
+    def supersede_op(
+        self,
+        session_id: str,
+        op_id: str,
+        supersedes_op_id: str,
+        target: str,
+        intent_id: Optional[str] = None,
+        reason: Optional[str] = None,
+        state_ref_after: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Supersede a previously committed operation (Section 16.5)."""
+        payload: Dict[str, Any] = {
+            "op_id": op_id,
+            "supersedes_op_id": supersedes_op_id,
+            "target": target,
+        }
+        if intent_id:
+            payload["intent_id"] = intent_id
+        if reason:
+            payload["reason"] = reason
+        if state_ref_after:
+            payload["state_ref_after"] = state_ref_after
+        return self._make(MessageType.OP_SUPERSEDE.value, session_id, payload)
 
     # ================================================================
     #  Conflict layer

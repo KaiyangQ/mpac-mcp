@@ -2,13 +2,13 @@
   "protocol": "MPAC",
   "version": "0.1.4",
   "message_type": "INTENT_ANNOUNCE",
-  "message_id": "e5ba1a1a-29b4-42de-9cb5-5c5d2ab76445",
+  "message_id": "f72c3b72-a17a-410b-8b40-a4b8a16f929e",
   "session_id": "interop-test-session-001",
   "sender": {
     "principal_id": "agent:bob",
     "principal_type": "agent"
   },
-  "ts": "2026-04-03T20:57:32.453718Z",
+  "ts": "2026-04-03T23:17:20.851482Z",
   "payload": {
     "intent_id": "intent-bob-002",
     "objective": "Fix auth bug",

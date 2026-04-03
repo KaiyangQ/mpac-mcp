@@ -2,13 +2,13 @@
   "protocol": "MPAC",
   "version": "0.1.4",
   "message_type": "HELLO",
-  "message_id": "15880eba-4b47-4193-8978-7b9ca5364f74",
+  "message_id": "6ba4e6b8-b7e2-4633-8f5b-60c5d4e919d9",
   "session_id": "interop-test-session-001",
   "sender": {
     "principal_id": "agent:bob-ts",
     "principal_type": "agent"
   },
-  "ts": "2026-04-03T20:57:32.492Z",
+  "ts": "2026-04-03T23:17:20.895Z",
   "payload": {
     "display_name": "Bob TS",
     "roles": [

@@ -7,7 +7,13 @@ export declare class Participant {
     private roles;
     private capabilities;
     private lamportClock;
-    constructor(principalId: string, principalType: string, displayName: string, roles?: Role[], capabilities?: string[]);
+    private credential?;
+    constructor(principalId: string, principalType: string, displayName: string, roles?: Role[], capabilities?: string[], credential?: {
+        type: string;
+        value: string;
+        issuer?: string;
+        expires_at?: string;
+    });
     private sender;
     private make;
     hello(sessionId: string): MessageEnvelope;

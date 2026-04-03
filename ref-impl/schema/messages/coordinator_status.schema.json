@@ -1,0 +1,26 @@
+{
+  "$id": "https://mpac-protocol.org/schema/messages/coordinator_status.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "COORDINATOR_STATUS Payload",
+  "type": "object",
+  "required": ["event", "coordinator_id", "session_health"],
+  "properties": {
+    "event": {
+      "type": "string",
+      "enum": ["heartbeat", "recovered", "handover", "assumed"]
+    },
+    "coordinator_id": { "type": "string" },
+    "session_health": {
+      "type": "string",
+      "enum": ["healthy", "degraded", "recovering"]
+    },
+    "active_participants": { "type": "integer" },
+    "open_conflicts": { "type": "integer" },
+    "snapshot_lamport_clock": { "type": "integer" },
+    "successor_coordinator_id": { "type": "string" },
+    "snapshot": {
+      "type": "object",
+      "description": "Optional state snapshot for recovery"
+    }
+  }
+}

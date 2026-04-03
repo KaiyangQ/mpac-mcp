@@ -29,6 +29,8 @@ class MessageType(Enum):
     CONFLICT_ESCALATE = "CONFLICT_ESCALATE"
     RESOLUTION = "RESOLUTION"
     PROTOCOL_ERROR = "PROTOCOL_ERROR"
+    SESSION_CLOSE = "SESSION_CLOSE"
+    COORDINATOR_STATUS = "COORDINATOR_STATUS"
 
 
 class IntentState(Enum):
@@ -48,6 +50,7 @@ class OperationState(Enum):
     REJECTED = "REJECTED"
     ABANDONED = "ABANDONED"
     FROZEN = "FROZEN"
+    SUPERSEDED = "SUPERSEDED"
 
 
 class ConflictState(Enum):
@@ -150,6 +153,43 @@ class ErrorCode(Enum):
     RESOLUTION_TIMEOUT = "RESOLUTION_TIMEOUT"
     SCOPE_FROZEN = "SCOPE_FROZEN"
     CLAIM_CONFLICT = "CLAIM_CONFLICT"
+    COORDINATOR_CONFLICT = "COORDINATOR_CONFLICT"
+    STATE_DIVERGENCE = "STATE_DIVERGENCE"
+    SESSION_CLOSED = "SESSION_CLOSED"
+    CREDENTIAL_REJECTED = "CREDENTIAL_REJECTED"
+
+
+class CredentialType(Enum):
+    """Credential types for authenticated/verified profiles."""
+    BEARER_TOKEN = "bearer_token"
+    MTLS_FINGERPRINT = "mtls_fingerprint"
+    API_KEY = "api_key"
+    X509_CHAIN = "x509_chain"
+    CUSTOM = "custom"
+
+
+class CoordinatorEvent(Enum):
+    """Coordinator status events."""
+    HEARTBEAT = "heartbeat"
+    RECOVERED = "recovered"
+    HANDOVER = "handover"
+    ASSUMED = "assumed"
+
+
+class SessionHealth(Enum):
+    """Session health status."""
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    RECOVERING = "recovering"
+
+
+class SessionCloseReason(Enum):
+    """Reasons for session close."""
+    COMPLETED = "completed"
+    TIMEOUT = "timeout"
+    POLICY = "policy"
+    COORDINATOR_SHUTDOWN = "coordinator_shutdown"
+    MANUAL = "manual"
 
 
 # ============================================================================
@@ -173,6 +213,32 @@ class Principal:
     def from_dict(cls, data: Dict[str, Any]) -> "Principal":
         """Create from dict."""
         return cls(**data)
+
+
+@dataclass
+class Credential:
+    """Authentication credential (Section 23.1.4)."""
+    type: str  # bearer_token | mtls_fingerprint | api_key | x509_chain | custom
+    value: str
+    issuer: Optional[str] = None
+    expires_at: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = {"type": self.type, "value": self.value}
+        if self.issuer is not None:
+            d["issuer"] = self.issuer
+        if self.expires_at is not None:
+            d["expires_at"] = self.expires_at
+        return d
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Credential":
+        return cls(
+            type=data["type"],
+            value=data["value"],
+            issuer=data.get("issuer"),
+            expires_at=data.get("expires_at"),
+        )
 
 
 @dataclass
@@ -358,6 +424,23 @@ class LivenessPolicy:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "LivenessPolicy":
         """Create from dict."""
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class LifecyclePolicy:
+    """Session lifecycle policy (Section 9.6.4)."""
+    auto_close: bool = False
+    auto_close_grace_sec: int = 60
+    session_ttl_sec: int = 0  # 0 = no TTL
+    transcript_export: bool = True
+    audit_retention_days: int = 90
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LifecyclePolicy":
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 

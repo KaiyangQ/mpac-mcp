@@ -69,10 +69,11 @@ class OperationStateMachine:
             OperationState.ABANDONED,
             OperationState.FROZEN,
         ],
-        OperationState.COMMITTED: [OperationState.FROZEN],
+        OperationState.COMMITTED: [OperationState.FROZEN, OperationState.SUPERSEDED],
         OperationState.REJECTED: [],
         OperationState.ABANDONED: [],
         OperationState.FROZEN: [OperationState.PROPOSED, OperationState.REJECTED, OperationState.ABANDONED],
+        OperationState.SUPERSEDED: [],
     }
 
     def __init__(self, initial_state: OperationState = OperationState.PROPOSED):
@@ -110,6 +111,7 @@ class OperationStateMachine:
             OperationState.REJECTED,
             OperationState.ABANDONED,
             OperationState.COMMITTED,
+            OperationState.SUPERSEDED,
         ]
 
 

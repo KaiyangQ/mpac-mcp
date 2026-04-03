@@ -99,10 +99,11 @@ export class OperationStateMachine {
   transition(event: string): OperationState {
     const validTransitions: Record<OperationState, string[]> = {
       [OperationState.PROPOSED]: ["commit", "reject", "abandon", "freeze"],
-      [OperationState.COMMITTED]: [],
+      [OperationState.COMMITTED]: ["supersede"],
       [OperationState.REJECTED]: [],
       [OperationState.ABANDONED]: [],
       [OperationState.FROZEN]: ["unfreeze", "reject", "abandon"],
+      [OperationState.SUPERSEDED]: [],
     };
 
     if (!validTransitions[this.state]?.includes(event)) {
@@ -121,6 +122,11 @@ export class OperationStateMachine {
           this.state = OperationState.ABANDONED;
         } else if (event === "freeze") {
           this.state = OperationState.FROZEN;
+        }
+        break;
+      case OperationState.COMMITTED:
+        if (event === "supersede") {
+          this.state = OperationState.SUPERSEDED;
         }
         break;
       case OperationState.FROZEN:
@@ -142,6 +148,7 @@ export class OperationStateMachine {
       OperationState.COMMITTED,
       OperationState.REJECTED,
       OperationState.ABANDONED,
+      OperationState.SUPERSEDED,
     ].includes(this.state);
   }
 }

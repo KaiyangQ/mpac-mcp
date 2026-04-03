@@ -83,6 +83,9 @@ export class SessionCoordinator {
   private unavailabilityTimeoutMs: number;
   private resolutionTimeoutMs: number;
   private claims: Map<string, string> = new Map(); // original_intent_id → claim_id
+  private sessionClosed: boolean;
+  private sessionStartedAt: number;
+  private auditLog: MessageEnvelope[] = [];
 
   constructor(
     sessionId: string,
@@ -100,6 +103,9 @@ export class SessionCoordinator {
     this.intentExpiryGraceSec = intentExpiryGraceSec;
     this.unavailabilityTimeoutMs = unavailabilityTimeoutSec * 1000;
     this.resolutionTimeoutMs = resolutionTimeoutSec * 1000;
+    this.coordinatorId = `service:coordinator-${sessionId}`;
+    this.sessionClosed = false;
+    this.sessionStartedAt = Date.now();
   }
 
   // ================================================================
@@ -108,6 +114,8 @@ export class SessionCoordinator {
 
   processMessage(envelope: MessageEnvelope): MessageEnvelope[] {
     const responses: MessageEnvelope[] = [];
+
+    this.auditLog.push(envelope);
 
     if (envelope.watermark) {
       this.lamportClock.processWatermark(envelope.watermark);
@@ -118,7 +126,18 @@ export class SessionCoordinator {
     const pInfo = this.participants.get(pid);
     if (pInfo) pInfo.last_seen = Date.now();
 
-    switch (envelope.message_type) {
+    const mt = envelope.message_type;
+
+    // Reject messages for closed sessions
+    if (this.sessionClosed && mt !== MessageType.SESSION_CLOSE && mt !== MessageType.GOODBYE) {
+      return [this.makeEnvelope(MessageType.PROTOCOL_ERROR, {
+        error_code: "SESSION_CLOSED",
+        refers_to: envelope.message_id,
+        description: `Session ${this.sessionId} has been closed`,
+      })];
+    }
+
+    switch (mt) {
       case MessageType.HELLO:
         responses.push(...this.handleHello(envelope)); break;
       case MessageType.HEARTBEAT:
@@ -137,6 +156,8 @@ export class SessionCoordinator {
         responses.push(...this.handleOpPropose(envelope)); break;
       case MessageType.OP_COMMIT:
         responses.push(...this.handleOpCommit(envelope)); break;
+      case MessageType.OP_SUPERSEDE:
+        responses.push(...this.handleOpSupersede(envelope)); break;
       case MessageType.CONFLICT_REPORT:
         responses.push(...this.handleConflictReport(envelope)); break;
       case MessageType.CONFLICT_ACK:
@@ -145,6 +166,12 @@ export class SessionCoordinator {
         responses.push(...this.handleConflictEscalate(envelope)); break;
       case MessageType.RESOLUTION:
         responses.push(...this.handleResolution(envelope)); break;
+      case MessageType.SESSION_CLOSE:
+        // SESSION_CLOSE is coordinator-originated only
+        return [];
+      case MessageType.COORDINATOR_STATUS:
+        // COORDINATOR_STATUS is outbound-only
+        return [];
     }
 
     return responses;
@@ -517,6 +544,60 @@ export class SessionCoordinator {
     return [];
   }
 
+  private handleOpSupersede(envelope: MessageEnvelope): MessageEnvelope[] {
+    const payload = envelope.payload as any;
+    const opId = payload.op_id;
+    const supersedesOpId = payload.supersedes_op_id;
+    const intentId = payload.intent_id;
+    const target = payload.target;
+
+    // Validate superseded op exists and is COMMITTED
+    const oldOp = this.operations.get(supersedesOpId);
+    if (!oldOp) {
+      return [this.makeEnvelope(MessageType.PROTOCOL_ERROR, {
+        error_code: "INVALID_REFERENCE",
+        refers_to: envelope.message_id,
+        description: `Operation ${supersedesOpId} does not exist`,
+      })];
+    }
+
+    if (oldOp.stateMachine.currentState !== OperationState.COMMITTED) {
+      return [this.makeEnvelope(MessageType.PROTOCOL_ERROR, {
+        error_code: "INVALID_REFERENCE",
+        refers_to: envelope.message_id,
+        description: `Operation ${supersedesOpId} is not COMMITTED (state: ${oldOp.stateMachine.currentState})`,
+      })];
+    }
+
+    // Transition old op to SUPERSEDED
+    oldOp.stateMachine.transition("supersede");
+
+    // Create new op as COMMITTED
+    const newOp: Operation = {
+      op_id: opId,
+      intent_id: intentId || oldOp.intent_id,
+      principal_id: envelope.sender.principal_id,
+      target: target || oldOp.target,
+      op_kind: payload.op_kind || oldOp.op_kind,
+      stateMachine: new OperationStateMachine(OperationState.PROPOSED),
+      created_at: new Date().toISOString(),
+    };
+    newOp.stateMachine.transition("commit");
+    this.operations.set(opId, newOp);
+
+    // Track in related conflicts
+    const effectiveIntentId = intentId || oldOp.intent_id;
+    if (effectiveIntentId) {
+      for (const conflict of this.conflicts.values()) {
+        if (effectiveIntentId === conflict.intent_a || effectiveIntentId === conflict.intent_b) {
+          if (!conflict.related_ops.includes(opId)) conflict.related_ops.push(opId);
+        }
+      }
+    }
+
+    return [];
+  }
+
   // ================================================================
   //  Conflict layer handlers
   // ================================================================
@@ -632,6 +713,116 @@ export class SessionCoordinator {
   }
 
   // ================================================================
+  //  Fault Recovery (Section 8.1.1)
+  // ================================================================
+
+  recoverFromSnapshot(snapshotData: any): void {
+    this.lamportClock = new LamportClock();
+    (this.lamportClock as any).clock = snapshotData.lamport_clock || 0;
+    this.sessionClosed = snapshotData.session_closed || false;
+
+    // Restore participants
+    this.participants.clear();
+    for (const p of snapshotData.participants || []) {
+      this.participants.set(p.principal_id, {
+        principal: {
+          principal_id: p.principal_id,
+          principal_type: "agent",
+          display_name: p.display_name,
+          roles: p.roles,
+        },
+        last_seen: p.last_seen ? new Date(p.last_seen).getTime() : Date.now(),
+        status: p.status || "idle",
+        is_available: p.is_available ?? true,
+      });
+    }
+
+    // Restore intents
+    this.intents.clear();
+    for (const i of snapshotData.intents || []) {
+      const sm = new IntentStateMachine(IntentState.ANNOUNCED);
+      const st = i.state;
+      if (st === "ACTIVE" || st === IntentState.ACTIVE) sm.transition("activate");
+      else if (st === "EXPIRED" || st === IntentState.EXPIRED) { sm.transition("activate"); sm.transition("expire"); }
+      else if (st === "WITHDRAWN" || st === IntentState.WITHDRAWN) { sm.transition("activate"); sm.transition("withdraw"); }
+      else if (st === "SUPERSEDED" || st === IntentState.SUPERSEDED) { sm.transition("activate"); sm.transition("supersede"); }
+      else if (st === "SUSPENDED" || st === IntentState.SUSPENDED) { sm.transition("activate"); sm.transition("suspend"); }
+
+      this.intents.set(i.intent_id, {
+        intent_id: i.intent_id,
+        principal_id: i.principal_id || "",
+        objective: i.objective || "",
+        scope: i.scope || { kind: "file_set" },
+        stateMachine: sm,
+        created_at: new Date().toISOString(),
+        received_at: Date.now(),
+        expires_at: i.expires_at ? new Date(i.expires_at).getTime() : undefined,
+      });
+    }
+
+    // Restore operations
+    this.operations.clear();
+    for (const o of snapshotData.operations || []) {
+      const sm = new OperationStateMachine(OperationState.PROPOSED);
+      const st = o.state;
+      if (st === "COMMITTED" || st === OperationState.COMMITTED) sm.transition("commit");
+      else if (st === "REJECTED" || st === OperationState.REJECTED) sm.transition("reject");
+      else if (st === "ABANDONED" || st === OperationState.ABANDONED) sm.transition("abandon");
+      else if (st === "FROZEN" || st === OperationState.FROZEN) sm.transition("freeze");
+      else if (st === "SUPERSEDED" || st === OperationState.SUPERSEDED) { sm.transition("commit"); sm.transition("supersede"); }
+
+      this.operations.set(o.op_id, {
+        op_id: o.op_id,
+        intent_id: o.intent_id || "",
+        principal_id: o.principal_id || "",
+        target: o.target || "",
+        op_kind: o.op_kind || "",
+        stateMachine: sm,
+        created_at: new Date().toISOString(),
+      });
+    }
+
+    // Restore conflicts
+    this.conflicts.clear();
+    for (const c of snapshotData.conflicts || []) {
+      const sm = new ConflictStateMachine(ConflictState.OPEN);
+      const st = c.state;
+      if (st === "ACKED" || st === ConflictState.ACKED) sm.transition("ack");
+      else if (st === "ESCALATED" || st === ConflictState.ESCALATED) { sm.transition("ack"); sm.transition("escalate"); }
+      else if (st === "RESOLVED" || st === ConflictState.RESOLVED) { sm.transition("ack"); sm.transition("resolve"); }
+      else if (st === "CLOSED" || st === ConflictState.CLOSED) { sm.transition("ack"); sm.transition("resolve"); sm.transition("close"); }
+      else if (st === "DISMISSED" || st === ConflictState.DISMISSED) sm.transition("dismiss");
+
+      this.conflicts.set(c.conflict_id, {
+        conflict_id: c.conflict_id,
+        category: c.category || "scope_overlap",
+        severity: c.severity || "medium",
+        involved_principals: c.involved_principals || [],
+        scope_a: c.scope_a,
+        scope_b: c.scope_b,
+        intent_a: c.intent_a || "",
+        intent_b: c.intent_b || "",
+        stateMachine: sm,
+        created_at: c.created_at || Date.now(),
+        related_intents: c.related_intents || [],
+        related_ops: c.related_ops || [],
+      });
+    }
+  }
+
+  replayAuditLog(messages: MessageEnvelope[]): MessageEnvelope[] {
+    const allResponses: MessageEnvelope[] = [];
+    for (const msg of messages) {
+      allResponses.push(...this.processMessage(msg));
+    }
+    return allResponses;
+  }
+
+  getAuditLog(): MessageEnvelope[] {
+    return [...this.auditLog];
+  }
+
+  // ================================================================
   //  Liveness cascade
   // ================================================================
 
@@ -733,6 +924,141 @@ export class SessionCoordinator {
       if (info.principal.roles?.includes("arbiter" as any)) return pid;
     }
     return undefined;
+  }
+
+  // ================================================================
+  //  Session lifecycle (v0.1.5)
+  // ================================================================
+
+  closeSession(reason = "manual"): MessageEnvelope[] {
+    if (this.sessionClosed) return [];
+    this.sessionClosed = true;
+
+    // Withdraw all active intents
+    for (const intent of this.intents.values()) {
+      if (!intent.stateMachine.isTerminal() && intent.stateMachine.currentState !== IntentState.ANNOUNCED) {
+        try { intent.stateMachine.transition("withdraw"); } catch {}
+      }
+    }
+
+    // Abandon all in-flight operations
+    for (const op of this.operations.values()) {
+      if (op.stateMachine.currentState === OperationState.PROPOSED || op.stateMachine.currentState === OperationState.FROZEN) {
+        try { op.stateMachine.transition("abandon"); } catch {}
+      }
+    }
+
+    const summary = this.buildSessionSummary();
+    return [this.makeEnvelope(MessageType.SESSION_CLOSE, {
+      reason,
+      final_lamport_clock: this.lamportClock.value,
+      summary,
+      active_intents_disposition: "withdraw_all",
+    })];
+  }
+
+  checkAutoClose(): MessageEnvelope[] {
+    if (this.sessionClosed) return [];
+
+    for (const intent of this.intents.values()) {
+      if (!intent.stateMachine.isTerminal()) return [];
+    }
+    for (const op of this.operations.values()) {
+      if (op.stateMachine.currentState === OperationState.PROPOSED || op.stateMachine.currentState === OperationState.FROZEN) return [];
+    }
+    for (const conflict of this.conflicts.values()) {
+      if (conflict.stateMachine.currentState !== ConflictState.CLOSED && conflict.stateMachine.currentState !== ConflictState.DISMISSED) return [];
+    }
+    if (this.intents.size === 0) return [];
+
+    return this.closeSession("completed");
+  }
+
+  coordinatorStatus(event = "heartbeat"): MessageEnvelope[] {
+    let openConflicts = 0;
+    for (const c of this.conflicts.values()) {
+      if (c.stateMachine.currentState !== ConflictState.CLOSED && c.stateMachine.currentState !== ConflictState.DISMISSED) openConflicts++;
+    }
+    let activeParticipants = 0;
+    for (const p of this.participants.values()) {
+      if (p.is_available) activeParticipants++;
+    }
+
+    return [this.makeEnvelope(MessageType.COORDINATOR_STATUS, {
+      event,
+      coordinator_id: this.coordinatorId,
+      session_health: openConflicts === 0 ? "healthy" : "degraded",
+      active_participants: activeParticipants,
+      open_conflicts: openConflicts,
+      snapshot_lamport_clock: this.lamportClock.value,
+    })];
+  }
+
+  snapshot(): any {
+    const participants = [];
+    for (const [pid, info] of this.participants.entries()) {
+      participants.push({
+        principal_id: pid,
+        display_name: info.principal.display_name,
+        roles: info.principal.roles,
+        status: info.status,
+        is_available: info.is_available,
+        last_seen: new Date(info.last_seen).toISOString(),
+      });
+    }
+    const intents = [];
+    for (const intent of this.intents.values()) {
+      intents.push({
+        intent_id: intent.intent_id,
+        principal_id: intent.principal_id,
+        state: intent.stateMachine.currentState,
+        scope: intent.scope,
+        expires_at: intent.expires_at ? new Date(intent.expires_at).toISOString() : null,
+      });
+    }
+    const operations = [];
+    for (const op of this.operations.values()) {
+      operations.push({
+        op_id: op.op_id,
+        intent_id: op.intent_id,
+        state: op.stateMachine.currentState,
+        target: op.target,
+      });
+    }
+    const conflicts = [];
+    for (const c of this.conflicts.values()) {
+      conflicts.push({
+        conflict_id: c.conflict_id,
+        state: c.stateMachine.currentState,
+        related_intents: c.related_intents || [c.intent_a, c.intent_b],
+        related_ops: c.related_ops || [],
+      });
+    }
+
+    return {
+      snapshot_version: 1,
+      session_id: this.sessionId,
+      protocol_version: "0.1.6",
+      captured_at: new Date().toISOString(),
+      lamport_clock: this.lamportClock.value,
+      participants,
+      intents,
+      operations,
+      conflicts,
+      session_closed: this.sessionClosed,
+    };
+  }
+
+  private buildSessionSummary(): any {
+    const nowMs = Date.now();
+    const durationSec = Math.floor((nowMs - this.sessionStartedAt) / 1000);
+    return {
+      total_intents: this.intents.size,
+      total_operations: this.operations.size,
+      total_conflicts: this.conflicts.size,
+      total_participants: this.participants.size,
+      duration_sec: durationSec,
+    };
   }
 
   // Accessors for testing

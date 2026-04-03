@@ -10,13 +10,15 @@ export class Participant {
   private roles: Role[];
   private capabilities: string[];
   private lamportClock: LamportClock;
+  private credential?: { type: string; value: string; issuer?: string; expires_at?: string };
 
   constructor(
     principalId: string,
     principalType: string,
     displayName: string,
     roles: Role[] = [],
-    capabilities: string[] = []
+    capabilities: string[] = [],
+    credential?: { type: string; value: string; issuer?: string; expires_at?: string }
   ) {
     this.principalId = principalId;
     this.principalType = principalType;
@@ -24,6 +26,7 @@ export class Participant {
     this.roles = roles;
     this.capabilities = capabilities;
     this.lamportClock = new LamportClock();
+    this.credential = credential;
   }
 
   private sender(): Sender {
@@ -39,9 +42,11 @@ export class Participant {
   // ================================================================
 
   hello(sessionId: string): MessageEnvelope {
-    return this.make(MessageType.HELLO, sessionId, {
+    const payload: any = {
       display_name: this.displayName, roles: this.roles, capabilities: this.capabilities,
-    });
+    };
+    if (this.credential) payload.credential = this.credential;
+    return this.make(MessageType.HELLO, sessionId, payload);
   }
 
   heartbeat(sessionId: string, status = "idle", activeIntentId?: string, summary?: string): MessageEnvelope {
@@ -109,6 +114,14 @@ export class Participant {
       op_id: opId, intent_id: intentId, target, op_kind: opKind,
       state_ref_before: stateRefBefore, state_ref_after: stateRefAfter,
     });
+  }
+
+  supersedeOp(sessionId: string, opId: string, supersedesOpId: string, target: string, intentId?: string, reason?: string, stateRefAfter?: string): MessageEnvelope {
+    const payload: any = { op_id: opId, supersedes_op_id: supersedesOpId, target };
+    if (intentId) payload.intent_id = intentId;
+    if (reason) payload.reason = reason;
+    if (stateRefAfter) payload.state_ref_after = stateRefAfter;
+    return this.make(MessageType.OP_SUPERSEDE, sessionId, payload);
   }
 
   // ================================================================

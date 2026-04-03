@@ -1,8 +1,8 @@
-# MPAC Specification v0.1.6
+# MPAC Specification v0.1.4
 
 ## 1. Status
 
-This document defines version `0.1.6` of the Multi-Principal Agent Coordination Protocol (`MPAC`).
+This document defines version `0.1.4` of the Multi-Principal Agent Coordination Protocol (`MPAC`).
 
 Status of this document:
 - Draft
@@ -211,12 +211,12 @@ MPAC is responsible for meaning.
 
 ### 8.1 Session Coordinator
 
-Many MPAC features — including heartbeat-based unavailability detection (Section 14.7), sender identity binding (Section 23.3), frozen scope enforcement (Section 18.6), and tamper-evident logging (Section 23.1.3) — require a component with a unified view of session state and the authority to enforce protocol-level decisions.
+Many MPAC features — including heartbeat-based unavailability detection (Section 14.5), sender identity binding (Section 23.3), frozen scope enforcement (Section 18.6), and tamper-evident logging (Section 23.1.3) — require a component with a unified view of session state and the authority to enforce protocol-level decisions.
 
 MPAC defines this component as the **session coordinator**. A session coordinator is a `service`-type principal responsible for:
 - maintaining the authoritative session state (participant roster, intent registry, conflict state)
 - enforcing message ordering constraints (Section 8.2)
-- performing liveness detection and unavailability transitions (Section 14.7)
+- performing liveness detection and unavailability transitions (Section 14.5)
 - validating sender identity binding in Authenticated and Verified profiles (Section 23.1)
 - maintaining audit logs
 
@@ -228,91 +228,22 @@ Note: MPAC remains transport-independent. The session coordinator is a logical r
 
 #### 8.1.1 Coordinator Fault Recovery
 
-The session coordinator is a single logical point of authority. If the coordinator becomes unavailable, all coordinator-dependent functions — including liveness detection (Section 14.7), frozen scope enforcement (Section 18.6), sender identity binding (Section 23.3), and intent expiry cascade (Section 15.7) — cease to operate.
+The session coordinator is a single logical point of authority. If the coordinator becomes unavailable, all coordinator-dependent functions — including liveness detection (Section 14.5), frozen scope enforcement (Section 18.6), sender identity binding (Section 23.3), and intent expiry cascade (Section 15.7) — cease to operate.
 
-##### 8.1.1.1 Coordinator Liveness
+To mitigate this risk, implementations SHOULD satisfy the following requirements:
 
-The coordinator MUST periodically broadcast a `COORDINATOR_STATUS` message (Section 14.7) to all participants at a configurable interval (default: same as `heartbeat_interval_sec`). This message serves as the coordinator's own liveness signal and carries a summary of session health.
+1. **State persistence**: The coordinator SHOULD persist session state (participant roster, intent registry, operation states, conflict states, and governance policy) to durable storage at least once per heartbeat interval. The persistence format is implementation-defined.
 
-Participants MUST detect coordinator unavailability through the absence of `COORDINATOR_STATUS` messages for a duration exceeding `2 × heartbeat_interval_sec`. Upon detection, participants MUST:
-- suspend all conflict-sensitive operations (operations whose scope overlaps with any active intent from another participant)
-- continue read-only or non-conflicting activities
-- attempt reconnection at regular intervals
-- NOT unilaterally transition intents, operations, or conflicts — these state transitions remain coordinator-exclusive
+2. **State reconstruction**: Upon restart, the coordinator SHOULD be able to reconstruct session state from the persisted snapshot and the tamper-evident audit log (Section 23.1.3 in Verified profile) or equivalent message history.
 
-##### 8.1.1.2 State Snapshot
+3. **Participant behavior during coordinator unavailability**: Participants SHOULD detect coordinator unavailability through the absence of coordinator-originated messages (e.g., system-generated `PROTOCOL_ERROR`, `OP_REJECT`, or heartbeat acknowledgments) for a duration exceeding `2 × unavailability_timeout_sec`. Upon detection, participants SHOULD:
+   - suspend all conflict-sensitive operations (operations whose scope overlaps with any active intent from another participant)
+   - continue read-only or non-conflicting activities
+   - attempt reconnection at regular intervals
 
-The coordinator MUST persist session state to durable storage at least once per heartbeat interval. The state snapshot MUST include the following components:
+4. **Session continuity**: When the coordinator recovers, it SHOULD broadcast a system-level notification to all participants. Participants SHOULD re-send `HELLO` to re-establish their session presence. The coordinator SHOULD reconcile any operations that occurred during its absence against the reconstructed state.
 
-```json
-{
-  "snapshot_version": 1,
-  "session_id": "sess-001",
-  "protocol_version": "0.1.6",
-  "captured_at": "2026-04-03T12:00:00Z",
-  "lamport_clock": 42,
-  "participants": [
-    {
-      "principal_id": "agent:alice",
-      "display_name": "Alice",
-      "roles": ["contributor"],
-      "status": "working",
-      "is_available": true,
-      "last_seen": "2026-04-03T11:59:30Z"
-    }
-  ],
-  "intents": [
-    {
-      "intent_id": "intent-001",
-      "principal_id": "agent:alice",
-      "state": "ACTIVE",
-      "scope": { "kind": "file_set", "resources": ["auth.py"] },
-      "expires_at": "2026-04-03T12:05:00Z"
-    }
-  ],
-  "operations": [
-    {
-      "op_id": "op-001",
-      "intent_id": "intent-001",
-      "state": "PROPOSED",
-      "target": "auth.py"
-    }
-  ],
-  "conflicts": [
-    {
-      "conflict_id": "conf-001",
-      "state": "OPEN",
-      "related_intents": ["intent-001", "intent-002"],
-      "related_ops": []
-    }
-  ],
-  "governance_policy": {},
-  "liveness_policy": {}
-}
-```
-
-The snapshot format is a JSON object. Implementations MAY extend it with additional fields but MUST preserve the fields listed above. Implementations SHOULD use a write-ahead or atomic write mechanism to prevent snapshot corruption.
-
-##### 8.1.1.3 Coordinator Recovery
-
-Upon restart, the coordinator MUST:
-
-1. Load the most recent valid state snapshot
-2. If a tamper-evident audit log is available (Section 23.1.3), replay any messages logged after the snapshot's `captured_at` timestamp to reconstruct the current state
-3. Broadcast a `COORDINATOR_STATUS` message with `event`: `recovered` to all participants at their last-known transport addresses
-4. Accept `HELLO` messages from reconnecting participants and reconcile their state against the recovered snapshot — if a participant's local state diverges from the snapshot (e.g., they committed an operation during the coordinator's absence), the coordinator SHOULD emit a `PROTOCOL_ERROR` with `error_code`: `STATE_DIVERGENCE` and include the divergent message IDs for manual or governance-level resolution
-
-##### 8.1.1.4 Coordinator Handover
-
-When a coordinator needs to be replaced (planned maintenance, failover to standby), the handover process is:
-
-1. **Planned handover**: The outgoing coordinator broadcasts a `COORDINATOR_STATUS` message with `event`: `handover` and `successor_coordinator_id` identifying the new coordinator. The outgoing coordinator MUST transfer the latest state snapshot to the successor through an implementation-defined mechanism. The successor coordinator MUST broadcast a `COORDINATOR_STATUS` with `event`: `assumed` upon taking over. Participants MUST re-send `HELLO` to the new coordinator to re-establish session presence.
-
-2. **Unplanned failover**: If the outgoing coordinator does not send a handover message (crash), a standby coordinator MAY assume the role after detecting the primary's absence for `2 × heartbeat_interval_sec`. The standby MUST load the most recent shared state snapshot and follow the recovery procedure in Section 8.1.1.3. Participants detect the new coordinator through receipt of `COORDINATOR_STATUS` from a different `sender.principal_id`.
-
-3. **Split-brain prevention**: At any given time, only one coordinator MAY broadcast `COORDINATOR_STATUS` for a session. If a participant receives `COORDINATOR_STATUS` from two different coordinators within the same session, it MUST reject messages from the coordinator with the lower `lamport_clock` value and SHOULD send a `PROTOCOL_ERROR` with `error_code`: `COORDINATOR_CONFLICT` to both coordinators. Implementations using consensus-based replication (e.g., Raft, Paxos) MAY use their consensus mechanism instead of Lamport clock comparison, but MUST ensure the single-coordinator invariant.
-
-Implementations MAY additionally support hot standby or consensus-based replication for zero-downtime failover, but the specifics of such mechanisms are outside the scope of MPAC. The protocol requires only that the single-coordinator invariant is maintained and that state transfer follows the snapshot format defined in Section 8.1.1.2.
+Implementations MAY additionally support coordinator failover through hot standby or consensus-based replication, but the specifics of such mechanisms are outside the scope of MPAC.
 
 ### 8.2 Protocol-Level Ordering Constraints
 
@@ -378,7 +309,7 @@ A session MUST have:
 A session SHOULD also declare:
 - a security profile (Section 23.1); defaults to Open if not specified
 - at least one `arbiter`-role participant when multiple `owner`-role principals are present (Section 18.5)
-- a liveness policy for unavailability detection (Section 14.7.5); defaults apply if not specified
+- a liveness policy for unavailability detection (Section 14.5.5); defaults apply if not specified
 
 ### 9.5 Shared State
 
@@ -393,85 +324,6 @@ Shared state MAY be:
 - a simulation state
 
 MPAC messages MUST reference shared state in a way meaningful to participants in the session.
-
-### 9.6 Session Completion and Close
-
-A session has a defined beginning (HELLO → SESSION_INFO) and a defined end (SESSION_CLOSE). This section defines the conditions under which a session ends and the required behaviors.
-
-#### 9.6.1 Session Close Conditions
-
-A session MAY be closed under any of the following conditions:
-
-1. **Manual close**: A participant with `owner` or `arbiter` role requests session close through an implementation-defined mechanism. The coordinator sends `SESSION_CLOSE` with `reason`: `manual`.
-
-2. **Auto-close on completion**: When all of the following conditions are met, the coordinator MAY automatically close the session:
-   - all intents are in a terminal state (EXPIRED, WITHDRAWN, SUPERSEDED, or TRANSFERRED)
-   - all operations are in a terminal state (COMMITTED, REJECTED, or ABANDONED)
-   - all conflicts are CLOSED or DISMISSED
-   - no participants have `status`: `working` or `blocked`
-
-   Auto-close is opt-in. Sessions MAY configure `auto_close: true` in session policy. When enabled, the coordinator SHOULD wait a grace period (default: 60 seconds) after conditions are met before closing, to allow participants to announce new intents.
-
-3. **Session TTL**: Sessions MAY configure a `session_ttl_sec` in session policy. When the session's elapsed time exceeds this value, the coordinator MUST send `SESSION_CLOSE` with `reason`: `timeout`. Recommended default: no TTL (sessions are open-ended).
-
-4. **Coordinator shutdown**: If the coordinator is shutting down and no successor is available for handover (Section 8.1.1.4), it MUST send `SESSION_CLOSE` with `reason`: `coordinator_shutdown` before terminating.
-
-#### 9.6.2 Session Summary
-
-The `SESSION_CLOSE` message SHOULD include a `summary` object providing aggregate statistics for the session:
-
-```json
-{
-  "total_intents": 8,
-  "completed_intents": 5,
-  "expired_intents": 2,
-  "withdrawn_intents": 1,
-  "total_operations": 12,
-  "committed_operations": 9,
-  "rejected_operations": 2,
-  "abandoned_operations": 1,
-  "total_conflicts": 3,
-  "resolved_conflicts": 3,
-  "total_participants": 4,
-  "duration_sec": 3600
-}
-```
-
-#### 9.6.3 Session Transcript and Audit Export
-
-For compliance and auditability, implementations SHOULD support exporting a complete session transcript. The transcript is an ordered array of all `MessageEnvelope` objects exchanged during the session, sorted by Lamport clock value (with sender principal ID as tiebreaker).
-
-The transcript format:
-
-```json
-{
-  "session_id": "sess-001",
-  "protocol_version": "0.1.6",
-  "exported_at": "2026-04-03T12:00:00Z",
-  "security_profile": "authenticated",
-  "participants": [ /* Principal objects */ ],
-  "messages": [ /* MessageEnvelope objects in causal order */ ],
-  "final_snapshot": { /* State snapshot per Section 8.1.1.2 */ }
-}
-```
-
-Implementations operating under the Authenticated or Verified security profile (Section 23.1) MUST retain the session transcript for at least the duration configured in `audit_retention_days`. The transcript MAY be stored in the coordinator's durable storage or exported to an external audit system.
-
-#### 9.6.4 Session Policy for Lifecycle
-
-```json
-{
-  "lifecycle": {
-    "auto_close": false,
-    "auto_close_grace_sec": 60,
-    "session_ttl_sec": 0,
-    "transcript_export": true,
-    "audit_retention_days": 90
-  }
-}
-```
-
-A `session_ttl_sec` value of `0` disables session TTL (session is open-ended). An `audit_retention_days` value of `0` means retain for session duration only.
 
 ## 10. Participant Identity
 
@@ -625,8 +477,6 @@ MPAC v0.1 defines the following core message types:
 - `SESSION_INFO`
 - `HEARTBEAT`
 - `GOODBYE`
-- `SESSION_CLOSE`
-- `COORDINATOR_STATUS`
 - `INTENT_ANNOUNCE`
 - `INTENT_UPDATE`
 - `INTENT_WITHDRAW`
@@ -655,7 +505,6 @@ This section defines the required and optional fields for each message type's pa
 | `roles` | string[] | R | Requested roles (Section 10.3) |
 | `capabilities` | string[] | R | Supported capabilities (Section 19.1) |
 | `implementation` | object | O | `{ "name": string, "version": string }` |
-| `credential` | object | C | Required in Authenticated/Verified profiles (Section 23.1.4). `{ "type": string, "value": string, "issuer"?: string, "expires_at"?: string }` |
 
 #### `SESSION_INFO` Payload
 
@@ -668,11 +517,9 @@ This section defines the required and optional fields for each message type's pa
 | `watermark_kind` | string | R | Session's baseline watermark kind (Section 12.2) |
 | `state_ref_format` | string | R | Format used for `state_ref_before`/`state_ref_after` (e.g., `sha256`, `git_hash`, `monotonic_version`) |
 | `governance_policy` | object | O | Session governance configuration (Section 18.6.3) |
-| `liveness_policy` | object | O | Session liveness configuration (Section 14.7.5) |
+| `liveness_policy` | object | O | Session liveness configuration (Section 14.5.5) |
 | `participant_count` | integer | O | Current number of active participants |
 | `granted_roles` | string[] | R | Roles actually granted to the joining participant (may differ from requested) |
-| `identity_verified` | boolean | O | Whether the participant's credential was verified. Required in Authenticated/Verified profiles (Section 23.1.4) |
-| `identity_method` | string | O | Credential type used for verification (e.g., `bearer_token`, `mtls_fingerprint`) |
 | `compatibility_errors` | string[] | O | List of incompatibilities detected. Default: `[]` |
 
 #### `HEARTBEAT` Payload
@@ -690,28 +537,6 @@ This section defines the required and optional fields for each message type's pa
 | `reason` | string | R | One of: `user_exit`, `session_complete`, `error`, `timeout` |
 | `active_intents` | string[] | O | List of the departing participant's active intent IDs |
 | `intent_disposition` | string | O | One of: `withdraw`, `transfer`, `expire`. Default: `withdraw` |
-
-#### `SESSION_CLOSE` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `reason` | string | R | One of: `completed`, `timeout`, `policy`, `coordinator_shutdown`, `manual` |
-| `final_lamport_clock` | integer | R | Final Lamport clock value for the session |
-| `summary` | object | O | Session completion summary (Section 9.6.2) |
-| `active_intents_disposition` | string | O | How remaining active intents are handled. One of: `withdraw_all`, `expire_all`. Default: `withdraw_all` |
-| `transcript_ref` | string | O | URI or reference to the exported session transcript (Section 9.6.3) |
-
-#### `COORDINATOR_STATUS` Payload
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `event` | string | R | One of: `heartbeat`, `recovered`, `handover`, `assumed` |
-| `coordinator_id` | string | R | Principal ID of the coordinator sending this message |
-| `session_health` | string | R | One of: `healthy`, `degraded`, `recovering` |
-| `active_participants` | integer | O | Number of currently available participants |
-| `open_conflicts` | integer | O | Number of unresolved conflicts |
-| `snapshot_lamport_clock` | integer | O | Lamport clock value of the latest persisted snapshot |
-| `successor_coordinator_id` | string | O | Required when `event` = `handover`: principal ID of the successor coordinator |
 
 #### `INTENT_ANNOUNCE` Payload
 
@@ -922,7 +747,7 @@ Payload:
 ```json
 {
   "session_id": "sess-001",
-  "protocol_version": "0.1.6",
+  "protocol_version": "0.1.4",
   "security_profile": "authenticated",
   "compliance_profile": "governance",
   "watermark_kind": "lamport_clock",
@@ -1012,78 +837,17 @@ Recommended `reason` values:
 - `error`
 - `timeout`
 
-### 14.5 `SESSION_CLOSE`
-
-Purpose:
-- formally end a session
-- communicate final state to all participants
-- trigger session transcript archival
-
-Payload:
-
-```json
-{
-  "reason": "completed",
-  "final_lamport_clock": 127,
-  "summary": {
-    "total_intents": 8,
-    "total_operations": 12,
-    "total_conflicts": 3,
-    "total_resolutions": 3,
-    "duration_sec": 3600
-  },
-  "active_intents_disposition": "withdraw_all",
-  "transcript_ref": "archive://sess-001/transcript.json"
-}
-```
-
-Semantics:
-- only the session coordinator MAY send `SESSION_CLOSE`
-- upon receiving `SESSION_CLOSE`, participants MUST cease sending any messages to the session except `GOODBYE` (as a courtesy acknowledgment)
-- any message received for a closed session MUST be rejected with a `PROTOCOL_ERROR` (`error_code`: `SESSION_CLOSED`)
-- `active_intents_disposition` determines how remaining active intents are handled: `withdraw_all` immediately withdraws all active intents; `expire_all` leaves them to expire naturally per their TTL
-- the coordinator SHOULD persist the final state snapshot (Section 8.1.1.2) before sending `SESSION_CLOSE`
-- session auto-close conditions are defined in Section 9.6.1
-
-### 14.6 `COORDINATOR_STATUS`
-
-Purpose:
-- signal coordinator liveness to all participants
-- communicate session health and coordinator lifecycle events (recovery, handover)
-
-Payload:
-
-```json
-{
-  "event": "heartbeat",
-  "coordinator_id": "service:coordinator-1",
-  "session_health": "healthy",
-  "active_participants": 3,
-  "open_conflicts": 1,
-  "snapshot_lamport_clock": 42
-}
-```
-
-Semantics:
-- the coordinator MUST broadcast `COORDINATOR_STATUS` at least once per `heartbeat_interval_sec` (Section 14.3)
-- participants MUST track coordinator liveness; absence of `COORDINATOR_STATUS` for `2 × heartbeat_interval_sec` indicates coordinator unavailability (Section 8.1.1.1)
-- `event` values:
-  - `heartbeat`: routine liveness signal
-  - `recovered`: coordinator has restarted and recovered state from snapshot (Section 8.1.1.3); participants SHOULD re-send `HELLO`
-  - `handover`: coordinator is transferring authority to `successor_coordinator_id` (Section 8.1.1.4); participants SHOULD prepare to reconnect
-  - `assumed`: a new coordinator has taken over and is ready to accept messages; participants MUST re-send `HELLO`
-
-### 14.7 Participant Unavailability and Recovery
+### 14.5 Participant Unavailability and Recovery
 
 When a participant becomes unavailable without sending `GOODBYE` (e.g., crash, network partition, or unresponsive process), the session faces orphaned intents, in-flight proposals, and ambiguous scope locks. This section defines the detection mechanism and required recovery behaviors.
 
-#### 14.7.1 Unavailability Detection
+#### 14.5.1 Unavailability Detection
 
 A participant is considered **unavailable** when no `HEARTBEAT` or any other message has been received from them for the duration specified by the session's liveness timeout (default: 90 seconds per Section 14.3). The session coordinator or any participant with governance authority MAY declare a participant unavailable.
 
 When unavailability is detected, implementations SHOULD broadcast a system-level notification to all remaining participants. The recommended format is a `PROTOCOL_ERROR` with `error_code`: `PARTICIPANT_UNAVAILABLE` and the `refers_to` field set to the unavailable participant's last known `message_id`.
 
-#### 14.7.2 Orphaned Intent Handling
+#### 14.5.2 Orphaned Intent Handling
 
 When a participant is detected as unavailable, their active intents MUST be transitioned to a `SUSPENDED` state:
 
@@ -1093,7 +857,7 @@ When a participant is detected as unavailable, their active intents MUST be tran
 
 3. **Recovery**: If the unavailable participant reconnects (sends a new `HELLO` or resumes `HEARTBEAT`), their suspended intents SHOULD automatically transition back to `ACTIVE`. The participant SHOULD be notified of any state changes that occurred during their absence.
 
-#### 14.7.3 Abandoned Operation Handling
+#### 14.5.3 Abandoned Operation Handling
 
 In-flight `OP_PROPOSE` messages from the unavailable participant that have no corresponding `OP_COMMIT` or `OP_REJECT` MUST be marked as `ABANDONED` after the liveness timeout expires:
 
@@ -1103,7 +867,7 @@ In-flight `OP_PROPOSE` messages from the unavailable participant that have no co
 
 3. **Governance override**: A participant with `owner` or `arbiter` role MAY explicitly reject an orphaned proposal via `OP_REJECT` (with `reason`: `participant_unavailable`) instead of waiting for automatic abandonment, if faster resolution is needed.
 
-#### 14.7.4 `INTENT_CLAIM`
+#### 14.5.4 `INTENT_CLAIM`
 
 Purpose:
 - allow a participant to claim the scope of a suspended intent from an unavailable participant, enabling work to continue
@@ -1133,7 +897,7 @@ Semantics:
 - if the original participant reconnects before the claim is approved, the claim SHOULD be automatically withdrawn and the original intent restored to `ACTIVE`
 - **concurrent claims**: if multiple participants submit `INTENT_CLAIM` for the same suspended intent, the session coordinator MUST accept only the first claim received (first-claim-wins) and reject subsequent claims with a `PROTOCOL_ERROR` (`error_code`: `CLAIM_CONFLICT`). The ordering is determined by the session coordinator's receipt order
 
-#### 14.7.5 Session Policy for Unavailability
+#### 14.5.5 Session Policy for Unavailability
 
 Sessions MAY configure unavailability behavior through session policy:
 
@@ -1345,7 +1109,7 @@ ACTIVE -> SUSPENDED -> TRANSFERRED      (intent claimed by another participant)
 MPAC does not require a `DRAFT` message on the wire.
 It is included here as a conceptual lifecycle state.
 
-The `SUSPENDED` and `TRANSFERRED` states support recovery from participant unavailability (Section 14.7). An intent enters `SUSPENDED` when its owner becomes unavailable, and transitions to `TRANSFERRED` when another participant successfully claims it via `INTENT_CLAIM`.
+The `SUSPENDED` and `TRANSFERRED` states support recovery from participant unavailability (Section 14.5). An intent enters `SUSPENDED` when its owner becomes unavailable, and transitions to `TRANSFERRED` when another participant successfully claims it via `INTENT_CLAIM`.
 
 ### 15.7 Intent Expiry Cascade
 
@@ -1357,7 +1121,7 @@ When an intent transitions to a terminal state (`EXPIRED`, `WITHDRAWN`, or `SUPE
 
 3. **Already committed operations**: Operations in `COMMITTED` state are NOT affected by intent termination. An operation that was committed while its intent was active remains valid regardless of subsequent intent state changes.
 
-4. **Suspended intent cascade**: When an intent transitions to `SUSPENDED` (Section 14.7.2), pending proposals referencing that intent MUST NOT be automatically rejected, but MUST be frozen — they cannot proceed to `COMMITTED` until the intent is restored to `ACTIVE` or claimed via `INTENT_CLAIM`. If the intent subsequently transitions from `SUSPENDED` to a terminal state (e.g., the unavailability timeout leads to intent expiry), rule 1 applies.
+4. **Suspended intent cascade**: When an intent transitions to `SUSPENDED` (Section 14.5.2), pending proposals referencing that intent MUST NOT be automatically rejected, but MUST be frozen — they cannot proceed to `COMMITTED` until the intent is restored to `ACTIVE` or claimed via `INTENT_CLAIM`. If the intent subsequently transitions from `SUSPENDED` to a terminal state (e.g., the unavailability timeout leads to intent expiry), rule 1 applies.
 
 ```json
 {
@@ -1472,7 +1236,7 @@ PROPOSED -> REJECTED           (referenced intent terminated, per Section 15.7)
 PROPOSED -> FROZEN             (referenced intent suspended, per Section 15.7)
 FROZEN   -> PROPOSED           (referenced intent restored to ACTIVE)
 FROZEN   -> REJECTED           (referenced intent terminated while suspended)
-PROPOSED -> ABANDONED          (sender unavailable, per Section 14.7.3)
+PROPOSED -> ABANDONED          (sender unavailable, per Section 14.5.3)
 COMMITTED -> SUPERSEDED
 ```
 
@@ -1755,7 +1519,7 @@ Arbiter designation requirements:
 
 2. **Arbiter qualifications**: The arbiter SHOULD be a `human` principal or a `service` principal with explicit organizational authority. Agent principals MAY serve as arbiter only if the session policy explicitly permits it.
 
-3. **Arbiter availability**: If the designated arbiter leaves the session (via `GOODBYE` or unavailability detection per Section 14.7), participants SHOULD either designate a replacement arbiter or acknowledge that deadlock resolution may require out-of-band intervention.
+3. **Arbiter availability**: If the designated arbiter leaves the session (via `GOODBYE` or unavailability detection per Section 14.5), participants SHOULD either designate a replacement arbiter or acknowledge that deadlock resolution may require out-of-band intervention.
 
 4. **Multiple arbiters**: Sessions MAY designate multiple arbiters. When multiple arbiters are present and disagree, the session policy SHOULD define a precedence rule (e.g., first-responder wins, or a specific arbiter is designated as primary).
 
@@ -1869,7 +1633,7 @@ Adds:
 - operation supersession (`OP_SUPERSEDE`)
 - arbiter designation (Section 18.5) — sessions MUST designate at least one arbiter
 - resolution timeout support (Section 18.6)
-- intent claim support (`INTENT_CLAIM`) for unavailability recovery (Section 14.7)
+- intent claim support (`INTENT_CLAIM`) for unavailability recovery (Section 14.5)
 
 ### 20.3 MPAC Semantic Profile
 
@@ -1935,14 +1699,10 @@ Recommended `error_code` values:
 - `VERSION_MISMATCH`: the protocol version is incompatible
 - `CAPABILITY_UNSUPPORTED`: the message requires a capability the receiver does not support
 - `AUTHORIZATION_FAILED`: the sender lacks the authority for the attempted action
-- `PARTICIPANT_UNAVAILABLE`: a participant has been detected as unavailable (Section 14.7.1)
+- `PARTICIPANT_UNAVAILABLE`: a participant has been detected as unavailable (Section 14.5.1)
 - `RESOLUTION_TIMEOUT`: a conflict resolution has exceeded the configured timeout (Section 18.6.1)
 - `SCOPE_FROZEN`: an operation or intent targets a scope that is frozen due to an unresolved conflict timeout (Section 18.6.2)
-- `CLAIM_CONFLICT`: an `INTENT_CLAIM` targets a suspended intent that has already been claimed by another participant (Section 14.7.4)
-- `COORDINATOR_CONFLICT`: a participant received `COORDINATOR_STATUS` from two different coordinators in the same session (Section 8.1.1.4)
-- `STATE_DIVERGENCE`: a participant's reported state diverges from the coordinator's recovered snapshot (Section 8.1.1.3)
-- `SESSION_CLOSED`: a message was received for a session that has been closed (Section 9.6)
-- `CREDENTIAL_REJECTED`: the credential presented in `HELLO` failed verification (Section 23.1.4)
+- `CLAIM_CONFLICT`: an `INTENT_CLAIM` targets a suspended intent that has already been claimed by another participant (Section 14.5.4)
 
 Semantics:
 - the `refers_to` field SHOULD reference the `message_id` of the problematic message when available
@@ -1982,12 +1742,12 @@ Intended for cross-team or cross-organizational deployments where participants n
 
 Requirements:
 - all requirements of the Open profile
-- principal identity MUST be verified through the credential exchange mechanism defined in Section 23.1.4 before a participant's `HELLO` is accepted
-- sessions MUST reject `HELLO` messages from principals whose identity cannot be verified, with a `PROTOCOL_ERROR` (`error_code`: `CREDENTIAL_REJECTED`)
+- principal identity MUST be verified through an authentication mechanism before a participant's `HELLO` is accepted. Acceptable mechanisms include: OAuth 2.0 tokens, mutual TLS (mTLS), API keys issued by a session coordinator, or equivalent identity verification
+- sessions MUST reject `HELLO` messages from principals whose identity cannot be verified
 - implementations MUST bind each `sender` field to the authenticated identity, preventing principal impersonation
 - the `signature` envelope field (Section 11.3) SHOULD be populated with a message authentication code (MAC) or digital signature on every message
 - implementations MUST implement replay protection by rejecting messages with duplicate `message_id` values or timestamps outside an acceptable window (RECOMMENDED: 5 minutes)
-- role assertions in `HELLO` messages MUST be validated by the session coordinator against the session's role policy before the participant is admitted (Section 23.1.5). Participants MUST NOT be granted roles they are not authorized for, regardless of what they declare in `HELLO`
+- role assertions in `HELLO` messages MUST be validated by the session coordinator against the session's role policy before the participant is admitted. Participants MUST NOT be granted roles they are not authorized for, regardless of what they declare in `HELLO`
 - audit trail logs MUST be retained for at least the session duration and SHOULD be retained for a configurable period after session completion
 
 #### 23.1.3 Verified Profile
@@ -2002,122 +1762,6 @@ Requirements:
 - `RESOLUTION` messages MUST carry both a valid signature and a watermark; resolutions without causal context SHOULD be rejected
 - principal authentication MUST use certificate-based identity (X.509 certificates or equivalent) with a verifiable chain of trust
 - implementations SHOULD support key rotation without session interruption
-
-#### 23.1.4 Credential Exchange
-
-In the Authenticated and Verified security profiles, participants MUST present a credential during the `HELLO` handshake to establish their identity. The credential is carried in a `credential` field in the `HELLO` payload.
-
-Extended `HELLO` payload for Authenticated/Verified profiles:
-
-```json
-{
-  "display_name": "Alice",
-  "roles": ["contributor"],
-  "capabilities": ["intent.broadcast", "op.commit"],
-  "credential": {
-    "type": "bearer_token",
-    "value": "eyJhbGciOiJSUzI1NiIs..."
-  }
-}
-```
-
-The `credential` object MUST include:
-
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `type` | string | R | Credential type. One of: `bearer_token`, `mtls_fingerprint`, `api_key`, `x509_chain`, `custom` |
-| `value` | string | R | The credential value (token, certificate fingerprint, key, etc.) |
-| `issuer` | string | O | Identity provider or certificate authority that issued the credential |
-| `expires_at` | string | O | RFC 3339 timestamp when the credential expires |
-
-Supported credential types:
-
-1. **`bearer_token`**: An OAuth 2.0 bearer token or JWT. The coordinator MUST validate the token signature and claims (audience, expiry, issuer) against the session's identity provider configuration. The `issuer` field SHOULD contain the token issuer URL.
-
-2. **`mtls_fingerprint`**: The SHA-256 fingerprint of the client certificate presented during the TLS handshake. This type is used when identity verification happens at the transport layer. The coordinator MUST verify that the fingerprint matches a certificate in the session's trust store.
-
-3. **`api_key`**: A pre-shared API key issued by the session coordinator or an administrative system. The coordinator MUST validate the key against its key registry. This type is suitable for intra-organization deployments.
-
-4. **`x509_chain`**: A PEM-encoded X.509 certificate chain. Required in the Verified profile. The coordinator MUST validate the chain against its configured trust anchors and verify that the leaf certificate's subject matches the declared `principal_id`.
-
-5. **`custom`**: An implementation-defined credential type. The coordinator MUST have a registered handler for the custom type. Sessions using custom credentials SHOULD document the expected format in session metadata.
-
-The coordinator's response in `SESSION_INFO` MUST include an `identity_verified` field:
-
-```json
-{
-  "granted_roles": ["contributor"],
-  "identity_verified": true,
-  "identity_method": "bearer_token",
-  "identity_issuer": "https://auth.example.com"
-}
-```
-
-If credential verification fails, the coordinator MUST reject the `HELLO` with a `PROTOCOL_ERROR` (`error_code`: `CREDENTIAL_REJECTED`) and MUST NOT admit the participant to the session.
-
-In the Open security profile, the `credential` field is optional and MAY be omitted. If present, the coordinator MAY validate it but MUST NOT reject participants solely based on credential absence.
-
-#### 23.1.5 Role Assignment and Verification
-
-Roles determine a participant's governance authority (Section 18.2). In all security profiles, role assignment follows this process:
-
-1. **Role request**: The participant declares requested roles in the `HELLO` message's `roles` field.
-
-2. **Role policy evaluation**: The coordinator evaluates the request against the session's role policy. The role policy defines:
-   - which roles each identity is authorized for (identity-to-role mapping)
-   - maximum number of participants per role (e.g., at most 2 arbiters)
-   - role prerequisites (e.g., `arbiter` requires `human` principal type unless overridden)
-
-3. **Role grant**: The coordinator returns the actually granted roles in `SESSION_INFO`'s `granted_roles` field. If the granted roles differ from the requested roles, the coordinator SHOULD include a human-readable explanation in `compatibility_errors`.
-
-4. **Role enforcement**: After admission, the coordinator MUST reject messages that require authority the sender's granted roles do not provide. For example, a `contributor` sending a `RESOLUTION` (which requires `owner` or `arbiter`) MUST be rejected with `PROTOCOL_ERROR` (`error_code`: `AUTHORIZATION_FAILED`).
-
-Role policy configuration:
-
-```json
-{
-  "role_policy": {
-    "default_role": "contributor",
-    "role_assignments": {
-      "agent:alice": ["contributor", "reviewer"],
-      "human:bob": ["owner", "arbiter"]
-    },
-    "role_constraints": {
-      "arbiter": {
-        "max_count": 2,
-        "allowed_principal_types": ["human", "service"]
-      }
-    }
-  }
-}
-```
-
-In the Open profile, if no role policy is defined, participants receive the roles they request. In the Authenticated and Verified profiles, a role policy MUST be defined and the coordinator MUST enforce it.
-
-#### 23.1.6 Key Distribution and Rotation
-
-In the Authenticated and Verified security profiles, message signing requires that participants and the coordinator can verify each other's signatures. MPAC defines the following key distribution requirements:
-
-1. **Coordinator public key**: The coordinator's signing public key MUST be distributed to participants through a trusted channel before or during session join. The recommended mechanism is to include the coordinator's public key fingerprint in the `SESSION_INFO` message:
-
-```json
-{
-  "security_config": {
-    "coordinator_key_fingerprint": "sha256:abcdef1234567890",
-    "key_exchange_method": "session_info"
-  }
-}
-```
-
-2. **Participant public keys**: Each participant's signing public key MUST be made available to other participants for signature verification. The coordinator SHOULD maintain a key registry and distribute participant public keys through an implementation-defined mechanism (e.g., a `PARTICIPANT_KEYS` extension message, or inclusion in the session's trust store).
-
-3. **Key rotation**: If a participant needs to rotate their signing key during a session (e.g., scheduled rotation, suspected compromise), they MUST:
-   - send a `HEARTBEAT` with a new `key_rotation` extension field containing the new public key fingerprint
-   - the coordinator MUST validate the rotation request against the participant's authenticated identity
-   - the coordinator MUST broadcast the key change to all participants
-   - messages signed with the old key MUST continue to be accepted for a grace period (recommended: `2 × heartbeat_interval_sec`)
-
-4. **Watermark integrity in Verified profile**: In the Verified profile, watermark values MUST be included in the signed portion of each message. This prevents watermark forgery — a participant cannot claim a higher Lamport clock value than they actually observed, because the signature binds the watermark to the authenticated sender.
 
 ### 23.2 Session Security Declaration
 
@@ -2201,7 +1845,7 @@ To maximize interoperability, implementations SHOULD:
 7. Preserve protocol semantics independent of transport
 8. Declare a security profile appropriate to the deployment's trust boundaries (Section 23.1)
 9. Designate at least one arbiter in multi-owner sessions (Section 18.5)
-10. Implement unavailability detection and orphaned intent recovery (Section 14.7)
+10. Implement unavailability detection and orphaned intent recovery (Section 14.5)
 11. Include `canonical_uris` in scope objects when participants use heterogeneous scope kinds (Section 15.2.1)
 12. Use the `semantic_match` basis kind with standardized output format for assumption contradiction detection (Section 17.7.1)
 13. Support `lamport_clock` as the baseline watermark kind and include `lamport_value` in non-lamport watermarks (Section 12.3)
@@ -2407,36 +2051,35 @@ This flow illustrates that MPAC treats coordination and conflict handling as exp
 
 The following areas are explicitly deferred from MPAC v0.1 and may be addressed in future versions:
 
+- formal JSON Schema files (machine-readable) corresponding to the payload schema tables in Section 13.1
+- richer session negotiation and discovery protocols, including capability compatibility verification at join time
 - standard conflict ontology extensions
 - conflict confidence scoring
 - operation diff payload standards
 - atomic multi-target operations (batch mutations spanning multiple resources in a single logical operation)
 - ownership lease semantics
 - protocol conformance test suite
+- session transfer and migration
 - participant capability negotiation beyond HELLO
 - session-level resource registry auto-population and discovery mechanisms
 - standard assumption ontology or vocabulary for common domains (to improve `semantic_match` accuracy across implementations)
 - hierarchical vector clocks or interval tree clocks for reduced causal metadata overhead in large sessions
 - integration architecture guidance for deployments combining MPAC with MCP (agent-to-tool) and A2A (agent-to-agent) protocols
 - end-to-end payload encryption specification for deployments with untrusted coordinators
-- semantic scope and dependency declaration for detecting non-file-level conflicts (e.g., API contract changes, schema-query coupling)
-- post-commit rollback semantics (OP_ROLLBACK message type or OP_SUPERSEDE rollback flag)
-- cross-session coordination and scope conflict detection across independent sessions
 
-Note: The following gaps were identified in prior reviews and have been addressed across v0.1.1–v0.1.6: security profiles and trust enforcement (Section 23), credential exchange and trust establishment (Section 23.1.4), role assignment and verification (Section 23.1.5), key distribution and rotation (Section 23.1.6), governance deadlock prevention (Sections 18.5–18.6), participant unavailability recovery (Section 14.7), semantic interoperability foundations (Sections 15.2.1–15.2.3, 17.7.1), payload schema tables (Section 13.1), scope overlap standardization (Section 15.2.1), baseline watermark interoperability (Section 12.3), session coordinator role (Section 8.1), coordinator fault recovery and handover (Section 8.1.1), session lifecycle and close (Section 9.6), frozen scope fallback (Section 18.6.2.1), formal JSON Schema definitions (ref-impl/schema/), OP_SUPERSEDE handler implementation, and coordinator fault recovery with snapshot + audit log replay.
+Note: Security profiles and trust enforcement (Section 23), governance deadlock prevention (Sections 18.5–18.6), participant unavailability recovery (Section 14.5), semantic interoperability foundations (Sections 15.2.1–15.2.3, 17.7.1), payload schema tables (Section 13.1), scope overlap standardization (Section 15.2.1), baseline watermark interoperability (Section 12.3), session coordinator role (Section 8.1), and frozen scope fallback (Section 18.6.2.1) were identified as gaps in review and have been addressed in this version of the specification.
 
 ## 30. Summary
 
-MPAC v0.1.6 defines a structured protocol for multi-agent collaboration centered on:
-- sessions with defined lifecycle (creation, discovery, close, audit export)
-- session coordination with fault tolerance (state snapshots, recovery, handover, audit log replay)
+MPAC v0.1.4 defines a minimal but structured protocol for multi-agent collaboration centered on:
+- sessions and session coordination
 - intents with mandatory pre-execution declaration (Governance Profile)
 - operations with required state references
 - conflicts with standardized scope overlap rules
 - governance with deadlock prevention and frozen scope fallback
 - causal context with baseline watermark interoperability
-- security with credential exchange, role verification, key distribution, and watermark integrity
+- security and trust with role assertion verification
 - failure recovery with concurrent claim resolution
 
-Its central design claim is that collaborative agent systems become more interoperable, auditable, and governable when intent, mutation, conflict, and resolution are represented as explicit protocol messages rather than hidden inside application logic. The protocol provides security profiles with concrete trust establishment mechanisms for deployments ranging from intra-team to cross-organizational, coordinator fault tolerance with snapshot-based recovery and audit log replay for production reliability, governance mechanisms to prevent deadlock between equal-authority principals, recovery semantics to handle participant failure without orphaning in-flight work, operation supersession for safe post-commit revisions, semantic interoperability mechanisms (canonical resource URIs and standardized semantic matching output) to enable cross-kind scope overlap detection and assumption contradiction identification, session lifecycle management with transcript export for compliance, formal JSON Schema definitions for machine-enforceable wire format compatibility, and payload schema definitions to ensure cross-implementation field-level compatibility.
+Its central design claim is that collaborative agent systems become more interoperable, auditable, and governable when intent, mutation, conflict, and resolution are represented as explicit protocol messages rather than hidden inside application logic. The protocol provides security profiles for deployments ranging from intra-team to cross-organizational, governance mechanisms to prevent deadlock between equal-authority principals, recovery semantics to handle participant failure without orphaning in-flight work, semantic interoperability mechanisms (canonical resource URIs and standardized semantic matching output) to enable cross-kind scope overlap detection and assumption contradiction identification, and payload schema definitions to ensure cross-implementation field-level compatibility.
 

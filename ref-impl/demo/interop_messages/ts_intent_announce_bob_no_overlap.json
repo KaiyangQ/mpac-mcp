@@ -2,13 +2,13 @@
   "protocol": "MPAC",
   "version": "0.1.4",
   "message_type": "INTENT_ANNOUNCE",
-  "message_id": "b82b3e3a-a41e-406a-973a-8026f8ce958c",
+  "message_id": "5e6a0208-5adb-44b5-b5f7-98bd42d7557b",
   "session_id": "interop-test-session-001",
   "sender": {
     "principal_id": "agent:bob-ts",
     "principal_type": "agent"
   },
-  "ts": "2026-04-03T20:57:32.492Z",
+  "ts": "2026-04-03T23:17:20.895Z",
   "payload": {
     "intent_id": "intent-bob-ts-001",
     "objective": "Update database schema",
