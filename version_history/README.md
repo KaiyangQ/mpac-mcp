@@ -8,7 +8,8 @@ version_history/
 ├── v0.1_baseline/                         ← original specification and review materials
 ├── v0.1.1_trust_governance_recovery/      ← first update round
 ├── v0.1.2_semantic_interop/               ← second update round
-└── v0.1.3_interop_hardening/              ← third update round
+├── v0.1.3_interop_hardening/              ← third update round
+└── v0.1.4_state_machine_audit/            ← five-dimension audit + state machine cross-safety
 ```
 
 The current source of truth is always **SPEC.md** in the project root.
@@ -93,9 +94,84 @@ Comprehensive update addressing cross-implementation interoperability gaps, norm
 
 ---
 
-## Convention for Future Updates
+## v0.1.4 — State Machine Audit (2026-04-02)
 
-Each new update should:
-1. Archive the current SPEC.md as `SPEC_v{version}_{date}.md` in the new version folder
-2. Create an update record docx describing what changed and why
-3. Add an entry to this README
+Five-dimension audit of v0.1.3 covering efficiency, robustness, scalability, semantic alignment, and **state machine cross-safety**. The state machine analysis identified multiple unresolved cross-lifecycle gaps that will drive the v0.1.4 spec revision.
+
+**Key findings:**
+- Section 15.6 / 16.6: Intent TTL expiry does not cascade to associated pending OP_PROPOSE (orphan proposal)
+- Section 14.4.2 / 16.6: Intent SUSPENDED state does not address third-party pending proposals referencing that intent
+- Section 18.6.2 / 15.6: Frozen scope can outlive all related intents, creating semantically void conflicts
+- Section 18.4: RESOLUTION rejecting a COMMITTED operation only SHOULD (not MUST) declare rollback expectation
+- Timeout cascade between intent TTL, resolution_timeout, and frozen_scope_timeout can produce liveness violation (activity loop with zero effective progress)
+- Efficiency concerns: heavyweight envelope for high-frequency messages, no batching, no scope-based subscription
+- Scalability: broadcast model and O(n²) conflict detection limit practical session size
+
+**Contents:**
+
+| File | Description |
+|------|-------------|
+| `SPEC_v0.1.3_2026-04-02.md` | Archived SPEC.md snapshot before this update |
+| `MPAC_v0.1.3_Audit_Report.md` | Full five-dimension audit report with scoring and recommendations |
+
+---
+
+## Archival Convention and Procedure
+
+When the user says "归档" or "archive the spec" or "参考 version history 里的 readme 把现有 spec 归档", follow this procedure exactly:
+
+### Step 1: Determine the new version number
+
+- Read this README to find the latest version entry (e.g., `v0.1.4_state_machine_audit`)
+- The new version number increments the patch version (e.g., `v0.1.4` → `v0.1.5`)
+- If the user specifies a version number, use that instead
+
+### Step 2: Determine the folder name suffix
+
+- Ask the user for a short descriptive suffix, or infer from context (e.g., `interop_hardening`, `state_machine_audit`)
+- Folder name format: `v{version}_{suffix}`
+
+### Step 3: Create the archive folder
+
+```
+mkdir version_history/v{version}_{suffix}/
+```
+
+### Step 4: Archive the current SPEC.md
+
+- Copy the **current** `SPEC.md` from the project root into the new folder
+- Name it `SPEC_v{current_version}_{today's date YYYY-MM-DD}.md`
+- Example: if current SPEC is v0.1.3 and today is 2026-04-02, the file is `SPEC_v0.1.3_2026-04-02.md`
+- This snapshot captures the state **before** the upcoming changes
+
+### Step 5: Add supporting documents
+
+- If there is an audit report, changelog, or update record, copy or create it in the same folder
+- Common file types:
+  - `MPAC_v{version}_Audit_Report.md` — external review or audit
+  - `MPAC_v{version}_Update_Record.md` — detailed changelog with rationale
+  - Other analysis documents as needed
+
+### Step 6: Update this README
+
+1. **Directory structure**: add the new folder to the tree at the top of this file
+2. **Version entry**: add a new `## v{version} — {Title} ({date})` section before the "Convention" section, containing:
+   - One-paragraph summary of what this version represents
+   - `**Key changes:**` or `**Key findings:**` bullet list
+   - `**Contents:**` table listing every file in the folder with a description
+3. Keep entries in chronological order (newest last, just before this Convention section)
+
+### Step 7: Apply changes to SPEC.md (if applicable)
+
+- If the archive is in preparation for a spec revision, the user will instruct what changes to make to `SPEC.md` in the project root separately
+- After changes are applied, the root `SPEC.md` should be updated to reflect the new version number in its Section 1
+
+### Quick reference
+
+| What | Where | Naming |
+|------|-------|--------|
+| Current source of truth | `SPEC.md` (project root) | Always `SPEC.md` |
+| Pre-change snapshot | `version_history/v{new}/SPEC_v{old}_{date}.md` | Version = old spec version |
+| Audit / review report | `version_history/v{new}/MPAC_v{old}_Audit_Report.md` | Version = spec being reviewed |
+| Update record | `version_history/v{new}/MPAC_v{new}_Update_Record.md` | Version = new spec version |
+| This index | `version_history/README.md` | Always `README.md` |
