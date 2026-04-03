@@ -1,0 +1,284 @@
+[
+  {
+    "direction": "→ coordinator",
+    "label": "Alice HELLO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "HELLO",
+      "message_id": "97f941eb-3a5c-4315-a80b-ba16d17d2092",
+      "session_id": "live-ai-session-001",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent"
+      },
+      "ts": "2026-04-03T19:23:34.276468Z",
+      "payload": {
+        "display_name": "Alice",
+        "roles": [
+          "contributor"
+        ],
+        "capabilities": [
+          "intent.broadcast",
+          "op.propose",
+          "op.commit"
+        ]
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 1
+      }
+    }
+  },
+  {
+    "direction": "← coordinator",
+    "label": "response",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "SESSION_INFO",
+      "message_id": "81240724-e6a6-46ca-8127-04b774362d46",
+      "session_id": "live-ai-session-001",
+      "sender": {
+        "principal_id": "coordinator",
+        "principal_type": "coordinator"
+      },
+      "ts": "2026-04-03T19:23:34.276512Z",
+      "payload": {
+        "security_profile": "open",
+        "compliance_profile": "core"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      }
+    }
+  },
+  {
+    "direction": "→ coordinator",
+    "label": "Bob HELLO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "HELLO",
+      "message_id": "792b08df-33cd-47c5-a368-a50b5f8839c3",
+      "session_id": "live-ai-session-001",
+      "sender": {
+        "principal_id": "agent:Bob",
+        "principal_type": "agent"
+      },
+      "ts": "2026-04-03T19:23:34.276522Z",
+      "payload": {
+        "display_name": "Bob",
+        "roles": [
+          "contributor"
+        ],
+        "capabilities": [
+          "intent.broadcast",
+          "op.propose",
+          "op.commit"
+        ]
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 1
+      }
+    }
+  },
+  {
+    "direction": "← coordinator",
+    "label": "response",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "SESSION_INFO",
+      "message_id": "2d482bba-7e3f-49f2-9df2-e30a6fefa3a5",
+      "session_id": "live-ai-session-001",
+      "sender": {
+        "principal_id": "coordinator",
+        "principal_type": "coordinator"
+      },
+      "ts": "2026-04-03T19:23:34.276537Z",
+      "payload": {
+        "security_profile": "open",
+        "compliance_profile": "core"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 5
+      }
+    }
+  },
+  {
+    "direction": "→ coordinator",
+    "label": "Alice intent",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "INTENT_ANNOUNCE",
+      "message_id": "d1886735-c383-46c4-901a-33f58b2e2052",
+      "session_id": "live-ai-session-001",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent"
+      },
+      "ts": "2026-04-03T19:23:36.603408Z",
+      "payload": {
+        "intent_id": "intent-alice-token-expiry-fix",
+        "objective": "Fix the critical security bug where tokens aren't validated for expiry in the authentication system",
+        "scope": {
+          "kind": "file_set",
+          "resources": [
+            "src/auth.py",
+            "src/auth_middleware.py"
+          ]
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 2
+      }
+    }
+  },
+  {
+    "direction": "→ coordinator",
+    "label": "Bob intent",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "INTENT_ANNOUNCE",
+      "message_id": "10102d58-46a9-4de4-81d4-92a64099192c",
+      "session_id": "live-ai-session-001",
+      "sender": {
+        "principal_id": "agent:Bob",
+        "principal_type": "agent"
+      },
+      "ts": "2026-04-03T19:23:39.448815Z",
+      "payload": {
+        "intent_id": "intent-bob-refactor-auth-models",
+        "objective": "Refactor authentication logic to eliminate duplication between auth.py and auth_middleware.py, and complete the User model with missing constraints",
+        "scope": {
+          "kind": "file_set",
+          "resources": [
+            "src/auth.py",
+            "src/auth_middleware.py",
+            "src/models.py"
+          ]
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 2
+      }
+    }
+  },
+  {
+    "direction": "← coordinator",
+    "label": "response",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "CONFLICT_REPORT",
+      "message_id": "f165f2db-42d4-496e-8dec-3cabc57a624a",
+      "session_id": "live-ai-session-001",
+      "sender": {
+        "principal_id": "coordinator",
+        "principal_type": "coordinator"
+      },
+      "ts": "2026-04-03T19:23:39.449122Z",
+      "payload": {
+        "conflict_id": "de63124c-ff14-4c7d-812f-351311ce1a25",
+        "category": "scope_overlap",
+        "severity": "medium",
+        "principal_a": "agent:Bob",
+        "principal_b": "agent:Alice",
+        "intent_a": "intent-bob-refactor-auth-models",
+        "intent_b": "intent-alice-token-expiry-fix"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 8
+      }
+    }
+  },
+  {
+    "direction": "→ coordinator",
+    "label": "resolution",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "RESOLUTION",
+      "message_id": "220e2a83-f90c-498a-ad0a-95864d4bca0e",
+      "session_id": "live-ai-session-001",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent"
+      },
+      "ts": "2026-04-03T19:23:48.938915Z",
+      "payload": {
+        "conflict_id": "de63124c-ff14-4c7d-812f-351311ce1a25",
+        "decision": "approved"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      }
+    }
+  },
+  {
+    "direction": "→ coordinator",
+    "label": "Alice commit",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "OP_COMMIT",
+      "message_id": "c0795269-46d0-425a-939e-45b79fdf57ca",
+      "session_id": "live-ai-session-001",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent"
+      },
+      "ts": "2026-04-03T19:23:52.937649Z",
+      "payload": {
+        "op_id": "op-alice-token-expiry-validation",
+        "intent_id": "intent-alice-token-expiry-fix",
+        "target": "src/auth.py",
+        "op_kind": "patch",
+        "state_ref_before": "sha256:a7f8d9e2b1c4f6a8d9e2b1c4f6a8d9e2",
+        "state_ref_after": "sha256:b8f9e0f3c2d5g7b9e0f3c2d5g7b9e0f3"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 4
+      }
+    }
+  },
+  {
+    "direction": "→ coordinator",
+    "label": "Bob commit",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "OP_COMMIT",
+      "message_id": "a1d9ae26-53af-4f9b-b8d4-1f2f8ce3b1e7",
+      "session_id": "live-ai-session-001",
+      "sender": {
+        "principal_id": "agent:Bob",
+        "principal_type": "agent"
+      },
+      "ts": "2026-04-03T19:23:56.008780Z",
+      "payload": {
+        "op_id": "op-bob-consolidate-auth",
+        "intent_id": "intent-bob-refactor-auth-models",
+        "target": "src/auth.py",
+        "op_kind": "replace",
+        "state_ref_before": "abc123-auth-scattered",
+        "state_ref_after": "def456-auth-consolidated"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      }
+    }
+  }
+]
