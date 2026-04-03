@@ -1,0 +1,28 @@
+{
+  "$id": "https://mpac-protocol.org/schema/objects/outcome.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Outcome",
+  "description": "Structured resolution result.",
+  "type": "object",
+  "properties": {
+    "accepted": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Accepted intent/operation IDs."
+    },
+    "rejected": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Rejected intent/operation IDs."
+    },
+    "merged": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Merged intent/operation IDs."
+    },
+    "rollback": {
+      "type": "string",
+      "description": "MUST when rejected list contains COMMITTED operations. Reference to compensating OP_COMMIT or 'not_required'."
+    }
+  }
+}

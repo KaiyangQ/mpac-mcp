@@ -1,0 +1,27 @@
+{
+  "protocol": "MPAC",
+  "version": "0.1.4",
+  "message_type": "HELLO",
+  "message_id": "7fbfc2f2-9556-4bdd-842e-069c03661f75",
+  "session_id": "interop-test-session-001",
+  "sender": {
+    "principal_id": "agent:bob",
+    "principal_type": "agent"
+  },
+  "ts": "2026-04-03T17:05:29.771406Z",
+  "payload": {
+    "display_name": "Bob Reviewer",
+    "roles": [
+      "contributor",
+      "reviewer"
+    ],
+    "capabilities": [
+      "intent.broadcast",
+      "op.commit"
+    ]
+  },
+  "watermark": {
+    "kind": "lamport_clock",
+    "value": 1
+  }
+}

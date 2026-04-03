@@ -1,0 +1,177 @@
+{
+  "results": {
+    "hello_alice": {
+      "success": true,
+      "response_count": 1,
+      "responses": [
+        {
+          "protocol": "MPAC",
+          "version": "0.1.4",
+          "message_type": "SESSION_INFO",
+          "message_id": "41c04979-1503-4a25-a667-4b2628e9f84a",
+          "session_id": "interop-test-session-001",
+          "sender": {
+            "principal_id": "coordinator-7f3410bf-4a3e-4746-8cd0-fc28b3baa023",
+            "principal_type": "coordinator"
+          },
+          "ts": "2026-04-03T17:05:29.808Z",
+          "payload": {
+            "session_id": "interop-test-session-001",
+            "coordinator_principal_id": "coordinator-7f3410bf-4a3e-4746-8cd0-fc28b3baa023",
+            "created_at": "2026-04-03T17:05:29.808Z",
+            "security_profile": "open",
+            "compliance_profile": "core",
+            "participants": [
+              {
+                "principal_id": "agent:alice",
+                "principal_type": "agent",
+                "display_name": "Alice Coder",
+                "roles": [
+                  "contributor"
+                ],
+                "capabilities": [
+                  "intent.broadcast",
+                  "op.commit"
+                ],
+                "joined_at": "2026-04-03T17:05:29.808Z"
+              }
+            ]
+          },
+          "watermark": {
+            "kind": "lamport_clock",
+            "value": 3
+          }
+        }
+      ]
+    },
+    "hello_bob": {
+      "success": true,
+      "response_count": 1,
+      "responses": [
+        {
+          "protocol": "MPAC",
+          "version": "0.1.4",
+          "message_type": "SESSION_INFO",
+          "message_id": "041a7d27-1892-45cc-8f41-b909712bd274",
+          "session_id": "interop-test-session-001",
+          "sender": {
+            "principal_id": "coordinator-7f3410bf-4a3e-4746-8cd0-fc28b3baa023",
+            "principal_type": "coordinator"
+          },
+          "ts": "2026-04-03T17:05:29.809Z",
+          "payload": {
+            "session_id": "interop-test-session-001",
+            "coordinator_principal_id": "coordinator-7f3410bf-4a3e-4746-8cd0-fc28b3baa023",
+            "created_at": "2026-04-03T17:05:29.808Z",
+            "security_profile": "open",
+            "compliance_profile": "core",
+            "participants": [
+              {
+                "principal_id": "agent:alice",
+                "principal_type": "agent",
+                "display_name": "Alice Coder",
+                "roles": [
+                  "contributor"
+                ],
+                "capabilities": [
+                  "intent.broadcast",
+                  "op.commit"
+                ],
+                "joined_at": "2026-04-03T17:05:29.808Z"
+              },
+              {
+                "principal_id": "agent:bob",
+                "principal_type": "agent",
+                "display_name": "Bob Reviewer",
+                "roles": [
+                  "contributor",
+                  "reviewer"
+                ],
+                "capabilities": [
+                  "intent.broadcast",
+                  "op.commit"
+                ],
+                "joined_at": "2026-04-03T17:05:29.809Z"
+              }
+            ]
+          },
+          "watermark": {
+            "kind": "lamport_clock",
+            "value": 5
+          }
+        }
+      ]
+    },
+    "intent_announce_alice": {
+      "success": true,
+      "response_count": 0,
+      "responses": []
+    },
+    "intent_announce_bob_no_overlap": {
+      "success": true,
+      "response_count": 0,
+      "responses": []
+    },
+    "intent_announce_bob_overlap": {
+      "success": true,
+      "response_count": 1,
+      "responses": [
+        {
+          "protocol": "MPAC",
+          "version": "0.1.4",
+          "message_type": "CONFLICT_REPORT",
+          "message_id": "11b35cfa-a248-45eb-845a-779b4b274cda",
+          "session_id": "interop-test-session-001",
+          "sender": {
+            "principal_id": "coordinator-7f3410bf-4a3e-4746-8cd0-fc28b3baa023",
+            "principal_type": "coordinator"
+          },
+          "ts": "2026-04-03T17:05:29.809Z",
+          "payload": {
+            "conflict_id": "conflict-63088c8e-0b14-4204-adb4-d7c77aa787e8",
+            "category": "scope_overlap",
+            "severity": "medium",
+            "involved_principals": [
+              "agent:bob",
+              "agent:alice"
+            ],
+            "scope_a": {
+              "kind": "file_set",
+              "resources": [
+                "src/auth.py",
+                "src/auth_test.py"
+              ]
+            },
+            "scope_b": {
+              "kind": "file_set",
+              "resources": [
+                "src/auth.py",
+                "src/auth_utils.py"
+              ]
+            },
+            "basis": {
+              "intent_id": "intent-bob-002"
+            },
+            "details": "Intent intent-bob-002 overlaps with intent intent-alice-001"
+          },
+          "watermark": {
+            "kind": "lamport_clock",
+            "value": 9
+          }
+        }
+      ]
+    },
+    "op_commit_alice": {
+      "success": true,
+      "response_count": 0,
+      "responses": []
+    },
+    "op_propose_alice": {
+      "success": true,
+      "response_count": 0,
+      "responses": []
+    }
+  },
+  "issues": [],
+  "ts_messages_generated": 7
+}

@@ -1,0 +1,40 @@
+{
+  "$id": "https://mpac-protocol.org/schema/envelope.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MPAC Message Envelope",
+  "description": "Outer wrapper for all MPAC messages.",
+  "type": "object",
+  "required": ["protocol", "version", "message_type", "message_id", "session_id", "sender", "ts", "payload"],
+  "properties": {
+    "protocol": { "type": "string", "const": "MPAC" },
+    "version": { "type": "string", "description": "Protocol version, e.g. '0.1.4'" },
+    "message_type": {
+      "type": "string",
+      "enum": [
+        "HELLO", "SESSION_INFO", "HEARTBEAT", "GOODBYE",
+        "INTENT_ANNOUNCE", "INTENT_UPDATE", "INTENT_WITHDRAW", "INTENT_CLAIM",
+        "OP_PROPOSE", "OP_COMMIT", "OP_REJECT", "OP_SUPERSEDE",
+        "CONFLICT_REPORT", "CONFLICT_ACK", "CONFLICT_ESCALATE",
+        "RESOLUTION", "PROTOCOL_ERROR"
+      ]
+    },
+    "message_id": { "type": "string", "description": "Globally unique message ID." },
+    "session_id": { "type": "string" },
+    "sender": {
+      "type": "object",
+      "required": ["principal_id", "principal_type"],
+      "properties": {
+        "principal_id": { "type": "string" },
+        "principal_type": { "type": "string", "enum": ["human", "agent", "service"] }
+      }
+    },
+    "ts": { "type": "string", "format": "date-time", "description": "RFC 3339 UTC timestamp." },
+    "payload": { "type": "object" },
+    "watermark": { "$ref": "objects/watermark.schema.json" },
+    "in_reply_to": { "type": "string" },
+    "trace_id": { "type": "string" },
+    "policy_ref": { "type": "string" },
+    "signature": { "type": "string" },
+    "extensions": { "type": "object" }
+  }
+}

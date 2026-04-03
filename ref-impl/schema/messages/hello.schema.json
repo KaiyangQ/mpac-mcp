@@ -1,0 +1,19 @@
+{
+  "$id": "https://mpac-protocol.org/schema/messages/hello.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HELLO Payload",
+  "type": "object",
+  "required": ["display_name", "roles", "capabilities"],
+  "properties": {
+    "display_name": { "type": "string" },
+    "roles": { "type": "array", "items": { "type": "string", "enum": ["observer", "contributor", "reviewer", "owner", "arbiter"] } },
+    "capabilities": { "type": "array", "items": { "type": "string" } },
+    "implementation": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    }
+  }
+}

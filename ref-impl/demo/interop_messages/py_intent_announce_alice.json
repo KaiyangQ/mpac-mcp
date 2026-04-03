@@ -1,0 +1,27 @@
+{
+  "protocol": "MPAC",
+  "version": "0.1.4",
+  "message_type": "INTENT_ANNOUNCE",
+  "message_id": "425b8f73-1e52-402c-87a8-2e1501d87254",
+  "session_id": "interop-test-session-001",
+  "sender": {
+    "principal_id": "agent:alice",
+    "principal_type": "agent"
+  },
+  "ts": "2026-04-03T17:05:29.771419Z",
+  "payload": {
+    "intent_id": "intent-alice-001",
+    "objective": "Refactor auth module",
+    "scope": {
+      "kind": "file_set",
+      "resources": [
+        "src/auth.py",
+        "src/auth_utils.py"
+      ]
+    }
+  },
+  "watermark": {
+    "kind": "lamport_clock",
+    "value": 2
+  }
+}

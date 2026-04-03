@@ -1,0 +1,27 @@
+{
+  "protocol": "MPAC",
+  "version": "0.1.4",
+  "message_type": "INTENT_ANNOUNCE",
+  "message_id": "b0063d68-dcd2-4309-aaf6-bc7a0219bdc2",
+  "session_id": "interop-test-session-001",
+  "sender": {
+    "principal_id": "agent:bob",
+    "principal_type": "agent"
+  },
+  "ts": "2026-04-03T17:05:29.771434Z",
+  "payload": {
+    "intent_id": "intent-bob-002",
+    "objective": "Fix auth bug",
+    "scope": {
+      "kind": "file_set",
+      "resources": [
+        "src/auth.py",
+        "src/auth_test.py"
+      ]
+    }
+  },
+  "watermark": {
+    "kind": "lamport_clock",
+    "value": 3
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "protocol": "MPAC",
+  "version": "0.1.4",
+  "message_type": "HELLO",
+  "message_id": "4f66e104-12e8-483a-8b05-f579d79b1770",
+  "session_id": "interop-test-session-001",
+  "sender": {
+    "principal_id": "agent:bob-ts",
+    "principal_type": "agent"
+  },
+  "ts": "2026-04-03T17:05:29.810Z",
+  "payload": {
+    "display_name": "Bob TS",
+    "roles": [
+      "contributor",
+      "reviewer"
+    ],
+    "capabilities": [
+      "intent.broadcast",
+      "op.commit"
+    ]
+  }
+}

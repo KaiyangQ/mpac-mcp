@@ -1,0 +1,22 @@
+{
+  "protocol": "MPAC",
+  "version": "0.1.4",
+  "message_type": "HELLO",
+  "message_id": "270d34c7-e4e0-4963-a425-0d01c20270ec",
+  "session_id": "interop-test-session-001",
+  "sender": {
+    "principal_id": "agent:alice-ts",
+    "principal_type": "agent"
+  },
+  "ts": "2026-04-03T17:05:29.810Z",
+  "payload": {
+    "display_name": "Alice TS",
+    "roles": [
+      "contributor"
+    ],
+    "capabilities": [
+      "intent.broadcast",
+      "op.commit"
+    ]
+  }
+}

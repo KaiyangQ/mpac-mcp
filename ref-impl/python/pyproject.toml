@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mpac-ref-py"
+version = "0.1.4"
+description = "Python reference implementation for MPAC (Multi-Principal Agent Coordination Protocol) v0.1.4"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "MPAC Reference Implementation Team"}
+]
+
+[tool.setuptools]
+packages = ["mpac"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v"

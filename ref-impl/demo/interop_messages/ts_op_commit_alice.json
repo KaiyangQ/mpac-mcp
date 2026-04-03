@@ -1,0 +1,24 @@
+{
+  "protocol": "MPAC",
+  "version": "0.1.4",
+  "message_type": "OP_COMMIT",
+  "message_id": "648f6bd6-9f46-4a33-b652-0d04d8ec6274",
+  "session_id": "interop-test-session-001",
+  "sender": {
+    "principal_id": "agent:alice-ts",
+    "principal_type": "agent"
+  },
+  "ts": "2026-04-03T17:05:29.810Z",
+  "payload": {
+    "op_id": "op-alice-ts-001",
+    "intent_id": "intent-alice-ts-001",
+    "target": "src/auth.py",
+    "op_kind": "replace",
+    "state_ref_before": "sha256:abc123",
+    "state_ref_after": "sha256:def456"
+  },
+  "watermark": {
+    "kind": "lamport_clock",
+    "value": 3
+  }
+}

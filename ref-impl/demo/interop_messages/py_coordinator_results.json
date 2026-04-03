@@ -1,0 +1,278 @@
+{
+  "hello_alice": {
+    "input": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "HELLO",
+      "message_id": "440bfa45-f22e-4979-bfef-52059fda6015",
+      "session_id": "interop-test-session-001",
+      "sender": {
+        "principal_id": "agent:alice",
+        "principal_type": "agent"
+      },
+      "ts": "2026-04-03T17:05:29.771354Z",
+      "payload": {
+        "display_name": "Alice Coder",
+        "roles": [
+          "contributor"
+        ],
+        "capabilities": [
+          "intent.broadcast",
+          "op.commit"
+        ]
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 1
+      }
+    },
+    "responses": [
+      {
+        "protocol": "MPAC",
+        "version": "0.1.4",
+        "message_type": "SESSION_INFO",
+        "message_id": "ca0ec264-79a0-4349-8d31-1092104b4124",
+        "session_id": "interop-test-session-001",
+        "sender": {
+          "principal_id": "coordinator",
+          "principal_type": "coordinator"
+        },
+        "ts": "2026-04-03T17:05:29.775798Z",
+        "payload": {
+          "security_profile": "open",
+          "compliance_profile": "core"
+        },
+        "watermark": {
+          "kind": "lamport_clock",
+          "value": 3
+        }
+      }
+    ],
+    "response_count": 1
+  },
+  "hello_bob": {
+    "input": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "HELLO",
+      "message_id": "7fbfc2f2-9556-4bdd-842e-069c03661f75",
+      "session_id": "interop-test-session-001",
+      "sender": {
+        "principal_id": "agent:bob",
+        "principal_type": "agent"
+      },
+      "ts": "2026-04-03T17:05:29.771406Z",
+      "payload": {
+        "display_name": "Bob Reviewer",
+        "roles": [
+          "contributor",
+          "reviewer"
+        ],
+        "capabilities": [
+          "intent.broadcast",
+          "op.commit"
+        ]
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 1
+      }
+    },
+    "responses": [
+      {
+        "protocol": "MPAC",
+        "version": "0.1.4",
+        "message_type": "SESSION_INFO",
+        "message_id": "180486bc-db7b-4d9a-bc34-5b8dd436d3bc",
+        "session_id": "interop-test-session-001",
+        "sender": {
+          "principal_id": "coordinator",
+          "principal_type": "coordinator"
+        },
+        "ts": "2026-04-03T17:05:29.775816Z",
+        "payload": {
+          "security_profile": "open",
+          "compliance_profile": "core"
+        },
+        "watermark": {
+          "kind": "lamport_clock",
+          "value": 5
+        }
+      }
+    ],
+    "response_count": 1
+  },
+  "intent_announce_alice": {
+    "input": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "INTENT_ANNOUNCE",
+      "message_id": "425b8f73-1e52-402c-87a8-2e1501d87254",
+      "session_id": "interop-test-session-001",
+      "sender": {
+        "principal_id": "agent:alice",
+        "principal_type": "agent"
+      },
+      "ts": "2026-04-03T17:05:29.771419Z",
+      "payload": {
+        "intent_id": "intent-alice-001",
+        "objective": "Refactor auth module",
+        "scope": {
+          "kind": "file_set",
+          "resources": [
+            "src/auth.py",
+            "src/auth_utils.py"
+          ]
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 2
+      }
+    },
+    "responses": [],
+    "response_count": 0
+  },
+  "intent_announce_bob_no_overlap": {
+    "input": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "INTENT_ANNOUNCE",
+      "message_id": "6da22c79-f185-4ca5-9974-d7156d30af6f",
+      "session_id": "interop-test-session-001",
+      "sender": {
+        "principal_id": "agent:bob",
+        "principal_type": "agent"
+      },
+      "ts": "2026-04-03T17:05:29.771427Z",
+      "payload": {
+        "intent_id": "intent-bob-001",
+        "objective": "Update database schema",
+        "scope": {
+          "kind": "file_set",
+          "resources": [
+            "src/db.py",
+            "src/migrations.py"
+          ]
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 2
+      }
+    },
+    "responses": [],
+    "response_count": 0
+  },
+  "intent_announce_bob_overlap": {
+    "input": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "INTENT_ANNOUNCE",
+      "message_id": "b0063d68-dcd2-4309-aaf6-bc7a0219bdc2",
+      "session_id": "interop-test-session-001",
+      "sender": {
+        "principal_id": "agent:bob",
+        "principal_type": "agent"
+      },
+      "ts": "2026-04-03T17:05:29.771434Z",
+      "payload": {
+        "intent_id": "intent-bob-002",
+        "objective": "Fix auth bug",
+        "scope": {
+          "kind": "file_set",
+          "resources": [
+            "src/auth.py",
+            "src/auth_test.py"
+          ]
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      }
+    },
+    "responses": [
+      {
+        "protocol": "MPAC",
+        "version": "0.1.4",
+        "message_type": "CONFLICT_REPORT",
+        "message_id": "b13be534-650b-4ad0-b603-a86e1dc84a66",
+        "session_id": "interop-test-session-001",
+        "sender": {
+          "principal_id": "coordinator",
+          "principal_type": "coordinator"
+        },
+        "ts": "2026-04-03T17:05:29.775898Z",
+        "payload": {
+          "conflict_id": "462d6dee-d55a-4f35-999e-43b714dc9c62",
+          "category": "scope_overlap",
+          "severity": "medium",
+          "principal_a": "agent:bob",
+          "principal_b": "agent:alice",
+          "intent_a": "intent-bob-002",
+          "intent_b": "intent-alice-001"
+        },
+        "watermark": {
+          "kind": "lamport_clock",
+          "value": 9
+        }
+      }
+    ],
+    "response_count": 1
+  },
+  "op_propose_alice": {
+    "input": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "OP_PROPOSE",
+      "message_id": "614eaafd-a368-430f-992d-49731495f72e",
+      "session_id": "interop-test-session-001",
+      "sender": {
+        "principal_id": "agent:alice",
+        "principal_type": "agent"
+      },
+      "ts": "2026-04-03T17:05:29.771441Z",
+      "payload": {
+        "op_id": "op-alice-001",
+        "intent_id": "intent-alice-001",
+        "target": "src/auth.py",
+        "op_kind": "replace"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      }
+    },
+    "responses": [],
+    "response_count": 0
+  },
+  "op_commit_alice": {
+    "input": {
+      "protocol": "MPAC",
+      "version": "0.1.4",
+      "message_type": "OP_COMMIT",
+      "message_id": "ad106beb-431d-47e2-9b43-7315c502b8ea",
+      "session_id": "interop-test-session-001",
+      "sender": {
+        "principal_id": "agent:alice",
+        "principal_type": "agent"
+      },
+      "ts": "2026-04-03T17:05:29.771447Z",
+      "payload": {
+        "op_id": "op-alice-001",
+        "intent_id": "intent-alice-001",
+        "target": "src/auth.py",
+        "op_kind": "replace",
+        "state_ref_before": "sha256:abc123",
+        "state_ref_after": "sha256:def456"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 4
+      }
+    },
+    "responses": [],
+    "response_count": 0
+  }
+}
