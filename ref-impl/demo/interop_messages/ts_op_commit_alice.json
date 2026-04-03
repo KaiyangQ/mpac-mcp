@@ -2,13 +2,13 @@
   "protocol": "MPAC",
   "version": "0.1.4",
   "message_type": "OP_COMMIT",
-  "message_id": "648f6bd6-9f46-4a33-b652-0d04d8ec6274",
+  "message_id": "b0ebf1e5-35dc-4ffc-b7ae-d0eaa91360eb",
   "session_id": "interop-test-session-001",
   "sender": {
     "principal_id": "agent:alice-ts",
     "principal_type": "agent"
   },
-  "ts": "2026-04-03T17:05:29.810Z",
+  "ts": "2026-04-03T20:57:32.493Z",
   "payload": {
     "op_id": "op-alice-ts-001",
     "intent_id": "intent-alice-ts-001",
@@ -19,6 +19,6 @@
   },
   "watermark": {
     "kind": "lamport_clock",
-    "value": 3
+    "value": 4
   }
 }

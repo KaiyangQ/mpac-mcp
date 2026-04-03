@@ -21,7 +21,7 @@ export class IntentStateMachine {
             [IntentState.EXPIRED]: [],
             [IntentState.WITHDRAWN]: [],
             [IntentState.SUPERSEDED]: [],
-            [IntentState.SUSPENDED]: ["resume"],
+            [IntentState.SUSPENDED]: ["resume", "expire", "withdraw"],
         };
         if (!validTransitions[this.state]?.includes(event)) {
             throw new Error(`Invalid transition from ${this.state} on event ${event}`);
@@ -49,6 +49,12 @@ export class IntentStateMachine {
             case IntentState.SUSPENDED:
                 if (event === "resume") {
                     this.state = IntentState.ACTIVE;
+                }
+                else if (event === "expire") {
+                    this.state = IntentState.EXPIRED;
+                }
+                else if (event === "withdraw") {
+                    this.state = IntentState.WITHDRAWN;
                 }
                 break;
         }
@@ -82,7 +88,7 @@ export class OperationStateMachine {
             [OperationState.COMMITTED]: [],
             [OperationState.REJECTED]: [],
             [OperationState.ABANDONED]: [],
-            [OperationState.FROZEN]: ["unfreeze"],
+            [OperationState.FROZEN]: ["unfreeze", "reject", "abandon"],
         };
         if (!validTransitions[this.state]?.includes(event)) {
             throw new Error(`Invalid transition from ${this.state} on event ${event}`);
@@ -105,6 +111,12 @@ export class OperationStateMachine {
             case OperationState.FROZEN:
                 if (event === "unfreeze") {
                     this.state = OperationState.PROPOSED;
+                }
+                else if (event === "reject") {
+                    this.state = OperationState.REJECTED;
+                }
+                else if (event === "abandon") {
+                    this.state = OperationState.ABANDONED;
                 }
                 break;
         }

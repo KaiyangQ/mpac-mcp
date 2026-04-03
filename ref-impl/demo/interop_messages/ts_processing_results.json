@@ -8,17 +8,17 @@
           "protocol": "MPAC",
           "version": "0.1.4",
           "message_type": "SESSION_INFO",
-          "message_id": "41c04979-1503-4a25-a667-4b2628e9f84a",
+          "message_id": "0edbeb71-e9b5-492c-bf79-facc0c1219ea",
           "session_id": "interop-test-session-001",
           "sender": {
-            "principal_id": "coordinator-7f3410bf-4a3e-4746-8cd0-fc28b3baa023",
+            "principal_id": "coordinator-088ef0b8-88cd-4655-80cb-c8a68a828be9",
             "principal_type": "coordinator"
           },
-          "ts": "2026-04-03T17:05:29.808Z",
+          "ts": "2026-04-03T20:57:32.490Z",
           "payload": {
             "session_id": "interop-test-session-001",
-            "coordinator_principal_id": "coordinator-7f3410bf-4a3e-4746-8cd0-fc28b3baa023",
-            "created_at": "2026-04-03T17:05:29.808Z",
+            "coordinator_principal_id": "coordinator-088ef0b8-88cd-4655-80cb-c8a68a828be9",
+            "created_at": "2026-04-03T20:57:32.489Z",
             "security_profile": "open",
             "compliance_profile": "core",
             "participants": [
@@ -33,7 +33,7 @@
                   "intent.broadcast",
                   "op.commit"
                 ],
-                "joined_at": "2026-04-03T17:05:29.808Z"
+                "joined_at": "2026-04-03T20:57:32.490Z"
               }
             ]
           },
@@ -52,17 +52,17 @@
           "protocol": "MPAC",
           "version": "0.1.4",
           "message_type": "SESSION_INFO",
-          "message_id": "041a7d27-1892-45cc-8f41-b909712bd274",
+          "message_id": "620b5ce9-bd2a-4f61-9f01-a79667b2a558",
           "session_id": "interop-test-session-001",
           "sender": {
-            "principal_id": "coordinator-7f3410bf-4a3e-4746-8cd0-fc28b3baa023",
+            "principal_id": "coordinator-088ef0b8-88cd-4655-80cb-c8a68a828be9",
             "principal_type": "coordinator"
           },
-          "ts": "2026-04-03T17:05:29.809Z",
+          "ts": "2026-04-03T20:57:32.490Z",
           "payload": {
             "session_id": "interop-test-session-001",
-            "coordinator_principal_id": "coordinator-7f3410bf-4a3e-4746-8cd0-fc28b3baa023",
-            "created_at": "2026-04-03T17:05:29.808Z",
+            "coordinator_principal_id": "coordinator-088ef0b8-88cd-4655-80cb-c8a68a828be9",
+            "created_at": "2026-04-03T20:57:32.489Z",
             "security_profile": "open",
             "compliance_profile": "core",
             "participants": [
@@ -77,7 +77,7 @@
                   "intent.broadcast",
                   "op.commit"
                 ],
-                "joined_at": "2026-04-03T17:05:29.808Z"
+                "joined_at": "2026-04-03T20:57:32.490Z"
               },
               {
                 "principal_id": "agent:bob",
@@ -91,7 +91,7 @@
                   "intent.broadcast",
                   "op.commit"
                 ],
-                "joined_at": "2026-04-03T17:05:29.809Z"
+                "joined_at": "2026-04-03T20:57:32.490Z"
               }
             ]
           },
@@ -120,15 +120,15 @@
           "protocol": "MPAC",
           "version": "0.1.4",
           "message_type": "CONFLICT_REPORT",
-          "message_id": "11b35cfa-a248-45eb-845a-779b4b274cda",
+          "message_id": "4a872496-fb9f-49fb-9398-48fe209e8d1a",
           "session_id": "interop-test-session-001",
           "sender": {
-            "principal_id": "coordinator-7f3410bf-4a3e-4746-8cd0-fc28b3baa023",
+            "principal_id": "coordinator-088ef0b8-88cd-4655-80cb-c8a68a828be9",
             "principal_type": "coordinator"
           },
-          "ts": "2026-04-03T17:05:29.809Z",
+          "ts": "2026-04-03T20:57:32.491Z",
           "payload": {
-            "conflict_id": "conflict-63088c8e-0b14-4204-adb4-d7c77aa787e8",
+            "conflict_id": "conflict-f9fecc3d-fd64-4328-ac9d-bc551fbd5245",
             "category": "scope_overlap",
             "severity": "medium",
             "involved_principals": [
@@ -149,10 +149,8 @@
                 "src/auth_utils.py"
               ]
             },
-            "basis": {
-              "intent_id": "intent-bob-002"
-            },
-            "details": "Intent intent-bob-002 overlaps with intent intent-alice-001"
+            "intent_a": "intent-bob-002",
+            "intent_b": "intent-alice-001"
           },
           "watermark": {
             "kind": "lamport_clock",

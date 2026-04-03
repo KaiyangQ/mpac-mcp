@@ -2,13 +2,13 @@
   "protocol": "MPAC",
   "version": "0.1.4",
   "message_type": "OP_PROPOSE",
-  "message_id": "614eaafd-a368-430f-992d-49731495f72e",
+  "message_id": "5b4f01fb-bf4e-411d-b91b-10b25a45d9ff",
   "session_id": "interop-test-session-001",
   "sender": {
     "principal_id": "agent:alice",
     "principal_type": "agent"
   },
-  "ts": "2026-04-03T17:05:29.771441Z",
+  "ts": "2026-04-03T20:57:32.453726Z",
   "payload": {
     "op_id": "op-alice-001",
     "intent_id": "intent-alice-001",

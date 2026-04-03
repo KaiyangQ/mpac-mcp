@@ -8,7 +8,11 @@ interface Intent {
     scope: any;
     stateMachine: IntentStateMachine;
     created_at: string;
-    expires_at?: string;
+    received_at: number;
+    ttl_sec?: number;
+    expires_at?: number;
+    last_message_id?: string;
+    claimed_by?: string;
 }
 interface Operation {
     op_id: string;
@@ -21,13 +25,25 @@ interface Operation {
 }
 interface Conflict {
     conflict_id: string;
-    category: ConflictCategory;
-    severity: Severity;
+    category: ConflictCategory | string;
+    severity: Severity | string;
     involved_principals: string[];
     scope_a: any;
     scope_b: any;
+    intent_a: string;
+    intent_b: string;
     stateMachine: ConflictStateMachine;
-    created_at: string;
+    created_at: number;
+    related_intents: string[];
+    related_ops: string[];
+    escalated_to?: string;
+    escalated_at?: number;
+}
+interface ParticipantInfo {
+    principal: Principal;
+    last_seen: number;
+    status: string;
+    is_available: boolean;
 }
 export declare class SessionCoordinator {
     private sessionId;
@@ -40,22 +56,40 @@ export declare class SessionCoordinator {
     private conflicts;
     private lamportClock;
     private createdAt;
-    constructor(sessionId: string, securityProfile?: SecurityProfile, complianceProfile?: ComplianceProfile);
-    /**
-     * Process incoming message and generate responses
-     */
+    private intentExpiryGraceSec;
+    private unavailabilityTimeoutMs;
+    private resolutionTimeoutMs;
+    private claims;
+    constructor(sessionId: string, securityProfile?: SecurityProfile, complianceProfile?: ComplianceProfile, intentExpiryGraceSec?: number, unavailabilityTimeoutSec?: number, resolutionTimeoutSec?: number);
     processMessage(envelope: MessageEnvelope): MessageEnvelope[];
+    checkExpiry(nowMs?: number): MessageEnvelope[];
+    checkLiveness(nowMs?: number): MessageEnvelope[];
+    checkResolutionTimeouts(nowMs?: number): MessageEnvelope[];
     private handleHello;
+    private handleHeartbeat;
+    private handleGoodbye;
     private handleIntentAnnounce;
+    private handleIntentUpdate;
+    private handleIntentWithdraw;
+    private handleIntentClaim;
     private handleOpPropose;
     private handleOpCommit;
     private handleConflictReport;
+    private handleConflictAck;
+    private handleConflictEscalate;
     private handleResolution;
-    getParticipant(principalId: string): Principal | undefined;
-    getIntent(intentId: string): Intent | undefined;
-    getOperation(operationId: string): Operation | undefined;
-    getConflict(conflictId: string): Conflict | undefined;
-    getParticipants(): Principal[];
+    private cascadeIntentTermination;
+    private checkAutoDismiss;
+    private handleParticipantUnavailable;
+    private makeEnvelope;
+    private makeOpReject;
+    private detectScopeOverlaps;
+    private findArbiter;
+    getParticipant(id: string): ParticipantInfo | undefined;
+    getIntent(id: string): Intent | undefined;
+    getOperation(id: string): Operation | undefined;
+    getConflict(id: string): Conflict | undefined;
+    getParticipants(): ParticipantInfo[];
     getIntents(): Intent[];
     getOperations(): Operation[];
     getConflicts(): Conflict[];

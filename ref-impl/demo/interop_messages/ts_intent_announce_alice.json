@@ -2,13 +2,13 @@
   "protocol": "MPAC",
   "version": "0.1.4",
   "message_type": "INTENT_ANNOUNCE",
-  "message_id": "d9451fa8-ba37-46b7-b3f8-6ef7ce4ece7c",
+  "message_id": "a1280486-47d5-416a-9996-a8a23db2f290",
   "session_id": "interop-test-session-001",
   "sender": {
     "principal_id": "agent:alice-ts",
     "principal_type": "agent"
   },
-  "ts": "2026-04-03T17:05:29.810Z",
+  "ts": "2026-04-03T20:57:32.492Z",
   "payload": {
     "intent_id": "intent-alice-ts-001",
     "objective": "Refactor auth module",
@@ -22,6 +22,6 @@
   },
   "watermark": {
     "kind": "lamport_clock",
-    "value": 1
+    "value": 2
   }
 }

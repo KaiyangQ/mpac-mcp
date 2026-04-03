@@ -19,15 +19,6 @@ class Participant:
         roles: List[str] = None,
         capabilities: List[str] = None,
     ):
-        """Initialize participant.
-
-        Args:
-            principal_id: Unique identifier for this principal
-            principal_type: Type of principal (e.g., "agent", "system")
-            display_name: Human-readable name
-            roles: List of roles
-            capabilities: List of capabilities
-        """
         self.principal_id = principal_id
         self.principal_type = principal_type
         self.display_name = display_name
@@ -35,30 +26,65 @@ class Participant:
         self.capabilities = capabilities or []
         self.lamport_clock = LamportClock()
 
-    def hello(self, session_id: str) -> Dict[str, Any]:
-        """Send HELLO message to join session.
+    def _sender(self) -> Sender:
+        return Sender(principal_id=self.principal_id, principal_type=self.principal_type)
 
-        Args:
-            session_id: Session ID to join
-
-        Returns:
-            Message envelope as dict
-        """
+    def _make(self, message_type: str, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         envelope = MessageEnvelope.create(
-            message_type=MessageType.HELLO.value,
+            message_type=message_type,
             session_id=session_id,
-            sender=Sender(
-                principal_id=self.principal_id,
-                principal_type=self.principal_type,
-            ),
-            payload={
-                "display_name": self.display_name,
-                "roles": self.roles,
-                "capabilities": self.capabilities,
-            },
+            sender=self._sender(),
+            payload=payload,
             watermark=self.lamport_clock.create_watermark(),
         )
         return envelope.to_dict()
+
+    # ================================================================
+    #  Session layer
+    # ================================================================
+
+    def hello(self, session_id: str) -> Dict[str, Any]:
+        """Send HELLO to join session."""
+        return self._make(MessageType.HELLO.value, session_id, {
+            "display_name": self.display_name,
+            "roles": self.roles,
+            "capabilities": self.capabilities,
+        })
+
+    def heartbeat(
+        self,
+        session_id: str,
+        status: str = "idle",
+        active_intent_id: Optional[str] = None,
+        summary: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Send HEARTBEAT (Section 14.4)."""
+        payload: Dict[str, Any] = {"status": status}
+        if active_intent_id:
+            payload["active_intent_id"] = active_intent_id
+        if summary:
+            payload["summary"] = summary
+        return self._make(MessageType.HEARTBEAT.value, session_id, payload)
+
+    def goodbye(
+        self,
+        session_id: str,
+        reason: str = "user_exit",
+        active_intents: Optional[List[str]] = None,
+        intent_disposition: str = "withdraw",
+    ) -> Dict[str, Any]:
+        """Send GOODBYE to cleanly leave session (Section 14.4)."""
+        payload: Dict[str, Any] = {
+            "reason": reason,
+            "intent_disposition": intent_disposition,
+        }
+        if active_intents:
+            payload["active_intents"] = active_intents
+        return self._make(MessageType.GOODBYE.value, session_id, payload)
+
+    # ================================================================
+    #  Intent layer
+    # ================================================================
 
     def announce_intent(
         self,
@@ -66,33 +92,75 @@ class Participant:
         intent_id: str,
         objective: str,
         scope: Scope,
+        ttl_sec: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Announce an intent.
+        """Announce an intent (Section 15.3)."""
+        payload: Dict[str, Any] = {
+            "intent_id": intent_id,
+            "objective": objective,
+            "scope": scope.to_dict(),
+        }
+        if ttl_sec is not None:
+            payload["ttl_sec"] = ttl_sec
+        return self._make(MessageType.INTENT_ANNOUNCE.value, session_id, payload)
 
-        Args:
-            session_id: Session ID
-            intent_id: Intent ID
-            objective: Objective description
-            scope: Scope object (with kind and appropriate fields: resources/entities/task_ids)
+    def update_intent(
+        self,
+        session_id: str,
+        intent_id: str,
+        objective: Optional[str] = None,
+        scope: Optional[Scope] = None,
+        ttl_sec: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Update an active intent (Section 15.4)."""
+        payload: Dict[str, Any] = {"intent_id": intent_id}
+        if objective is not None:
+            payload["objective"] = objective
+        if scope is not None:
+            payload["scope"] = scope.to_dict()
+        if ttl_sec is not None:
+            payload["ttl_sec"] = ttl_sec
+        return self._make(MessageType.INTENT_UPDATE.value, session_id, payload)
 
-        Returns:
-            Message envelope as dict
-        """
-        envelope = MessageEnvelope.create(
-            message_type=MessageType.INTENT_ANNOUNCE.value,
-            session_id=session_id,
-            sender=Sender(
-                principal_id=self.principal_id,
-                principal_type=self.principal_type,
-            ),
-            payload={
-                "intent_id": intent_id,
-                "objective": objective,
-                "scope": scope.to_dict(),
-            },
-            watermark=self.lamport_clock.create_watermark(),
-        )
-        return envelope.to_dict()
+    def withdraw_intent(
+        self,
+        session_id: str,
+        intent_id: str,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Withdraw an intent (Section 15.5)."""
+        payload: Dict[str, Any] = {"intent_id": intent_id}
+        if reason:
+            payload["reason"] = reason
+        return self._make(MessageType.INTENT_WITHDRAW.value, session_id, payload)
+
+    def claim_intent(
+        self,
+        session_id: str,
+        claim_id: str,
+        original_intent_id: str,
+        original_principal_id: str,
+        new_intent_id: str,
+        objective: str,
+        scope: Scope,
+        justification: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Claim a suspended intent (Section 14.5.4)."""
+        payload: Dict[str, Any] = {
+            "claim_id": claim_id,
+            "original_intent_id": original_intent_id,
+            "original_principal_id": original_principal_id,
+            "new_intent_id": new_intent_id,
+            "objective": objective,
+            "scope": scope.to_dict(),
+        }
+        if justification:
+            payload["justification"] = justification
+        return self._make(MessageType.INTENT_CLAIM.value, session_id, payload)
+
+    # ================================================================
+    #  Operation layer
+    # ================================================================
 
     def propose_op(
         self,
@@ -102,34 +170,13 @@ class Participant:
         target: str,
         op_kind: str,
     ) -> Dict[str, Any]:
-        """Propose an operation.
-
-        Args:
-            session_id: Session ID
-            op_id: Operation ID
-            intent_id: Associated intent ID
-            target: Target of operation
-            op_kind: Type of operation
-
-        Returns:
-            Message envelope as dict
-        """
-        envelope = MessageEnvelope.create(
-            message_type=MessageType.OP_PROPOSE.value,
-            session_id=session_id,
-            sender=Sender(
-                principal_id=self.principal_id,
-                principal_type=self.principal_type,
-            ),
-            payload={
-                "op_id": op_id,
-                "intent_id": intent_id,
-                "target": target,
-                "op_kind": op_kind,
-            },
-            watermark=self.lamport_clock.create_watermark(),
-        )
-        return envelope.to_dict()
+        """Propose an operation (Section 16.1)."""
+        return self._make(MessageType.OP_PROPOSE.value, session_id, {
+            "op_id": op_id,
+            "intent_id": intent_id,
+            "target": target,
+            "op_kind": op_kind,
+        })
 
     def commit_op(
         self,
@@ -141,38 +188,19 @@ class Participant:
         state_ref_before: Optional[str] = None,
         state_ref_after: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Commit an operation.
+        """Commit an operation (Section 16.2)."""
+        return self._make(MessageType.OP_COMMIT.value, session_id, {
+            "op_id": op_id,
+            "intent_id": intent_id,
+            "target": target,
+            "op_kind": op_kind,
+            "state_ref_before": state_ref_before,
+            "state_ref_after": state_ref_after,
+        })
 
-        Args:
-            session_id: Session ID
-            op_id: Operation ID
-            intent_id: Associated intent ID
-            target: Target of operation
-            op_kind: Type of operation
-            state_ref_before: State reference before operation
-            state_ref_after: State reference after operation
-
-        Returns:
-            Message envelope as dict
-        """
-        envelope = MessageEnvelope.create(
-            message_type=MessageType.OP_COMMIT.value,
-            session_id=session_id,
-            sender=Sender(
-                principal_id=self.principal_id,
-                principal_type=self.principal_type,
-            ),
-            payload={
-                "op_id": op_id,
-                "intent_id": intent_id,
-                "target": target,
-                "op_kind": op_kind,
-                "state_ref_before": state_ref_before,
-                "state_ref_after": state_ref_after,
-            },
-            watermark=self.lamport_clock.create_watermark(),
-        )
-        return envelope.to_dict()
+    # ================================================================
+    #  Conflict layer
+    # ================================================================
 
     def report_conflict(
         self,
@@ -185,68 +213,62 @@ class Participant:
         intent_a: str,
         intent_b: str,
     ) -> Dict[str, Any]:
-        """Report a conflict.
+        """Report a conflict (Section 17.1)."""
+        return self._make(MessageType.CONFLICT_REPORT.value, session_id, {
+            "conflict_id": conflict_id,
+            "category": category,
+            "severity": severity,
+            "principal_a": principal_a,
+            "principal_b": principal_b,
+            "intent_a": intent_a,
+            "intent_b": intent_b,
+        })
 
-        Args:
-            session_id: Session ID
-            conflict_id: Conflict ID
-            category: Conflict category
-            severity: Severity level
-            principal_a: First principal ID
-            principal_b: Second principal ID
-            intent_a: First intent ID
-            intent_b: Second intent ID
+    def ack_conflict(
+        self,
+        session_id: str,
+        conflict_id: str,
+        ack_type: str = "seen",
+    ) -> Dict[str, Any]:
+        """Acknowledge a conflict (Section 17.3)."""
+        return self._make(MessageType.CONFLICT_ACK.value, session_id, {
+            "conflict_id": conflict_id,
+            "ack_type": ack_type,
+        })
 
-        Returns:
-            Message envelope as dict
-        """
-        envelope = MessageEnvelope.create(
-            message_type=MessageType.CONFLICT_REPORT.value,
-            session_id=session_id,
-            sender=Sender(
-                principal_id=self.principal_id,
-                principal_type=self.principal_type,
-            ),
-            payload={
-                "conflict_id": conflict_id,
-                "category": category,
-                "severity": severity,
-                "principal_a": principal_a,
-                "principal_b": principal_b,
-                "intent_a": intent_a,
-                "intent_b": intent_b,
-            },
-            watermark=self.lamport_clock.create_watermark(),
-        )
-        return envelope.to_dict()
+    def escalate_conflict(
+        self,
+        session_id: str,
+        conflict_id: str,
+        escalate_to: str,
+        reason: str,
+        context: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Escalate a conflict (Section 17.5)."""
+        payload: Dict[str, Any] = {
+            "conflict_id": conflict_id,
+            "escalate_to": escalate_to,
+            "reason": reason,
+        }
+        if context:
+            payload["context"] = context
+        return self._make(MessageType.CONFLICT_ESCALATE.value, session_id, payload)
 
     def resolve_conflict(
         self,
         session_id: str,
         conflict_id: str,
         decision: str,
+        rationale: Optional[str] = None,
+        outcome: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Resolve a conflict.
-
-        Args:
-            session_id: Session ID
-            conflict_id: Conflict ID
-            decision: Resolution decision (approved, rejected, dismissed, etc.)
-
-        Returns:
-            Message envelope as dict
-        """
-        envelope = MessageEnvelope.create(
-            message_type=MessageType.RESOLUTION.value,
-            session_id=session_id,
-            sender=Sender(
-                principal_id=self.principal_id,
-                principal_type=self.principal_type,
-            ),
-            payload={
-                "conflict_id": conflict_id,
-                "decision": decision,
-            },
-            watermark=self.lamport_clock.create_watermark(),
-        )
-        return envelope.to_dict()
+        """Resolve a conflict (Section 17.7)."""
+        payload: Dict[str, Any] = {
+            "conflict_id": conflict_id,
+            "decision": decision,
+        }
+        if rationale:
+            payload["rationale"] = rationale
+        if outcome:
+            payload["outcome"] = outcome
+        return self._make(MessageType.RESOLUTION.value, session_id, payload)

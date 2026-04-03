@@ -2,13 +2,13 @@
   "protocol": "MPAC",
   "version": "0.1.4",
   "message_type": "INTENT_ANNOUNCE",
-  "message_id": "e9420a34-c65c-417d-9ce7-a50293fc1566",
+  "message_id": "a082d05a-8a85-4c2f-a405-6ef7a66beb83",
   "session_id": "interop-test-session-001",
   "sender": {
     "principal_id": "agent:bob-ts",
     "principal_type": "agent"
   },
-  "ts": "2026-04-03T17:05:29.810Z",
+  "ts": "2026-04-03T20:57:32.492Z",
   "payload": {
     "intent_id": "intent-bob-ts-002",
     "objective": "Fix auth bug",
@@ -22,6 +22,6 @@
   },
   "watermark": {
     "kind": "lamport_clock",
-    "value": 2
+    "value": 3
   }
 }

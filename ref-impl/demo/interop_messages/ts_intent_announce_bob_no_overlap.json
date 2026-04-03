@@ -2,13 +2,13 @@
   "protocol": "MPAC",
   "version": "0.1.4",
   "message_type": "INTENT_ANNOUNCE",
-  "message_id": "c3d74f72-2255-447f-baf4-9d2fec8af1f6",
+  "message_id": "b82b3e3a-a41e-406a-973a-8026f8ce958c",
   "session_id": "interop-test-session-001",
   "sender": {
     "principal_id": "agent:bob-ts",
     "principal_type": "agent"
   },
-  "ts": "2026-04-03T17:05:29.810Z",
+  "ts": "2026-04-03T20:57:32.492Z",
   "payload": {
     "intent_id": "intent-bob-ts-001",
     "objective": "Update database schema",
@@ -22,6 +22,6 @@
   },
   "watermark": {
     "kind": "lamport_clock",
-    "value": 1
+    "value": 2
   }
 }

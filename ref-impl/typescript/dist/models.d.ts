@@ -1,10 +1,19 @@
 export declare enum MessageType {
     HELLO = "HELLO",
     SESSION_INFO = "SESSION_INFO",
+    HEARTBEAT = "HEARTBEAT",
+    GOODBYE = "GOODBYE",
     INTENT_ANNOUNCE = "INTENT_ANNOUNCE",
+    INTENT_UPDATE = "INTENT_UPDATE",
+    INTENT_WITHDRAW = "INTENT_WITHDRAW",
+    INTENT_CLAIM = "INTENT_CLAIM",
     OP_PROPOSE = "OP_PROPOSE",
     OP_COMMIT = "OP_COMMIT",
+    OP_REJECT = "OP_REJECT",
+    OP_SUPERSEDE = "OP_SUPERSEDE",
     CONFLICT_REPORT = "CONFLICT_REPORT",
+    CONFLICT_ACK = "CONFLICT_ACK",
+    CONFLICT_ESCALATE = "CONFLICT_ESCALATE",
     RESOLUTION = "RESOLUTION",
     PROTOCOL_ERROR = "PROTOCOL_ERROR"
 }
@@ -222,6 +231,15 @@ export interface ResolutionPayload {
     resolved_principal_id: string;
     rationale?: string;
     outcome?: Outcome;
+}
+export interface IntentWithdrawPayload {
+    intent_id: string;
+    reason?: string;
+}
+export interface OpRejectPayload {
+    op_id: string;
+    reason: string;
+    refers_to?: string;
 }
 export interface ProtocolErrorPayload {
     error_code: ErrorCode;

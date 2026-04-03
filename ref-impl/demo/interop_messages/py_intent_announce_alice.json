@@ -2,13 +2,13 @@
   "protocol": "MPAC",
   "version": "0.1.4",
   "message_type": "INTENT_ANNOUNCE",
-  "message_id": "425b8f73-1e52-402c-87a8-2e1501d87254",
+  "message_id": "957071e3-d99d-4c7a-8f07-8cdd3927049a",
   "session_id": "interop-test-session-001",
   "sender": {
     "principal_id": "agent:alice",
     "principal_type": "agent"
   },
-  "ts": "2026-04-03T17:05:29.771419Z",
+  "ts": "2026-04-03T20:57:32.453703Z",
   "payload": {
     "intent_id": "intent-alice-001",
     "objective": "Refactor auth module",

@@ -8,37 +8,27 @@ export declare class Participant {
     private capabilities;
     private lamportClock;
     constructor(principalId: string, principalType: string, displayName: string, roles?: Role[], capabilities?: string[]);
-    /**
-     * Send HELLO message to join session
-     */
+    private sender;
+    private make;
     hello(sessionId: string): MessageEnvelope;
-    /**
-     * Announce intent
-     */
+    heartbeat(sessionId: string, status?: string, activeIntentId?: string, summary?: string): MessageEnvelope;
+    goodbye(sessionId: string, reason?: string, activeIntents?: string[], intentDisposition?: string): MessageEnvelope;
     announceIntent(sessionId: string, intentId: string, objective: string, scope: Scope, expiryMs?: number): MessageEnvelope;
-    /**
-     * Propose operation
-     */
+    updateIntent(sessionId: string, intentId: string, opts?: {
+        objective?: string;
+        scope?: Scope;
+        ttl_sec?: number;
+    }): MessageEnvelope;
+    withdrawIntent(sessionId: string, intentId: string, reason?: string): MessageEnvelope;
+    claimIntent(sessionId: string, claimId: string, originalIntentId: string, originalPrincipalId: string, newIntentId: string, objective: string, scope: Scope, justification?: string): MessageEnvelope;
     proposeOp(sessionId: string, opId: string, intentId: string, target: string, opKind: string): MessageEnvelope;
-    /**
-     * Commit operation
-     */
     commitOp(sessionId: string, opId: string, intentId: string, target: string, opKind: string, stateRefBefore?: string, stateRefAfter?: string): MessageEnvelope;
-    /**
-     * Report conflict
-     */
     reportConflict(sessionId: string, conflictId: string, category: string, severity: string, involvedPrincipals: string[], scopeA: Scope, scopeB: Scope, details?: string): MessageEnvelope;
-    /**
-     * Process received message and update Lamport clock
-     */
+    ackConflict(sessionId: string, conflictId: string, ackType?: string): MessageEnvelope;
+    escalateConflict(sessionId: string, conflictId: string, escalateTo: string, reason: string, context?: string): MessageEnvelope;
+    resolveConflict(sessionId: string, conflictId: string, decision: string, rationale?: string, outcome?: any): MessageEnvelope;
     processMessage(envelope: MessageEnvelope): void;
-    /**
-     * Get current Lamport clock value
-     */
     getClockValue(): number;
-    /**
-     * Get participant info
-     */
     getInfo(): {
         principal_id: string;
         principal_type: string;

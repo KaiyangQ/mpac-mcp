@@ -17,7 +17,7 @@ class IntentStateMachine:
         IntentState.EXPIRED: [],
         IntentState.WITHDRAWN: [],
         IntentState.SUPERSEDED: [],
-        IntentState.SUSPENDED: [IntentState.ACTIVE, IntentState.WITHDRAWN],
+        IntentState.SUSPENDED: [IntentState.ACTIVE, IntentState.WITHDRAWN, IntentState.EXPIRED],
     }
 
     def __init__(self, initial_state: IntentState = IntentState.ANNOUNCED):
@@ -72,7 +72,7 @@ class OperationStateMachine:
         OperationState.COMMITTED: [OperationState.FROZEN],
         OperationState.REJECTED: [],
         OperationState.ABANDONED: [],
-        OperationState.FROZEN: [],
+        OperationState.FROZEN: [OperationState.PROPOSED, OperationState.REJECTED, OperationState.ABANDONED],
     }
 
     def __init__(self, initial_state: OperationState = OperationState.PROPOSED):
@@ -109,7 +109,6 @@ class OperationStateMachine:
         return self.current_state in [
             OperationState.REJECTED,
             OperationState.ABANDONED,
-            OperationState.FROZEN,
             OperationState.COMMITTED,
         ]
 

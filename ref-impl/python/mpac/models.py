@@ -14,11 +14,21 @@ class MessageType(Enum):
     """MPAC message types."""
     HELLO = "HELLO"
     SESSION_INFO = "SESSION_INFO"
+    HEARTBEAT = "HEARTBEAT"
+    GOODBYE = "GOODBYE"
     INTENT_ANNOUNCE = "INTENT_ANNOUNCE"
+    INTENT_UPDATE = "INTENT_UPDATE"
+    INTENT_WITHDRAW = "INTENT_WITHDRAW"
+    INTENT_CLAIM = "INTENT_CLAIM"
     OP_PROPOSE = "OP_PROPOSE"
     OP_COMMIT = "OP_COMMIT"
+    OP_REJECT = "OP_REJECT"
+    OP_SUPERSEDE = "OP_SUPERSEDE"
     CONFLICT_REPORT = "CONFLICT_REPORT"
+    CONFLICT_ACK = "CONFLICT_ACK"
+    CONFLICT_ESCALATE = "CONFLICT_ESCALATE"
     RESOLUTION = "RESOLUTION"
+    PROTOCOL_ERROR = "PROTOCOL_ERROR"
 
 
 class IntentState(Enum):
@@ -110,6 +120,22 @@ class Decision(Enum):
     POLICY_OVERRIDE = "policy_override"
     MERGED = "merged"
     DEFERRED = "deferred"
+
+
+class HeartbeatStatus(Enum):
+    """Participant heartbeat status."""
+    IDLE = "idle"
+    WORKING = "working"
+    BLOCKED = "blocked"
+    AWAITING_REVIEW = "awaiting_review"
+    OFFLINE = "offline"
+
+
+class IntentDisposition(Enum):
+    """What happens to active intents when a participant leaves."""
+    WITHDRAW = "withdraw"
+    TRANSFER = "transfer"
+    EXPIRE = "expire"
 
 
 class ErrorCode(Enum):
@@ -316,10 +342,14 @@ class GovernancePolicy:
 
 @dataclass
 class LivenessPolicy:
-    """Liveness policy configuration."""
-    intent_expiry_seconds: int = 3600
-    operation_timeout_seconds: int = 300
-    heartbeat_interval_seconds: int = 30
+    """Liveness policy configuration (Section 14.3)."""
+    heartbeat_interval_sec: int = 30
+    unavailability_timeout_sec: int = 90
+    orphaned_intent_action: str = "suspend"   # suspend | withdraw
+    orphaned_proposal_action: str = "abandon"  # abandon | reject
+    intent_claim_approval: str = "auto"  # auto | governance
+    intent_claim_grace_period_sec: int = 30
+    resolution_timeout_sec: int = 300  # Section 18.6.1
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict."""
@@ -328,7 +358,7 @@ class LivenessPolicy:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "LivenessPolicy":
         """Create from dict."""
-        return cls(**data)
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
 @dataclass
