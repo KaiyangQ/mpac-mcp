@@ -4,7 +4,7 @@
 
 ```
 version_history/
-├── README.md                              ← this file
+├── CHANGELOG.md                           ← this file
 ├── v0.1_baseline/                         ← original specification and review materials
 ├── v0.1.1_trust_governance_recovery/      ← first update round
 ├── v0.1.2_semantic_interop/               ← second update round
@@ -126,7 +126,7 @@ When the user says "归档" or "archive the spec" or "参考 version history 里
 
 ### Step 1: Determine the new version number
 
-- Read this README to find the latest version entry (e.g., `v0.1.4_state_machine_audit`)
+- Read this CHANGELOG to find the latest version entry (e.g., `v0.1.4_state_machine_audit`)
 - The new version number increments the patch version (e.g., `v0.1.4` → `v0.1.5`)
 - If the user specifies a version number, use that instead
 
@@ -156,7 +156,7 @@ mkdir version_history/v{version}_{suffix}/
   - `MPAC_v{version}_Update_Record.md` — detailed changelog with rationale
   - Other analysis documents as needed
 
-### Step 6: Update this README
+### Step 6: Update this CHANGELOG
 
 1. **Directory structure**: add the new folder to the tree at the top of this file
 2. **Version entry**: add a new `## v{version} — {Title} ({date})` section before the "Convention" section, containing:
@@ -178,4 +178,4 @@ mkdir version_history/v{version}_{suffix}/
 | Pre-change snapshot | `version_history/v{new}/SPEC_v{old}_{date}.md` | Version = old spec version |
 | Audit / review report | `version_history/v{new}/MPAC_v{old}_Audit_Report.md` | Version = spec being reviewed |
 | Update record | `version_history/v{new}/MPAC_v{new}_Update_Record.md` | Version = new spec version |
-| This index | `version_history/README.md` | Always `README.md` |
+| This index | `version_history/CHANGELOG.md` | Always `CHANGELOG.md` |
