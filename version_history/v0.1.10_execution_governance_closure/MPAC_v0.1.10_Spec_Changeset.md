@@ -8,7 +8,7 @@
 
 ## Purpose
 
-This document translates the v0.1.10 update record into concrete spec deltas. It complements the archived `SPEC_v0.1.9_2026-04-04.md` snapshot and identifies the rule-level changes merged into the root spec.
+This document translates the v0.1.10 update record into concrete spec deltas. It complements the archived `SPEC_v0.1.10_2026-04-04.md` snapshot and identifies the rule-level changes merged into the root spec.
 
 ---
 

@@ -15,7 +15,7 @@ version_history/
 ├── v0.1.7_review_driven_hardening/        ← v0.1.7 spec, update record, calibrated deep review
 ├── v0.1.8_coordination_semantics_hardening/ ← v0.1.8 spec, update record
 ├── v0.1.9_core_coherence_closure/         ← v0.1.9 spec snapshot, update record, and changeset
-└── v0.1.10_execution_governance_closure/  ← archived v0.1.9 snapshot, v0.1.10 update record, and changeset
+└── v0.1.10_execution_governance_closure/  ← v0.1.10 spec snapshot, update record, and changeset
 ```
 
 The current source of truth is always **SPEC.md** in the project root.
@@ -256,7 +256,7 @@ Revision boundary created after the v0.1.9 coherence closure. This round keeps M
 
 | File | Description |
 |------|-------------|
-| `SPEC_v0.1.9_2026-04-04.md` | Archived snapshot of the implemented v0.1.9 spec before the v0.1.10 revision |
+| `SPEC_v0.1.10_2026-04-04.md` | Archived snapshot of the implemented v0.1.10 spec |
 | `MPAC_v0.1.10_Update_Record.md` | Update record mapping residual protocol gaps to the concrete v0.1.10 fixes |
 | `MPAC_v0.1.10_Spec_Changeset.md` | Rule-level changeset that was merged into the root spec for v0.1.10 |
 
@@ -283,12 +283,12 @@ When the user says "归档" or "archive the spec" or "参考 version history 里
 mkdir version_history/v{version}_{suffix}/
 ```
 
-### Step 4: Archive the current SPEC.md
+### Step 4: Archive the versioned SPEC.md
 
-- Copy the **current** `SPEC.md` from the project root into the new folder
-- Name it `SPEC_v{current_version}_{today's date YYYY-MM-DD}.md`
-- Example: if current SPEC is v0.1.3 and today is 2026-04-02, the file is `SPEC_v0.1.3_2026-04-02.md`
-- This snapshot captures the state **before** the upcoming changes
+- After the revision is applied, copy the resulting `SPEC.md` from the project root into the new folder
+- Name it `SPEC_v{new_version}_{today's date YYYY-MM-DD}.md`
+- Example: if the new spec version is v0.1.4 and today is 2026-04-02, the file is `SPEC_v0.1.4_2026-04-02.md`
+- This snapshot captures the version represented by that archive folder
 
 ### Step 5: Add supporting documents
 
@@ -307,17 +307,18 @@ mkdir version_history/v{version}_{suffix}/
    - `**Contents:**` table listing every file in the folder with a description
 3. Keep entries in chronological order (newest last, just before this Convention section)
 
-### Step 7: Apply changes to SPEC.md (if applicable)
+### Step 7: Apply changes to SPEC.md and save the final snapshot (if applicable)
 
 - If the archive is in preparation for a spec revision, the user will instruct what changes to make to `SPEC.md` in the project root separately
 - After changes are applied, the root `SPEC.md` should be updated to reflect the new version number in its Section 1
+- Then copy the updated root `SPEC.md` into the archive folder using the `SPEC_v{new_version}_{date}.md` naming rule above
 
 ### Quick reference
 
 | What | Where | Naming |
 |------|-------|--------|
 | Current source of truth | `SPEC.md` (project root) | Always `SPEC.md` |
-| Version snapshot | `version_history/v{current}/SPEC_v{current}_{date}.md` | Version = archived spec version |
+| Version snapshot | `version_history/v{new}/SPEC_v{new}_{date}.md` | Version = the spec version represented by that folder |
 | Audit / review report | `version_history/v{new}/MPAC_v{old}_Audit_Report.md` | Version = spec being reviewed |
 | Update record | `version_history/v{new}/MPAC_v{new}_Update_Record.md` | Version = new spec version |
 | This index | `version_history/CHANGELOG.md` | Always `CHANGELOG.md` |
