@@ -14,7 +14,8 @@ version_history/
 ├── v0.1.6_p0_completion/                  ← v0.1.6 spec, update record, deep review
 ├── v0.1.7_review_driven_hardening/        ← v0.1.7 spec, update record, calibrated deep review
 ├── v0.1.8_coordination_semantics_hardening/ ← v0.1.8 spec, update record
-└── v0.1.9_core_coherence_closure/         ← v0.1.9 spec snapshot, update record, and changeset
+├── v0.1.9_core_coherence_closure/         ← v0.1.9 spec snapshot, update record, and changeset
+└── v0.1.10_execution_governance_closure/  ← archived v0.1.9 snapshot, v0.1.10 update record, and changeset
 ```
 
 The current source of truth is always **SPEC.md** in the project root.
@@ -236,6 +237,28 @@ Revision boundary created after the v0.1.8 gap analysis. This round does not exp
 | `SPEC_v0.1.9_2026-04-04.md` | Archived snapshot of the implemented v0.1.9 spec |
 | `MPAC_v0.1.9_Update_Record.md` | Update record mapping each P0/P1/P2 gap to the concrete v0.1.9 fix |
 | `MPAC_v0.1.9_Spec_Changeset.md` | Field- and rule-level changeset that was merged into the root spec |
+
+---
+
+## v0.1.10 — Execution and Governance Closure (2026-04-04)
+
+Revision boundary created after the v0.1.9 coherence closure. This round keeps MPAC on the `v0.1.x` line rather than jumping to `v0.2.0`, because the work is still closure-oriented: it tightens residual ambiguities in execution semantics, escalation authority, conflict dismissal, and governance auditability without expanding the protocol's feature scope.
+
+**Key changes proposed:**
+- Close the profile matrix: `pre_commit` now requires Governance Profile compliance, and Core Profile sessions MUST use `post_commit`
+- Clarify pre-commit semantics so coordinator authorization does not itself make an operation `COMMITTED`; commit completion still requires the proposer to declare the executed mutation
+- Narrow concurrent conflict resolution to the current authority phase so arbiter finality survives escalation
+- Remove `deferred` from the `RESOLUTION.decision` registry because it had no state-machine semantics
+- Include `TRANSFERRED` in conflict auto-dismiss terminal-intent handling
+- Require `approved_by` on Governance Profile claim approvals for audit completeness
+
+**Contents:**
+
+| File | Description |
+|------|-------------|
+| `SPEC_v0.1.9_2026-04-04.md` | Archived snapshot of the implemented v0.1.9 spec before the v0.1.10 revision |
+| `MPAC_v0.1.10_Update_Record.md` | Update record mapping residual protocol gaps to the concrete v0.1.10 fixes |
+| `MPAC_v0.1.10_Spec_Changeset.md` | Rule-level changeset that was merged into the root spec for v0.1.10 |
 
 ---
 

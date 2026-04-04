@@ -4,7 +4,7 @@
 
 MPAC is an application-layer protocol that provides coordination semantics for AI agents serving **multiple independent principals**. It handles the gap that MCP (tool invocation) and A2A (single-principal delegation) don't cover: structured coordination across organizational and trust boundaries.
 
-**Current version: v0.1.9** — draft protocol. The root spec is ahead of the reference implementations; implementation coverage currently trails the newest coherence fixes.
+**Current version: v0.1.10** — draft protocol. The root spec is ahead of the reference implementations; implementation coverage currently trails the newest closure fixes.
 
 → [Read the introduction](./blog/introducing-mpac.md) for a full overview of the problem, design, and demo walkthrough.
 
@@ -126,7 +126,7 @@ Do not commit `local_config.json` to a public repository.
 
 ## Current Coverage
 
-The reference implementations cover most of the v0.1.8 protocol surface across both Python and TypeScript (70 + 56 tests, 14-message cross-language interop, real Claude API end-to-end verification), but they do not yet fully cover the newest v0.1.9 coherence changes:
+The reference implementations cover most of the v0.1.8 protocol surface across both Python and TypeScript (70 + 56 tests, 14-message cross-language interop, real Claude API end-to-end verification), but they do not yet fully cover the newest v0.1.9-v0.1.10 closure changes:
 
 | Dimension | Covered | Not yet covered |
 |-----------|---------|-----------------|
@@ -147,14 +147,17 @@ The reference implementations cover most of the v0.1.8 protocol surface across b
 
 ## What's Next
 
-**P1 — v0.1.9 conformance closure:**
+**P1 — v0.1.10 conformance closure:**
 - `OP_BATCH_COMMIT` handler (atomic multi-target operations)
 - `INTENT_CLAIM_STATUS` handler and `TRANSFERRED` intent-state alignment
 - `coordinator_epoch` fencing in coordinator recovery / handover flows
 - `sender_instance_id` support and Lamport monotonicity tests across reconnect / restart
 - anti-replay checkpoint persistence across snapshot recovery
-- JSON Schema synchronization with v0.1.9 envelope and payload requirements
-- `MPAC_Developer_Reference.md` synchronization with the v0.1.9 root spec
+- pre-commit authorization / completion flow and governance-only `pre_commit` enforcement
+- escalated-conflict authority gating and arbiter-finality handling
+- claim approval attribution (`approved_by`) and `TRANSFERRED`-aware conflict auto-dismiss
+- JSON Schema synchronization with the v0.1.10 envelope and payload requirements
+- `MPAC_Developer_Reference.md` synchronization with the v0.1.10 root spec
 
 **P2 — Protocol evolution and verification:**
 - v0.2.0 protocol advancement (scope expressiveness, post-commit rollback, cross-session coordination, compact envelope, scope-based subscription)
