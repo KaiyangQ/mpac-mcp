@@ -4,7 +4,7 @@
 
 MPAC is an application-layer protocol that provides coordination semantics for AI agents serving **multiple independent principals**. It handles the gap that MCP (tool invocation) and A2A (single-principal delegation) don't cover: structured coordination across organizational and trust boundaries.
 
-**Current version: v0.1.6** — draft protocol with working reference implementations. Not yet a production standard.
+**Current version: v0.1.7** — draft protocol with working reference implementations. Not yet a production standard.
 
 → [Read the introduction](./blog/introducing-mpac.md) for a full overview of the problem, design, and demo walkthrough.
 
@@ -22,7 +22,7 @@ MPAC organizes multi-agent coordination into five layers:
 | **Conflict** | Overlapping scopes or contradictory goals are detected and surfaced as structured objects |
 | **Governance** | Conflicts are resolved through arbitration, escalation, or policy — with human override always available |
 
-The protocol defines 19 message types, 3 state machines (Intent, Operation, Conflict), Lamport clock watermarking for causal ordering, and three security/compliance profiles.
+The protocol defines 20 message types, 3 state machines with normative transition tables (Intent, Operation, Conflict), Lamport clock watermarking for causal ordering, explicit consistency and execution models, atomic batch operations, and three security/compliance profiles.
 
 ---
 
@@ -59,9 +59,9 @@ daily_reports/                   ← Development logs
 
 ### Read the Spec
 
-The full protocol specification lives in [SPEC.md](./SPEC.md) — 30 sections covering all five layers, security profiles, compliance profiles, coordinator fault tolerance, session lifecycle, and cross-lifecycle state machine rules.
+The full protocol specification lives in [SPEC.md](./SPEC.md) — 30 sections covering all five layers, security profiles, compliance profiles, coordinator fault tolerance, session lifecycle, consistency model, execution model, and cross-lifecycle state machine rules with normative transition tables.
 
-For implementation, the [Developer Reference](./MPAC_Developer_Reference.md) provides a complete data dictionary: 10 core objects, 19 message types, 3 state machines, 8 enum registries, and an implementation checklist.
+For implementation, the [Developer Reference](./MPAC_Developer_Reference.md) provides a complete data dictionary: 10 core objects, 20 message types, 3 state machines, 8 enum registries, and an implementation checklist. (Note: the Developer Reference may lag behind the spec by one version; SPEC.md is always the source of truth.)
 
 ### Run the Reference Implementations
 
@@ -130,30 +130,36 @@ The reference implementations cover ~90% of protocol semantics across both Pytho
 
 | Dimension | Covered | Not yet covered |
 |-----------|---------|-----------------|
-| Message types | **19 of 19** (100%) | — |
+| Message types | **19 of 20** (95%) | `OP_BATCH_COMMIT` (new in v0.1.7) |
 | State machines | Full lifecycle: Expiry Cascade, Auto-Dismiss, FROZEN/SUSPENDED, resume/unfreeze, SUPERSEDED | — |
 | Liveness | Heartbeat tracking, unavailability detection, intent suspension, proposal abandonment, reconnection restoration | — |
 | Governance | ACK → ESCALATE → Arbiter RESOLUTION, auto-escalation on resolution timeout | Frozen scope enforcement |
 | Intent lifecycle | Announce, Update (objective/scope/TTL), Withdraw, Claim (first-claim-wins) | — |
 | Security | Credential exchange (5 types), enum definitions | Signature verification, replay detection, role-based access |
 | Session lifecycle | SESSION_CLOSE, auto-close, summary, post-close rejection | Transcript export, lifecycle policy persistence |
+| Consistency & execution model | — | Pre-commit confirmation flow, execution_model in SESSION_INFO (new in v0.1.7) |
 | Fault recovery | Coordinator status/heartbeat, state snapshot, snapshot recovery + audit log replay | Split-brain detection, multi-coordinator election |
+| Coordinator accountability | — | Coordinator message signing, tamper-evident coordinator log (new in v0.1.7, Verified profile) |
+| Frozen scope | — | Progressive degradation 3-phase system (new in v0.1.7) |
 | Robustness | Liveness detection, INTENT_CLAIM, disconnection recovery, OP_SUPERSEDE chains | — |
 
 ---
 
 ## What's Next
 
-**P1 — Security and enforcement:**
+**P1 — v0.1.7 feature implementation:**
+- `OP_BATCH_COMMIT` handler (atomic multi-target operations)
+- Pre-commit execution model (coordinator confirmation flow, `OP_PROPOSE` → confirm → `OP_COMMIT`)
+- Frozen scope progressive degradation (3-phase system)
+- Coordinator accountability (message signing in Verified profile)
 - Authenticated security profile (signing, replay detection, role-based access — credential exchange already done)
-- Frozen scope enforcement (block OP_COMMIT while conflict OPEN/ESCALATED)
 - Split-brain detection and multi-coordinator election
 - Multi-agent scenarios (3+ agents, governance conflicts, timeouts)
 
 **P2 — Protocol evolution and verification:**
-- v0.2.0 protocol advancement (scope expressiveness, post-commit rollback, cross-session coordination)
+- v0.2.0 protocol advancement (scope expressiveness, post-commit rollback, cross-session coordination, compact envelope, scope-based subscription)
 - Conformance test suite (automated compliance testing via JSON Schema + interop messages)
-- TLA+ formal verification of state machine interactions
+- TLA+ formal verification of state machine interactions (especially cross-lifecycle with normative transition tables)
 - Performance benchmarks (scope overlap detection at scale)
 
 ---
