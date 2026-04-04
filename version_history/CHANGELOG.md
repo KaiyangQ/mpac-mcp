@@ -13,7 +13,8 @@ version_history/
 ├── v0.1.5_coordinator_lifecycle_security/ ← v0.1.5 spec, update record
 ├── v0.1.6_p0_completion/                  ← v0.1.6 spec, update record, deep review
 ├── v0.1.7_review_driven_hardening/        ← v0.1.7 spec, update record, calibrated deep review
-└── v0.1.8_coordination_semantics_hardening/ ← v0.1.8 spec, update record
+├── v0.1.8_coordination_semantics_hardening/ ← v0.1.8 spec, update record
+└── v0.1.9_core_coherence_closure/         ← v0.1.9 spec snapshot, update record, and changeset
 ```
 
 The current source of truth is always **SPEC.md** in the project root.
@@ -216,6 +217,28 @@ Protocol-level revision targeting three coordination semantics gaps that fall sq
 
 ---
 
+## v0.1.9 — Core Coherence Closure (2026-04-04)
+
+Revision boundary created after the v0.1.8 gap analysis. This round does not expand MPAC's feature scope; instead, it closes coherence gaps between coordinator failover, Lamport rejoin semantics, intent-claim lifecycle, replay-protection recovery, and the repository's conformance artifacts.
+
+**Key changes proposed:**
+- Add `coordinator_epoch` fencing semantics to prevent stale coordinators from surviving handover / failover
+- Add `sender_instance_id` so Lamport monotonicity and replay tracking are defined per sender incarnation, not only per principal
+- Add `INTENT_CLAIM_STATUS` to make claim approval / rejection / withdrawal explicit and align the protocol on `TRANSFERRED`
+- Introduce `settled` operation terminology so session auto-close no longer conflicts with `COMMITTED -> SUPERSEDED`
+- Extend snapshot semantics with `anti_replay` checkpoint state so replay protection survives recovery in Authenticated / Verified profiles
+- Close schema and conformance gaps: `OP_BATCH_COMMIT`, updated `SESSION_INFO`, error-code coverage, message-type-aware envelope validation
+
+**Contents:**
+
+| File | Description |
+|------|-------------|
+| `SPEC_v0.1.9_2026-04-04.md` | Archived snapshot of the implemented v0.1.9 spec |
+| `MPAC_v0.1.9_Update_Record.md` | Update record mapping each P0/P1/P2 gap to the concrete v0.1.9 fix |
+| `MPAC_v0.1.9_Spec_Changeset.md` | Field- and rule-level changeset that was merged into the root spec |
+
+---
+
 ## Archival Convention and Procedure
 
 When the user says "归档" or "archive the spec" or "参考 version history 里的 readme 把现有 spec 归档", follow this procedure exactly:
@@ -271,7 +294,7 @@ mkdir version_history/v{version}_{suffix}/
 | What | Where | Naming |
 |------|-------|--------|
 | Current source of truth | `SPEC.md` (project root) | Always `SPEC.md` |
-| Pre-change snapshot | `version_history/v{new}/SPEC_v{old}_{date}.md` | Version = old spec version |
+| Version snapshot | `version_history/v{current}/SPEC_v{current}_{date}.md` | Version = archived spec version |
 | Audit / review report | `version_history/v{new}/MPAC_v{old}_Audit_Report.md` | Version = spec being reviewed |
 | Update record | `version_history/v{new}/MPAC_v{new}_Update_Record.md` | Version = new spec version |
 | This index | `version_history/CHANGELOG.md` | Always `CHANGELOG.md` |
