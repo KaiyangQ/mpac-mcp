@@ -12,7 +12,8 @@ version_history/
 ├── v0.1.4_state_machine_audit/            ← v0.1.4 spec, update record, protocol gap analysis
 ├── v0.1.5_coordinator_lifecycle_security/ ← v0.1.5 spec, update record
 ├── v0.1.6_p0_completion/                  ← v0.1.6 spec, update record, deep review
-└── v0.1.7_review_driven_hardening/        ← v0.1.7 spec, update record, calibrated deep review
+├── v0.1.7_review_driven_hardening/        ← v0.1.7 spec, update record, calibrated deep review
+└── v0.1.8_coordination_semantics_hardening/ ← v0.1.8 spec, update record
 ```
 
 The current source of truth is always **SPEC.md** in the project root.
@@ -193,6 +194,25 @@ Independent deep technical review (simulating SOSP/OSDI-level scrutiny) identifi
 | `SPEC_v0.1.6_2026-04-03.md` | Archived SPEC.md snapshot (pre-change, v0.1.6) |
 | `MPAC_v0.1.6_Deep_Review_2026-04-03.md` | Independent deep review that triggered this revision |
 | `MPAC_v0.1.7_Update_Record.md` | Detailed changelog: review finding → resolution map, implementation impact |
+
+---
+
+## v0.1.8 — Coordination Semantics Hardening (2026-04-03)
+
+Protocol-level revision targeting three coordination semantics gaps that fall squarely within MPAC's application-layer scope: an undefined race condition in concurrent resolution, a livelock risk in intent re-announcement, and missing guidance for causal gap detection. This revision was guided by a deliberate scope calibration: distributed systems concerns (partition handling, reconciliation, replay protection) were explicitly scoped out as belonging to the transport/infrastructure layer.
+
+**Key changes:**
+- Section 18.4: Concurrent resolution rule — first-resolution-wins. Coordinator MUST accept only the first valid `RESOLUTION` for a given `conflict_id`, reject subsequent with `RESOLUTION_CONFLICT` error. Parallels `INTENT_CLAIM` first-claim-wins pattern.
+- Section 15.3.1 (new): Intent re-announce backoff — exponential backoff (30s initial, 2× multiplier, 300s max) after conflict-driven intent rejection. Prevents livelock. Coordinator MAY enforce via `INTENT_BACKOFF` error. Configurable via liveness policy.
+- Section 12.8 (new): Causal gap detection and behavior — participants SHOULD NOT issue causally-sensitive judgments when causal context is incomplete, MAY signal `CAUSAL_GAP` to coordinator.
+- Three new error codes: `RESOLUTION_CONFLICT`, `CAUSAL_GAP`, `INTENT_BACKOFF`
+
+**Contents:**
+
+| File | Description |
+|------|-------------|
+| `SPEC_v0.1.8_2026-04-03.md` | Archived SPEC.md snapshot (v0.1.8, current version at time of release) |
+| `MPAC_v0.1.8_Update_Record.md` | Detailed changelog: finding → resolution map, scope calibration rationale, implementation impact |
 
 ---
 
