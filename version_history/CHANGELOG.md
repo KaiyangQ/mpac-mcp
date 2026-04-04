@@ -11,7 +11,8 @@ version_history/
 ├── v0.1.3_interop_hardening/              ← v0.1.3 spec, audit report, reviews, update record
 ├── v0.1.4_state_machine_audit/            ← v0.1.4 spec, update record, protocol gap analysis
 ├── v0.1.5_coordinator_lifecycle_security/ ← v0.1.5 spec, update record
-└── v0.1.6_p0_completion/                  ← v0.1.6 spec, update record
+├── v0.1.6_p0_completion/                  ← v0.1.6 spec, update record, deep review
+└── v0.1.7_review_driven_hardening/        ← v0.1.7 spec, update record, calibrated deep review
 ```
 
 The current source of truth is always **SPEC.md** in the project root.
@@ -167,6 +168,31 @@ Resolves all P0 priority items from v0.1.5's coverage assessment. After this ver
 |------|-------------|
 | `SPEC_v0.1.6_2026-04-03.md` | SPEC.md snapshot of the v0.1.6 spec |
 | `MPAC_v0.1.6_Update_Record.md` | Detailed changelog: P0 items → resolution, coverage impact |
+
+---
+
+## v0.1.7 — Review-Driven Hardening: Execution Model, Consistency, Atomicity, Coordinator Trust (2026-04-03)
+
+Independent deep technical review (simulating SOSP/OSDI-level scrutiny) identified foundational gaps. After cross-referencing with the full version history (v0.1–v0.1.6), the review was calibrated: 2 findings were genuinely new (OP_COMMIT ambiguity, consistency model), 3 were known-and-deferred items promoted to this version. All 7 findings were resolved.
+
+**Key changes:**
+- Section 7.7: Explicit consistency model (coordinator-serialized total order, degraded-mode semantics, reconciliation rules)
+- Section 7.8: Execution model declaration (`pre_commit` vs `post_commit`) — resolves OP_COMMIT semantic ambiguity
+- Section 12.7: Lamport clock maintenance rules (6 normative rules: init, send, receive, coordinator authority, snapshot, monotonicity)
+- Section 16.8: `OP_BATCH_COMMIT` message type for atomic multi-target operations (`all_or_nothing`, `best_effort`)
+- Section 23.1.3.1: Coordinator accountability in Verified profile (coordinator signs all messages, tamper-evident log, independent audit)
+- Section 18.6.2.1: Frozen scope progressive degradation (3-phase: normal → escalate+priority → first-committer-wins)
+- Sections 15.6.1, 16.6.1, 17.8.1: Normative state transition tables for Intent, Operation, and Conflict lifecycles
+- One new message type: `OP_BATCH_COMMIT` (total: 20)
+- `execution_model` field added to SESSION_INFO (required)
+
+**Contents:**
+
+| File | Description |
+|------|-------------|
+| `SPEC_v0.1.6_2026-04-03.md` | Archived SPEC.md snapshot (pre-change, v0.1.6) |
+| `MPAC_v0.1.6_Deep_Review_2026-04-03.md` | Independent deep review that triggered this revision |
+| `MPAC_v0.1.7_Update_Record.md` | Detailed changelog: review finding → resolution map, implementation impact |
 
 ---
 
