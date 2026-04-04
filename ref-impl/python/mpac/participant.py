@@ -27,9 +27,14 @@ class Participant:
         self.capabilities = capabilities or []
         self.credential = credential  # {"type": "...", "value": "...", ...}
         self.lamport_clock = LamportClock()
+        self.sender_instance_id = f"{self.principal_id}:{uuid.uuid4()}"
 
     def _sender(self) -> Sender:
-        return Sender(principal_id=self.principal_id, principal_type=self.principal_type)
+        return Sender(
+            principal_id=self.principal_id,
+            principal_type=self.principal_type,
+            sender_instance_id=self.sender_instance_id,
+        )
 
     def _make(self, message_type: str, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         envelope = MessageEnvelope.create(
@@ -202,6 +207,27 @@ class Participant:
             "state_ref_before": state_ref_before,
             "state_ref_after": state_ref_after,
         })
+
+    def batch_commit_op(
+        self,
+        session_id: str,
+        batch_id: str,
+        operations: List[Dict[str, Any]],
+        atomicity: str = "all_or_nothing",
+        intent_id: Optional[str] = None,
+        summary: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Commit or propose a batch of operations (Section 16.8)."""
+        payload: Dict[str, Any] = {
+            "batch_id": batch_id,
+            "atomicity": atomicity,
+            "operations": operations,
+        }
+        if intent_id is not None:
+            payload["intent_id"] = intent_id
+        if summary:
+            payload["summary"] = summary
+        return self._make(MessageType.OP_BATCH_COMMIT.value, session_id, payload)
 
     def supersede_op(
         self,

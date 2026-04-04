@@ -1,19 +1,61 @@
-import {
-  IntentState,
-  OperationState,
-  ConflictState,
-  Decision,
-} from "./models.js";
+import { ConflictState, IntentState, OperationState } from "./models.js";
 
-/**
- * Intent State Machine
- * Transitions:
- * ANNOUNCED -> ACTIVE (auto or explicit)
- * ACTIVE -> EXPIRED (timeout) | WITHDRAWN (user) | SUPERSEDED (replaced) | SUSPENDED (paused)
- * EXPIRED/WITHDRAWN/SUPERSEDED/SUSPENDED -> terminal states
- */
+function normalizeIntentEvent(event: string): IntentState {
+  const aliases: Record<string, IntentState> = {
+    activate: IntentState.ACTIVE,
+    resume: IntentState.ACTIVE,
+    active: IntentState.ACTIVE,
+    expire: IntentState.EXPIRED,
+    expired: IntentState.EXPIRED,
+    withdraw: IntentState.WITHDRAWN,
+    withdrawn: IntentState.WITHDRAWN,
+    supersede: IntentState.SUPERSEDED,
+    superseded: IntentState.SUPERSEDED,
+    suspend: IntentState.SUSPENDED,
+    suspended: IntentState.SUSPENDED,
+    transfer: IntentState.TRANSFERRED,
+    transferred: IntentState.TRANSFERRED,
+  };
+  return aliases[event.toLowerCase()] ?? ((IntentState as Record<string, IntentState>)[event] ?? (event as IntentState));
+}
+
+function normalizeOperationEvent(event: string): OperationState {
+  const aliases: Record<string, OperationState> = {
+    commit: OperationState.COMMITTED,
+    committed: OperationState.COMMITTED,
+    reject: OperationState.REJECTED,
+    rejected: OperationState.REJECTED,
+    abandon: OperationState.ABANDONED,
+    abandoned: OperationState.ABANDONED,
+    freeze: OperationState.FROZEN,
+    frozen: OperationState.FROZEN,
+    unfreeze: OperationState.PROPOSED,
+    propose: OperationState.PROPOSED,
+    proposed: OperationState.PROPOSED,
+    supersede: OperationState.SUPERSEDED,
+    superseded: OperationState.SUPERSEDED,
+  };
+  return aliases[event.toLowerCase()] ?? ((OperationState as Record<string, OperationState>)[event] ?? (event as OperationState));
+}
+
+function normalizeConflictEvent(event: string): ConflictState {
+  const aliases: Record<string, ConflictState> = {
+    ack: ConflictState.ACKED,
+    acked: ConflictState.ACKED,
+    escalate: ConflictState.ESCALATED,
+    escalated: ConflictState.ESCALATED,
+    dismiss: ConflictState.DISMISSED,
+    dismissed: ConflictState.DISMISSED,
+    resolve: ConflictState.RESOLVED,
+    resolved: ConflictState.RESOLVED,
+    close: ConflictState.CLOSED,
+    closed: ConflictState.CLOSED,
+  };
+  return aliases[event.toLowerCase()] ?? ((ConflictState as Record<string, ConflictState>)[event] ?? (event as ConflictState));
+}
+
 export class IntentStateMachine {
-  private state: IntentState = IntentState.ANNOUNCED;
+  private state: IntentState;
 
   constructor(initialState: IntentState = IntentState.ANNOUNCED) {
     this.state = initialState;
@@ -24,49 +66,32 @@ export class IntentStateMachine {
   }
 
   transition(event: string): IntentState {
-    const validTransitions: Record<IntentState, string[]> = {
-      [IntentState.ANNOUNCED]: ["activate"],
-      [IntentState.ACTIVE]: ["expire", "withdraw", "supersede", "suspend"],
+    const nextState = normalizeIntentEvent(event);
+    const validTransitions: Record<IntentState, IntentState[]> = {
+      [IntentState.ANNOUNCED]: [IntentState.ACTIVE, IntentState.WITHDRAWN],
+      [IntentState.ACTIVE]: [
+        IntentState.EXPIRED,
+        IntentState.WITHDRAWN,
+        IntentState.SUPERSEDED,
+        IntentState.SUSPENDED,
+        IntentState.TRANSFERRED,
+      ],
       [IntentState.EXPIRED]: [],
       [IntentState.WITHDRAWN]: [],
       [IntentState.SUPERSEDED]: [],
-      [IntentState.SUSPENDED]: ["resume", "expire", "withdraw"],
+      [IntentState.SUSPENDED]: [
+        IntentState.ACTIVE,
+        IntentState.WITHDRAWN,
+        IntentState.EXPIRED,
+        IntentState.TRANSFERRED,
+      ],
+      [IntentState.TRANSFERRED]: [],
     };
 
-    if (!validTransitions[this.state]?.includes(event)) {
-      throw new Error(
-        `Invalid transition from ${this.state} on event ${event}`
-      );
+    if (!validTransitions[this.state].includes(nextState)) {
+      throw new Error(`Invalid transition from ${this.state} to ${nextState}`);
     }
-
-    switch (this.state) {
-      case IntentState.ANNOUNCED:
-        if (event === "activate") {
-          this.state = IntentState.ACTIVE;
-        }
-        break;
-      case IntentState.ACTIVE:
-        if (event === "expire") {
-          this.state = IntentState.EXPIRED;
-        } else if (event === "withdraw") {
-          this.state = IntentState.WITHDRAWN;
-        } else if (event === "supersede") {
-          this.state = IntentState.SUPERSEDED;
-        } else if (event === "suspend") {
-          this.state = IntentState.SUSPENDED;
-        }
-        break;
-      case IntentState.SUSPENDED:
-        if (event === "resume") {
-          this.state = IntentState.ACTIVE;
-        } else if (event === "expire") {
-          this.state = IntentState.EXPIRED;
-        } else if (event === "withdraw") {
-          this.state = IntentState.WITHDRAWN;
-        }
-        break;
-    }
-
+    this.state = nextState;
     return this.state;
   }
 
@@ -75,18 +100,13 @@ export class IntentStateMachine {
       IntentState.EXPIRED,
       IntentState.WITHDRAWN,
       IntentState.SUPERSEDED,
+      IntentState.TRANSFERRED,
     ].includes(this.state);
   }
 }
 
-/**
- * Operation State Machine
- * Transitions:
- * PROPOSED -> COMMITTED (success) | REJECTED (error) | ABANDONED (cancelled) | FROZEN (paused)
- * COMMITTED/REJECTED/ABANDONED/FROZEN -> terminal states
- */
 export class OperationStateMachine {
-  private state: OperationState = OperationState.PROPOSED;
+  private state: OperationState;
 
   constructor(initialState: OperationState = OperationState.PROPOSED) {
     this.state = initialState;
@@ -97,49 +117,29 @@ export class OperationStateMachine {
   }
 
   transition(event: string): OperationState {
-    const validTransitions: Record<OperationState, string[]> = {
-      [OperationState.PROPOSED]: ["commit", "reject", "abandon", "freeze"],
-      [OperationState.COMMITTED]: ["supersede"],
+    const nextState = normalizeOperationEvent(event);
+    const validTransitions: Record<OperationState, OperationState[]> = {
+      [OperationState.PROPOSED]: [
+        OperationState.COMMITTED,
+        OperationState.REJECTED,
+        OperationState.ABANDONED,
+        OperationState.FROZEN,
+      ],
+      [OperationState.COMMITTED]: [OperationState.SUPERSEDED],
       [OperationState.REJECTED]: [],
       [OperationState.ABANDONED]: [],
-      [OperationState.FROZEN]: ["unfreeze", "reject", "abandon"],
+      [OperationState.FROZEN]: [
+        OperationState.PROPOSED,
+        OperationState.REJECTED,
+        OperationState.ABANDONED,
+      ],
       [OperationState.SUPERSEDED]: [],
     };
 
-    if (!validTransitions[this.state]?.includes(event)) {
-      throw new Error(
-        `Invalid transition from ${this.state} on event ${event}`
-      );
+    if (!validTransitions[this.state].includes(nextState)) {
+      throw new Error(`Invalid transition from ${this.state} to ${nextState}`);
     }
-
-    switch (this.state) {
-      case OperationState.PROPOSED:
-        if (event === "commit") {
-          this.state = OperationState.COMMITTED;
-        } else if (event === "reject") {
-          this.state = OperationState.REJECTED;
-        } else if (event === "abandon") {
-          this.state = OperationState.ABANDONED;
-        } else if (event === "freeze") {
-          this.state = OperationState.FROZEN;
-        }
-        break;
-      case OperationState.COMMITTED:
-        if (event === "supersede") {
-          this.state = OperationState.SUPERSEDED;
-        }
-        break;
-      case OperationState.FROZEN:
-        if (event === "unfreeze") {
-          this.state = OperationState.PROPOSED;
-        } else if (event === "reject") {
-          this.state = OperationState.REJECTED;
-        } else if (event === "abandon") {
-          this.state = OperationState.ABANDONED;
-        }
-        break;
-    }
-
+    this.state = nextState;
     return this.state;
   }
 
@@ -153,18 +153,8 @@ export class OperationStateMachine {
   }
 }
 
-/**
- * Conflict State Machine
- * Transitions:
- * OPEN -> ACKED (acknowledged) | ESCALATED (needs admin) | DISMISSED (auto-dismiss)
- * ACKED -> ESCALATED | RESOLVED | DISMISSED
- * ESCALATED -> RESOLVED | DISMISSED
- * RESOLVED -> CLOSED
- * CLOSED -> terminal
- * DISMISSED -> terminal
- */
 export class ConflictStateMachine {
-  private state: ConflictState = ConflictState.OPEN;
+  private state: ConflictState;
 
   constructor(initialState: ConflictState = ConflictState.OPEN) {
     this.state = initialState;
@@ -175,60 +165,24 @@ export class ConflictStateMachine {
   }
 
   transition(event: string): ConflictState {
-    const validTransitions: Record<ConflictState, string[]> = {
-      [ConflictState.OPEN]: ["ack", "escalate", "dismiss"],
-      [ConflictState.ACKED]: ["escalate", "resolve", "dismiss"],
-      [ConflictState.ESCALATED]: ["resolve", "dismiss"],
-      [ConflictState.RESOLVED]: ["close"],
-      [ConflictState.CLOSED]: [],
+    const nextState = normalizeConflictEvent(event);
+    const validTransitions: Record<ConflictState, ConflictState[]> = {
+      [ConflictState.OPEN]: [ConflictState.ACKED, ConflictState.ESCALATED, ConflictState.DISMISSED],
+      [ConflictState.ACKED]: [ConflictState.ESCALATED, ConflictState.RESOLVED, ConflictState.DISMISSED],
+      [ConflictState.ESCALATED]: [ConflictState.RESOLVED, ConflictState.DISMISSED],
       [ConflictState.DISMISSED]: [],
+      [ConflictState.RESOLVED]: [ConflictState.CLOSED],
+      [ConflictState.CLOSED]: [],
     };
 
-    if (!validTransitions[this.state]?.includes(event)) {
-      throw new Error(
-        `Invalid transition from ${this.state} on event ${event}`
-      );
+    if (!validTransitions[this.state].includes(nextState)) {
+      throw new Error(`Invalid transition from ${this.state} to ${nextState}`);
     }
-
-    switch (this.state) {
-      case ConflictState.OPEN:
-        if (event === "ack") {
-          this.state = ConflictState.ACKED;
-        } else if (event === "escalate") {
-          this.state = ConflictState.ESCALATED;
-        } else if (event === "dismiss") {
-          this.state = ConflictState.DISMISSED;
-        }
-        break;
-      case ConflictState.ACKED:
-        if (event === "escalate") {
-          this.state = ConflictState.ESCALATED;
-        } else if (event === "resolve") {
-          this.state = ConflictState.RESOLVED;
-        } else if (event === "dismiss") {
-          this.state = ConflictState.DISMISSED;
-        }
-        break;
-      case ConflictState.ESCALATED:
-        if (event === "resolve") {
-          this.state = ConflictState.RESOLVED;
-        } else if (event === "dismiss") {
-          this.state = ConflictState.DISMISSED;
-        }
-        break;
-      case ConflictState.RESOLVED:
-        if (event === "close") {
-          this.state = ConflictState.CLOSED;
-        }
-        break;
-    }
-
+    this.state = nextState;
     return this.state;
   }
 
   isTerminal(): boolean {
-    return [ConflictState.CLOSED, ConflictState.DISMISSED].includes(
-      this.state
-    );
+    return [ConflictState.DISMISSED, ConflictState.CLOSED].includes(this.state);
   }
 }

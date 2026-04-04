@@ -16,11 +16,15 @@ class MessageType(Enum):
     SESSION_INFO = "SESSION_INFO"
     HEARTBEAT = "HEARTBEAT"
     GOODBYE = "GOODBYE"
+    SESSION_CLOSE = "SESSION_CLOSE"
+    COORDINATOR_STATUS = "COORDINATOR_STATUS"
     INTENT_ANNOUNCE = "INTENT_ANNOUNCE"
     INTENT_UPDATE = "INTENT_UPDATE"
     INTENT_WITHDRAW = "INTENT_WITHDRAW"
     INTENT_CLAIM = "INTENT_CLAIM"
+    INTENT_CLAIM_STATUS = "INTENT_CLAIM_STATUS"
     OP_PROPOSE = "OP_PROPOSE"
+    OP_BATCH_COMMIT = "OP_BATCH_COMMIT"
     OP_COMMIT = "OP_COMMIT"
     OP_REJECT = "OP_REJECT"
     OP_SUPERSEDE = "OP_SUPERSEDE"
@@ -29,8 +33,6 @@ class MessageType(Enum):
     CONFLICT_ESCALATE = "CONFLICT_ESCALATE"
     RESOLUTION = "RESOLUTION"
     PROTOCOL_ERROR = "PROTOCOL_ERROR"
-    SESSION_CLOSE = "SESSION_CLOSE"
-    COORDINATOR_STATUS = "COORDINATOR_STATUS"
 
 
 class IntentState(Enum):
@@ -41,6 +43,7 @@ class IntentState(Enum):
     WITHDRAWN = "WITHDRAWN"
     SUPERSEDED = "SUPERSEDED"
     SUSPENDED = "SUSPENDED"
+    TRANSFERRED = "TRANSFERRED"
 
 
 class OperationState(Enum):
@@ -122,7 +125,6 @@ class Decision(Enum):
     HUMAN_OVERRIDE = "human_override"
     POLICY_OVERRIDE = "policy_override"
     MERGED = "merged"
-    DEFERRED = "deferred"
 
 
 class HeartbeatStatus(Enum):
@@ -153,6 +155,7 @@ class ErrorCode(Enum):
     RESOLUTION_TIMEOUT = "RESOLUTION_TIMEOUT"
     SCOPE_FROZEN = "SCOPE_FROZEN"
     CLAIM_CONFLICT = "CLAIM_CONFLICT"
+    RESOLUTION_CONFLICT = "RESOLUTION_CONFLICT"
     COORDINATOR_CONFLICT = "COORDINATOR_CONFLICT"
     STATE_DIVERGENCE = "STATE_DIVERGENCE"
     SESSION_CLOSED = "SESSION_CLOSED"
@@ -246,6 +249,7 @@ class Sender:
     """Message sender information."""
     principal_id: str
     principal_type: str
+    sender_instance_id: str
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict."""
@@ -450,6 +454,7 @@ class Session:
     session_id: str
     security_profile: str = "open"
     compliance_profile: str = "core"
+    execution_model: str = "post_commit"
     governance_policy: Optional[GovernancePolicy] = None
     liveness_policy: Optional[LivenessPolicy] = None
 

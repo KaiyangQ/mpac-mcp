@@ -8,6 +8,16 @@
     "display_name": { "type": "string" },
     "roles": { "type": "array", "items": { "type": "string", "enum": ["observer", "contributor", "reviewer", "owner", "arbiter"] } },
     "capabilities": { "type": "array", "items": { "type": "string" } },
+    "credential": {
+      "type": "object",
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "type": "string" },
+        "value": { "type": "string" },
+        "issuer": { "type": "string" },
+        "expires_at": { "type": "string", "format": "date-time" }
+      }
+    },
     "implementation": {
       "type": "object",
       "properties": {

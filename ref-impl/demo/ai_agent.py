@@ -31,7 +31,7 @@ class AIAgent:
             principal_type="agent",
             display_name=name,
             roles=["contributor"],
-            capabilities=["intent.broadcast", "op.propose", "op.commit"],
+            capabilities=["intent.broadcast", "op.propose", "op.commit", "op.batch_commit"],
         )
         self.message_log = []  # all MPAC messages this agent has seen
 

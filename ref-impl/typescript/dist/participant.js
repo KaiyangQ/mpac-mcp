@@ -1,6 +1,7 @@
-import { MessageType } from "./models.js";
+import { v4 as uuidv4 } from "uuid";
 import { createEnvelope } from "./envelope.js";
 import { LamportClock } from "./watermark.js";
+import { MessageType } from "./models.js";
 export class Participant {
     principalId;
     principalType;
@@ -9,7 +10,8 @@ export class Participant {
     capabilities;
     lamportClock;
     credential;
-    constructor(principalId, principalType, displayName, roles = [], capabilities = [], credential) {
+    senderInstanceId;
+    constructor(principalId, principalType, displayName, roles = ["participant"], capabilities = [], credential) {
         this.principalId = principalId;
         this.principalType = principalType;
         this.displayName = displayName;
@@ -17,19 +19,23 @@ export class Participant {
         this.capabilities = capabilities;
         this.lamportClock = new LamportClock();
         this.credential = credential;
+        this.senderInstanceId = `${this.principalId}:${uuidv4()}`;
     }
     sender() {
-        return { principal_id: this.principalId, principal_type: this.principalType };
+        return {
+            principal_id: this.principalId,
+            principal_type: this.principalType,
+            sender_instance_id: this.senderInstanceId,
+        };
     }
     make(messageType, sessionId, payload) {
         return createEnvelope(messageType, sessionId, this.sender(), payload, this.lamportClock.createWatermark());
     }
-    // ================================================================
-    //  Session layer
-    // ================================================================
     hello(sessionId) {
         const payload = {
-            display_name: this.displayName, roles: this.roles, capabilities: this.capabilities,
+            display_name: this.displayName,
+            roles: this.roles,
+            capabilities: this.capabilities,
         };
         if (this.credential)
             payload.credential = this.credential;
@@ -49,11 +55,10 @@ export class Participant {
             payload.active_intents = activeIntents;
         return this.make(MessageType.GOODBYE, sessionId, payload);
     }
-    // ================================================================
-    //  Intent layer
-    // ================================================================
-    announceIntent(sessionId, intentId, objective, scope, expiryMs) {
-        const payload = { intent_id: intentId, objective, scope, expiry_ms: expiryMs };
+    announceIntent(sessionId, intentId, objective, scope, ttlSec) {
+        const payload = { intent_id: intentId, objective, scope };
+        if (ttlSec !== undefined)
+            payload.ttl_sec = ttlSec;
         return this.make(MessageType.INTENT_ANNOUNCE, sessionId, payload);
     }
     updateIntent(sessionId, intentId, opts = {}) {
@@ -74,36 +79,74 @@ export class Participant {
     }
     claimIntent(sessionId, claimId, originalIntentId, originalPrincipalId, newIntentId, objective, scope, justification) {
         const payload = {
-            claim_id: claimId, original_intent_id: originalIntentId,
+            claim_id: claimId,
+            original_intent_id: originalIntentId,
             original_principal_id: originalPrincipalId,
-            new_intent_id: newIntentId, objective, scope,
+            new_intent_id: newIntentId,
+            objective,
+            scope,
         };
         if (justification)
             payload.justification = justification;
         return this.make(MessageType.INTENT_CLAIM, sessionId, payload);
     }
-    // ================================================================
-    //  Operation layer
-    // ================================================================
     proposeOp(sessionId, opId, intentId, target, opKind) {
         return this.make(MessageType.OP_PROPOSE, sessionId, {
-            op_id: opId, intent_id: intentId, target, op_kind: opKind,
+            op_id: opId,
+            intent_id: intentId,
+            target,
+            op_kind: opKind,
         });
     }
     commitOp(sessionId, opId, intentId, target, opKind, stateRefBefore, stateRefAfter) {
         return this.make(MessageType.OP_COMMIT, sessionId, {
-            op_id: opId, intent_id: intentId, target, op_kind: opKind,
-            state_ref_before: stateRefBefore, state_ref_after: stateRefAfter,
+            op_id: opId,
+            intent_id: intentId,
+            target,
+            op_kind: opKind,
+            state_ref_before: stateRefBefore,
+            state_ref_after: stateRefAfter,
         });
     }
-    // ================================================================
-    //  Conflict layer
-    // ================================================================
+    batchCommitOp(sessionId, batchId, operations, atomicity = "all_or_nothing", intentId, summary) {
+        const payload = {
+            batch_id: batchId,
+            atomicity,
+            operations,
+        };
+        if (intentId)
+            payload.intent_id = intentId;
+        if (summary)
+            payload.summary = summary;
+        return this.make(MessageType.OP_BATCH_COMMIT, sessionId, payload);
+    }
+    supersedeOp(sessionId, opId, supersedesOpId, target, intentId, reason, stateRefAfter) {
+        const payload = {
+            op_id: opId,
+            supersedes_op_id: supersedesOpId,
+            target,
+        };
+        if (intentId)
+            payload.intent_id = intentId;
+        if (reason)
+            payload.reason = reason;
+        if (stateRefAfter)
+            payload.state_ref_after = stateRefAfter;
+        return this.make(MessageType.OP_SUPERSEDE, sessionId, payload);
+    }
     reportConflict(sessionId, conflictId, category, severity, involvedPrincipals, scopeA, scopeB, details) {
-        return this.make(MessageType.CONFLICT_REPORT, sessionId, {
-            conflict_id: conflictId, category, severity, involved_principals: involvedPrincipals,
-            scope_a: scopeA, scope_b: scopeB, basis: {}, details,
-        });
+        const payload = {
+            conflict_id: conflictId,
+            category,
+            severity,
+            involved_principals: involvedPrincipals,
+            scope_a: scopeA,
+            scope_b: scopeB,
+            basis: {},
+        };
+        if (details)
+            payload.details = details;
+        return this.make(MessageType.CONFLICT_REPORT, sessionId, payload);
     }
     ackConflict(sessionId, conflictId, ackType = "seen") {
         return this.make(MessageType.CONFLICT_ACK, sessionId, { conflict_id: conflictId, ack_type: ackType });
@@ -123,14 +166,21 @@ export class Participant {
         return this.make(MessageType.RESOLUTION, sessionId, payload);
     }
     processMessage(envelope) {
-        if (envelope.watermark)
+        if (envelope.watermark) {
             this.lamportClock.processWatermark(envelope.watermark);
+        }
     }
-    getClockValue() { return this.lamportClock.value; }
+    getClockValue() {
+        return this.lamportClock.value;
+    }
     getInfo() {
         return {
-            principal_id: this.principalId, principal_type: this.principalType,
-            display_name: this.displayName, roles: this.roles, capabilities: this.capabilities,
+            principal_id: this.principalId,
+            principal_type: this.principalType,
+            display_name: this.displayName,
+            roles: this.roles,
+            capabilities: this.capabilities,
+            sender_instance_id: this.senderInstanceId,
         };
     }
 }

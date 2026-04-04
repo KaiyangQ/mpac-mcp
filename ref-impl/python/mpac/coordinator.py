@@ -1,53 +1,56 @@
-"""Session coordinator for MPAC.
-
-Implements:
-- Session management (HELLO / SESSION_INFO)
-- Liveness detection via HEARTBEAT / GOODBYE (Section 14)
-- Intent lifecycle: ANNOUNCE, UPDATE, WITHDRAW, CLAIM, TTL expiry (Sections 15)
-- Operation lifecycle: PROPOSE, COMMIT, REJECT with intent-terminated auto-rejection
-- Scope overlap conflict detection
-- Conflict workflow: ACK, ESCALATE, RESOLUTION (Section 17-18)
-- Intent Expiry Cascade (Section 15.7)
-- Conflict Auto-Dismissal on intent termination (Section 17.9)
-"""
+"""Session coordinator for MPAC."""
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
 import uuid
 
-from .models import (
-    Principal,
-    Sender,
-    Watermark,
-    Scope,
-    MessageType,
-    IntentState,
-    OperationState,
-    ConflictState,
-    Credential,
-)
 from .envelope import MessageEnvelope
-from .watermark import LamportClock
+from .models import (
+    ComplianceProfile,
+    ConflictState,
+    IntentState,
+    MessageType,
+    OperationState,
+    Principal,
+    Scope,
+    Sender,
+)
 from .scope import scope_overlap
 from .state_machines import (
+    ConflictStateMachine,
     IntentStateMachine,
     OperationStateMachine,
-    ConflictStateMachine,
 )
+from .watermark import LamportClock
+
+
+PROTOCOL_VERSION = "0.1.10"
 
 
 def _now() -> datetime:
-    """Return current UTC time."""
+    """Return the current UTC time."""
     return datetime.now(timezone.utc)
 
 
-# ================================================================
-#  Internal data classes
-# ================================================================
+def _iso(dt: datetime) -> str:
+    """Serialize UTC timestamps in RFC 3339 form."""
+    return dt.isoformat().replace("+00:00", "Z")
+
+
+def _parse_dt(value: Optional[str]) -> Optional[datetime]:
+    """Parse RFC 3339 timestamps used by snapshots."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
 
 @dataclass
 class Intent:
     """Internal representation of an intent."""
+
     intent_id: str
     principal_id: str
     objective: str
@@ -57,12 +60,13 @@ class Intent:
     ttl_sec: Optional[float] = None
     expires_at: Optional[datetime] = None
     last_message_id: Optional[str] = None
-    claimed_by: Optional[str] = None  # principal_id that claimed this intent
+    claimed_by: Optional[str] = None
 
 
 @dataclass
 class Operation:
     """Internal representation of an operation."""
+
     op_id: str
     intent_id: str
     principal_id: str
@@ -71,12 +75,16 @@ class Operation:
     state_machine: OperationStateMachine
     state_ref_before: Optional[str] = None
     state_ref_after: Optional[str] = None
+    batch_id: Optional[str] = None
+    authorized_at: Optional[datetime] = None
+    authorized_by: Optional[str] = None
     created_at: datetime = field(default_factory=_now)
 
 
 @dataclass
 class Conflict:
     """Internal representation of a conflict."""
+
     conflict_id: str
     category: str
     severity: str
@@ -90,20 +98,36 @@ class Conflict:
     created_at: datetime = field(default_factory=_now)
     escalated_to: Optional[str] = None
     escalated_at: Optional[datetime] = None
+    resolution_id: Optional[str] = None
+    resolved_by: Optional[str] = None
+
+
+@dataclass
+class Claim:
+    """Internal representation of an intent claim."""
+
+    claim_id: str
+    original_intent_id: str
+    original_principal_id: str
+    new_intent_id: str
+    claimer_principal_id: str
+    objective: str
+    scope: Scope
+    justification: Optional[str] = None
+    submitted_at: datetime = field(default_factory=_now)
+    decision: str = "pending"
+    approved_by: Optional[str] = None
 
 
 @dataclass
 class ParticipantInfo:
     """Liveness tracking for a participant."""
+
     principal: Principal
     last_seen: datetime = field(default_factory=_now)
-    status: str = "idle"  # idle | working | blocked | awaiting_review | offline
+    status: str = "idle"
     is_available: bool = True
 
-
-# ================================================================
-#  Coordinator
-# ================================================================
 
 class SessionCoordinator:
     """Coordinates MPAC sessions."""
@@ -117,23 +141,38 @@ class SessionCoordinator:
         heartbeat_interval_sec: float = 30.0,
         unavailability_timeout_sec: float = 90.0,
         resolution_timeout_sec: float = 300.0,
+        execution_model: str = "post_commit",
+        state_ref_format: str = "sha256",
+        intent_claim_grace_sec: float = 0.0,
     ):
+        if execution_model == "pre_commit" and compliance_profile != ComplianceProfile.GOVERNANCE.value:
+            raise ValueError("pre_commit sessions require Governance Profile compliance")
+
         self.session_id = session_id
         self.security_profile = security_profile
         self.compliance_profile = compliance_profile
+        self.execution_model = execution_model
+        self.state_ref_format = state_ref_format
+        self.watermark_kind = "lamport_clock"
         self.intent_expiry_grace_sec = intent_expiry_grace_sec
         self.heartbeat_interval_sec = heartbeat_interval_sec
         self.unavailability_timeout_sec = unavailability_timeout_sec
         self.resolution_timeout_sec = resolution_timeout_sec
+        self.intent_claim_grace_sec = intent_claim_grace_sec
 
-        # Internal state
         self.participants: Dict[str, ParticipantInfo] = {}
         self.intents: Dict[str, Intent] = {}
         self.operations: Dict[str, Operation] = {}
         self.conflicts: Dict[str, Conflict] = {}
+        self.claims: Dict[str, Claim] = {}
+        self.claim_index: Dict[str, Claim] = {}
+        self.audit_log: List[Dict[str, Any]] = []
         self.lamport_clock = LamportClock()
-        self.claims: Dict[str, str] = {}  # original_intent_id → claim_id
+        self.recent_message_ids: List[str] = []
+        self.sender_frontier: Dict[str, Dict[str, Any]] = {}
+        self.coordinator_epoch = 1
         self.coordinator_id = f"service:coordinator-{session_id}"
+        self.coordinator_instance_id = f"{self.coordinator_id}:epoch-{self.coordinator_epoch}"
         self.session_closed = False
         self.session_started_at = _now()
         self.lifecycle_policy = {
@@ -141,88 +180,64 @@ class SessionCoordinator:
             "auto_close_grace_sec": 60,
             "session_ttl_sec": 0,
         }
-        self.audit_log: List[Dict[str, Any]] = []
 
     # ================================================================
     #  Main message processing
     # ================================================================
 
     def process_message(self, envelope_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Process incoming message and generate responses."""
+        """Process an incoming message and emit zero or more responses."""
         envelope = MessageEnvelope.from_dict(envelope_dict)
+        self.audit_log.append(envelope.to_dict())
+        self._remember_message_id(envelope.message_id)
+        self._record_sender_frontier(envelope)
 
-        # Append to audit log for fault recovery
-        self.audit_log.append(envelope_dict)
-
-        # Update lamport clock
         if envelope.watermark and envelope.watermark.kind == "lamport_clock":
             self.lamport_clock.update(int(envelope.watermark.value))
 
-        # Update liveness for sender
         pid = envelope.sender.principal_id
         if pid in self.participants:
             self.participants[pid].last_seen = _now()
 
-        # Route message by type
-        mt = envelope.message_type
-        responses: List[MessageEnvelope] = []
-
-        # Reject messages for closed sessions
-        if self.session_closed and mt != MessageType.GOODBYE.value:
-            return [self._make_envelope(
-                MessageType.PROTOCOL_ERROR.value,
-                {
-                    "error_code": "SESSION_CLOSED",
-                    "refers_to": envelope.message_id,
-                    "description": f"Session {self.session_id} has been closed",
-                },
+        if self.session_closed and envelope.message_type != MessageType.GOODBYE.value:
+            return [self._make_protocol_error(
+                "SESSION_CLOSED",
+                envelope.message_id,
+                f"Session {self.session_id} has been closed",
             ).to_dict()]
 
-        if mt == MessageType.HELLO.value:
-            responses = self._handle_hello(envelope)
-        elif mt == MessageType.HEARTBEAT.value:
-            responses = self._handle_heartbeat(envelope)
-        elif mt == MessageType.GOODBYE.value:
-            responses = self._handle_goodbye(envelope)
-        elif mt == MessageType.INTENT_ANNOUNCE.value:
-            responses = self._handle_intent_announce(envelope)
-        elif mt == MessageType.INTENT_UPDATE.value:
-            responses = self._handle_intent_update(envelope)
-        elif mt == MessageType.INTENT_WITHDRAW.value:
-            responses = self._handle_intent_withdraw(envelope)
-        elif mt == MessageType.INTENT_CLAIM.value:
-            responses = self._handle_intent_claim(envelope)
-        elif mt == MessageType.OP_PROPOSE.value:
-            responses = self._handle_op_propose(envelope)
-        elif mt == MessageType.OP_COMMIT.value:
-            responses = self._handle_op_commit(envelope)
-        elif mt == MessageType.OP_SUPERSEDE.value:
-            responses = self._handle_op_supersede(envelope)
-        elif mt == MessageType.CONFLICT_REPORT.value:
-            responses = self._handle_conflict_report(envelope)
-        elif mt == MessageType.CONFLICT_ACK.value:
-            responses = self._handle_conflict_ack(envelope)
-        elif mt == MessageType.CONFLICT_ESCALATE.value:
-            responses = self._handle_conflict_escalate(envelope)
-        elif mt == MessageType.RESOLUTION.value:
-            responses = self._handle_resolution(envelope)
-        elif mt == MessageType.SESSION_CLOSE.value:
-            responses = self._handle_session_close(envelope)
-        elif mt == MessageType.COORDINATOR_STATUS.value:
-            responses = []  # Coordinator status is outbound-only
+        handlers = {
+            MessageType.HELLO.value: self._handle_hello,
+            MessageType.HEARTBEAT.value: self._handle_heartbeat,
+            MessageType.GOODBYE.value: self._handle_goodbye,
+            MessageType.INTENT_ANNOUNCE.value: self._handle_intent_announce,
+            MessageType.INTENT_UPDATE.value: self._handle_intent_update,
+            MessageType.INTENT_WITHDRAW.value: self._handle_intent_withdraw,
+            MessageType.INTENT_CLAIM.value: self._handle_intent_claim,
+            MessageType.OP_PROPOSE.value: self._handle_op_propose,
+            MessageType.OP_COMMIT.value: self._handle_op_commit,
+            MessageType.OP_BATCH_COMMIT.value: self._handle_op_batch_commit,
+            MessageType.OP_SUPERSEDE.value: self._handle_op_supersede,
+            MessageType.CONFLICT_REPORT.value: self._handle_conflict_report,
+            MessageType.CONFLICT_ACK.value: self._handle_conflict_ack,
+            MessageType.CONFLICT_ESCALATE.value: self._handle_conflict_escalate,
+            MessageType.RESOLUTION.value: self._handle_resolution,
+            MessageType.SESSION_CLOSE.value: self._handle_session_close,
+            MessageType.COORDINATOR_STATUS.value: lambda _envelope: [],
+        }
 
-        return [r.to_dict() for r in responses]
+        responses = handlers.get(envelope.message_type, lambda _envelope: [])(envelope)
+        responses.extend(self.check_pending_claims())
+        return [response.to_dict() for response in responses]
 
     # ================================================================
     #  Time-based lifecycle checks
     # ================================================================
 
     def check_expiry(self, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
-        """Check intents for TTL expiry and cascade (Section 15.7 + 17.9)."""
-        if now is None:
-            now = _now()
-
-        all_responses: List[MessageEnvelope] = []
+        """Check intents for TTL expiry and cascade termination."""
+        now = now or _now()
+        responses: List[MessageEnvelope] = []
 
         for intent in list(self.intents.values()):
             if (
@@ -232,112 +247,109 @@ class SessionCoordinator:
                 and now >= intent.expires_at
             ):
                 intent.state_machine.transition("EXPIRED")
-                all_responses.extend(
-                    self._cascade_intent_termination(intent.intent_id)
-                )
+                responses.extend(self._cascade_intent_termination(intent.intent_id))
 
-        all_responses.extend(self._check_auto_dismiss())
-        return [r.to_dict() for r in all_responses]
+        responses.extend(self._check_auto_dismiss())
+        responses.extend(self.check_pending_claims(now))
+        return [response.to_dict() for response in responses]
 
     def check_liveness(self, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
-        """Detect unavailable participants and cascade (Section 14.5).
-
-        Should be called periodically. When a participant has not sent any
-        message for longer than unavailability_timeout_sec:
-        - Mark participant unavailable
-        - Broadcast PROTOCOL_ERROR (PARTICIPANT_UNAVAILABLE)
-        - Suspend their active intents (Section 14.5.2)
-        - Abandon their in-flight proposals (Section 14.5.3)
-        """
-        if now is None:
-            now = _now()
-
+        """Detect unavailable participants and suspend their active work."""
+        now = now or _now()
         threshold = timedelta(seconds=self.unavailability_timeout_sec)
-        all_responses: List[MessageEnvelope] = []
+        responses: List[MessageEnvelope] = []
 
         for pid, info in list(self.participants.items()):
-            if not info.is_available:
+            if not info.is_available or info.status == "offline":
                 continue
-            if info.status == "offline":
-                continue  # offline status exempt from heartbeat
-
             if now - info.last_seen > threshold:
                 info.is_available = False
-                all_responses.extend(self._handle_participant_unavailable(pid))
+                responses.extend(self._handle_participant_unavailable(pid))
 
-        return [r.to_dict() for r in all_responses]
+        responses.extend(self.check_pending_claims(now))
+        return [response.to_dict() for response in responses]
 
     def check_resolution_timeouts(self, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
-        """Auto-escalate conflicts that exceed resolution_timeout_sec (Section 18.6.1).
-
-        Conflicts in OPEN or ACKED state for longer than the timeout are
-        auto-escalated. If no arbiter is available, the scope is frozen.
-        """
-        if now is None:
-            now = _now()
-
+        """Escalate long-running conflicts to an arbiter when available."""
+        now = now or _now()
         threshold = timedelta(seconds=self.resolution_timeout_sec)
-        all_responses: List[MessageEnvelope] = []
+        responses: List[MessageEnvelope] = []
 
         for conflict in list(self.conflicts.values()):
-            if conflict.state_machine.current_state not in (
-                ConflictState.OPEN, ConflictState.ACKED
-            ):
+            if conflict.state_machine.current_state not in (ConflictState.OPEN, ConflictState.ACKED):
                 continue
-
             if now - conflict.created_at <= threshold:
                 continue
 
-            # Find an arbiter
             arbiter_id = self._find_arbiter()
-
             if arbiter_id:
-                # Auto-escalate to arbiter
-                try:
-                    if conflict.state_machine.current_state == ConflictState.OPEN:
-                        conflict.state_machine.transition("ACKED")
-                    conflict.state_machine.transition("ESCALATED")
-                except ValueError:
-                    continue
-
+                if conflict.state_machine.current_state == ConflictState.OPEN:
+                    conflict.state_machine.transition("ACKED")
+                conflict.state_machine.transition("ESCALATED")
                 conflict.escalated_to = arbiter_id
                 conflict.escalated_at = now
-
-                all_responses.append(self._make_envelope(
+                responses.append(self._make_envelope(
                     MessageType.CONFLICT_ESCALATE.value,
                     {
                         "conflict_id": conflict.conflict_id,
                         "escalate_to": arbiter_id,
                         "reason": "resolution_timeout",
-                        "context": f"Conflict unresolved for >{self.resolution_timeout_sec}s",
                     },
                 ))
-
             else:
-                # No arbiter — emit PROTOCOL_ERROR with RESOLUTION_TIMEOUT
-                all_responses.append(self._make_envelope(
-                    MessageType.PROTOCOL_ERROR.value,
-                    {
-                        "error_code": "RESOLUTION_TIMEOUT",
-                        "refers_to": conflict.conflict_id,
-                        "description": f"No arbiter available; conflict {conflict.conflict_id} unresolved for >{self.resolution_timeout_sec}s",
-                    },
+                responses.append(self._make_protocol_error(
+                    "RESOLUTION_TIMEOUT",
+                    conflict.conflict_id,
+                    f"No arbiter available for conflict {conflict.conflict_id}",
                 ))
 
-        return [r.to_dict() for r in all_responses]
+        return [response.to_dict() for response in responses]
+
+    def check_pending_claims(self, now: Optional[datetime] = None) -> List[MessageEnvelope]:
+        """Approve pending claims when their policy conditions are satisfied."""
+        now = now or _now()
+        responses: List[MessageEnvelope] = []
+
+        for original_intent_id, claim in list(self.claims.items()):
+            if claim.decision != "pending":
+                continue
+
+            original = self.intents.get(original_intent_id)
+            if original is None:
+                responses.extend(self._reject_claim(claim, "original_intent_missing"))
+                continue
+
+            if original.state_machine.current_state != IntentState.SUSPENDED:
+                responses.extend(self._reject_claim(claim, "intent_no_longer_suspended"))
+                continue
+
+            if self.compliance_profile == ComplianceProfile.GOVERNANCE.value:
+                approver = self._find_claim_approver(claim.claimer_principal_id)
+                if approver is None:
+                    continue
+                responses.extend(self._approve_claim(claim, approver))
+                continue
+
+            if (now - claim.submitted_at).total_seconds() >= self.intent_claim_grace_sec:
+                responses.extend(self._approve_claim(claim, None))
+
+        return responses
 
     # ================================================================
     #  Session layer handlers
     # ================================================================
 
     def _handle_hello(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle HELLO message."""
+        """Register a participant and return session parameters."""
+        payload = envelope.payload
+        requested_roles = payload.get("roles", ["participant"])
+
         principal = Principal(
             principal_id=envelope.sender.principal_id,
             principal_type=envelope.sender.principal_type,
-            display_name=envelope.payload.get("display_name", ""),
-            roles=envelope.payload.get("roles", ["participant"]),
-            capabilities=envelope.payload.get("capabilities", []),
+            display_name=payload.get("display_name", ""),
+            roles=requested_roles,
+            capabilities=payload.get("capabilities", []),
         )
         self.participants[principal.principal_id] = ParticipantInfo(
             principal=principal,
@@ -346,106 +358,98 @@ class SessionCoordinator:
             is_available=True,
         )
 
-        # Check if this is a reconnection — restore suspended intents
-        for intent in self.intents.values():
-            if (
-                intent.principal_id == principal.principal_id
-                and intent.state_machine.current_state == IntentState.SUSPENDED
-                and intent.claimed_by is None
-            ):
-                intent.state_machine.transition("ACTIVE")
-
-        return [self._make_envelope(
+        responses = self._handle_owner_rejoin(principal.principal_id)
+        responses.append(self._make_envelope(
             MessageType.SESSION_INFO.value,
             {
+                "session_id": self.session_id,
+                "protocol_version": PROTOCOL_VERSION,
                 "security_profile": self.security_profile,
                 "compliance_profile": self.compliance_profile,
+                "watermark_kind": self.watermark_kind,
+                "execution_model": self.execution_model,
+                "state_ref_format": self.state_ref_format,
+                "governance_policy": {
+                    "require_acknowledgment": True,
+                    "intent_expiry_grace_sec": self.intent_expiry_grace_sec,
+                },
+                "liveness_policy": {
+                    "heartbeat_interval_sec": self.heartbeat_interval_sec,
+                    "unavailability_timeout_sec": self.unavailability_timeout_sec,
+                    "intent_claim_grace_period_sec": self.intent_claim_grace_sec,
+                    "resolution_timeout_sec": self.resolution_timeout_sec,
+                },
+                "participant_count": len(self.participants),
+                "granted_roles": requested_roles,
+                "identity_verified": self.security_profile == "open" or bool(payload.get("credential")),
+                "identity_method": payload.get("credential", {}).get("type") if payload.get("credential") else None,
+                "compatibility_errors": [],
             },
-        )]
+        ))
+        return responses
 
     def _handle_heartbeat(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle HEARTBEAT message (Section 14.4).
-
-        Updates liveness tracking and participant status.
-        If the participant was previously marked unavailable, restore them.
-        """
+        """Update liveness status for a participant."""
         pid = envelope.sender.principal_id
         status = envelope.payload.get("status", "idle")
-
-        if pid in self.participants:
-            info = self.participants[pid]
-            info.last_seen = _now()
-            info.status = status
-
-            # Reconnection: restore availability and suspended intents
-            if not info.is_available:
-                info.is_available = True
-                for intent in self.intents.values():
-                    if (
-                        intent.principal_id == pid
-                        and intent.state_machine.current_state == IntentState.SUSPENDED
-                        and intent.claimed_by is None
-                    ):
-                        intent.state_machine.transition("ACTIVE")
-
-        return []
-
-    def _handle_goodbye(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle GOODBYE message (Section 14.4).
-
-        Processes intent_disposition:
-        - withdraw (default): withdraw all active intents
-        - expire: let them expire naturally via TTL
-        - transfer: offer for adoption (not yet implemented)
-        Also abandons in-flight proposals.
-        """
-        pid = envelope.sender.principal_id
-        disposition = envelope.payload.get("intent_disposition", "withdraw")
-        active_intent_ids = envelope.payload.get("active_intents", [])
-
+        info = self.participants.get(pid)
         responses: List[MessageEnvelope] = []
 
-        # Mark participant as unavailable
+        if info:
+            info.last_seen = _now()
+            info.status = status
+            if not info.is_available:
+                info.is_available = True
+                responses.extend(self._handle_owner_rejoin(pid))
+
+        return responses
+
+    def _handle_goodbye(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
+        """Apply the participant's requested disposition and mark them offline."""
+        pid = envelope.sender.principal_id
+        disposition = envelope.payload.get("intent_disposition", "withdraw")
+        active_intents = envelope.payload.get("active_intents", [])
+        responses: List[MessageEnvelope] = []
+
         if pid in self.participants:
             self.participants[pid].is_available = False
             self.participants[pid].status = "offline"
 
-        # Collect active intents for this participant if not specified
-        if not active_intent_ids:
-            active_intent_ids = [
-                iid for iid, intent in self.intents.items()
+        if not active_intents:
+            active_intents = [
+                intent_id
+                for intent_id, intent in self.intents.items()
                 if intent.principal_id == pid
                 and not intent.state_machine.is_terminal()
                 and intent.state_machine.current_state != IntentState.ANNOUNCED
             ]
 
-        # Apply disposition
-        if disposition == "withdraw":
-            for iid in active_intent_ids:
-                if iid in self.intents:
-                    intent = self.intents[iid]
-                    try:
-                        intent.state_machine.transition("WITHDRAWN")
-                        responses.extend(
-                            self._cascade_intent_termination(iid)
-                        )
-                    except ValueError:
-                        pass
-        elif disposition == "expire":
-            pass  # let TTL handle it naturally
-        # "transfer" — future work
+        for intent_id in active_intents:
+            intent = self.intents.get(intent_id)
+            if intent is None:
+                continue
+            try:
+                if disposition == "transfer":
+                    if intent.state_machine.current_state == IntentState.ACTIVE:
+                        intent.state_machine.transition("SUSPENDED")
+                elif disposition == "expire":
+                    continue
+                else:
+                    target = "WITHDRAWN" if intent.state_machine.current_state != IntentState.SUSPENDED else "WITHDRAWN"
+                    intent.state_machine.transition(target)
+                    responses.extend(self._cascade_intent_termination(intent_id))
+            except ValueError:
+                continue
 
-        # Abandon in-flight proposals from this participant
-        for op in self.operations.values():
-            if (
-                op.principal_id == pid
-                and op.state_machine.current_state == OperationState.PROPOSED
-            ):
-                op.state_machine.transition("ABANDONED")
+        for operation in self.operations.values():
+            if operation.principal_id != pid:
+                continue
+            if operation.state_machine.current_state == OperationState.PROPOSED:
+                operation.state_machine.transition("ABANDONED")
+            elif operation.state_machine.current_state == OperationState.FROZEN:
+                operation.state_machine.transition("ABANDONED")
 
-        # Auto-dismiss any conflicts that are now fully terminal
         responses.extend(self._check_auto_dismiss())
-
         return responses
 
     # ================================================================
@@ -453,184 +457,73 @@ class SessionCoordinator:
     # ================================================================
 
     def _handle_intent_announce(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle INTENT_ANNOUNCE (Section 15.3)."""
-        intent_id = envelope.payload.get("intent_id")
-        objective = envelope.payload.get("objective")
+        """Register a new active intent."""
         scope_data = envelope.payload.get("scope")
-        ttl_sec = envelope.payload.get("ttl_sec")
-
         scope = Scope.from_dict(scope_data) if isinstance(scope_data, dict) else scope_data
+        ttl_sec = envelope.payload.get("ttl_sec")
+        if ttl_sec is None and envelope.payload.get("expiry_ms") is not None:
+            ttl_sec = float(envelope.payload["expiry_ms"]) / 1000.0
 
         state_machine = IntentStateMachine()
         state_machine.transition("ACTIVE")
-
         now = _now()
-        expires_at = None
-        if ttl_sec is not None:
-            expires_at = now + timedelta(seconds=float(ttl_sec))
 
         intent = Intent(
-            intent_id=intent_id,
+            intent_id=envelope.payload.get("intent_id"),
             principal_id=envelope.sender.principal_id,
-            objective=objective,
+            objective=envelope.payload.get("objective", ""),
             scope=scope,
             state_machine=state_machine,
             received_at=now,
             ttl_sec=float(ttl_sec) if ttl_sec is not None else None,
-            expires_at=expires_at,
+            expires_at=now + timedelta(seconds=float(ttl_sec)) if ttl_sec is not None else None,
             last_message_id=envelope.message_id,
         )
-        self.intents[intent_id] = intent
-
-        responses = []
-
-        # Scope overlap detection
-        for other in self._find_overlapping_intents(intent):
-            conflict_id = str(uuid.uuid4())
-            conflict = Conflict(
-                conflict_id=conflict_id,
-                category="scope_overlap",
-                severity="medium",
-                principal_a=intent.principal_id,
-                principal_b=other.principal_id,
-                intent_a=intent_id,
-                intent_b=other.intent_id,
-                state_machine=ConflictStateMachine(),
-                related_intents=[intent_id, other.intent_id],
-                related_ops=[],
-            )
-            self.conflicts[conflict_id] = conflict
-            responses.append(self._make_envelope(
-                MessageType.CONFLICT_REPORT.value,
-                {
-                    "conflict_id": conflict_id,
-                    "category": "scope_overlap",
-                    "severity": "medium",
-                    "principal_a": intent.principal_id,
-                    "principal_b": other.principal_id,
-                    "intent_a": intent_id,
-                    "intent_b": other.intent_id,
-                },
-            ))
-
-        return responses
+        self.intents[intent.intent_id] = intent
+        return self._detect_scope_overlaps(intent)
 
     def _handle_intent_update(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle INTENT_UPDATE (Section 15.4).
-
-        Can update: objective, scope, ttl_sec.
-        If scope changes, re-run overlap detection.
-        """
+        """Update objective, scope, or TTL for an active intent."""
         intent_id = envelope.payload.get("intent_id")
-        if intent_id not in self.intents:
+        intent = self.intents.get(intent_id)
+        if intent is None or intent.principal_id != envelope.sender.principal_id:
             return []
-
-        intent = self.intents[intent_id]
-
-        # Only owning principal can update
-        if intent.principal_id != envelope.sender.principal_id:
-            return []
-
-        # Must be ACTIVE
         if intent.state_machine.current_state != IntentState.ACTIVE:
             return []
 
-        responses: List[MessageEnvelope] = []
         scope_changed = False
-
-        # Update objective
         if "objective" in envelope.payload:
             intent.objective = envelope.payload["objective"]
-
-        # Update scope
         if "scope" in envelope.payload:
             scope_data = envelope.payload["scope"]
-            new_scope = Scope.from_dict(scope_data) if isinstance(scope_data, dict) else scope_data
-            intent.scope = new_scope
+            intent.scope = Scope.from_dict(scope_data) if isinstance(scope_data, dict) else scope_data
             scope_changed = True
-
-        # Update TTL
         if "ttl_sec" in envelope.payload:
-            ttl_sec = float(envelope.payload["ttl_sec"])
-            intent.ttl_sec = ttl_sec
-            intent.expires_at = _now() + timedelta(seconds=ttl_sec)
-
+            intent.ttl_sec = float(envelope.payload["ttl_sec"])
+            intent.expires_at = _now() + timedelta(seconds=intent.ttl_sec)
         intent.last_message_id = envelope.message_id
 
-        # Re-check scope overlaps if scope changed
         if scope_changed:
-            for other in self._find_overlapping_intents(intent):
-                # Check if a conflict already exists for this pair
-                already_exists = any(
-                    (c.intent_a == intent_id and c.intent_b == other.intent_id)
-                    or (c.intent_b == intent_id and c.intent_a == other.intent_id)
-                    for c in self.conflicts.values()
-                    if not c.state_machine.is_terminal()
-                )
-                if not already_exists:
-                    conflict_id = str(uuid.uuid4())
-                    conflict = Conflict(
-                        conflict_id=conflict_id,
-                        category="scope_overlap",
-                        severity="medium",
-                        principal_a=intent.principal_id,
-                        principal_b=other.principal_id,
-                        intent_a=intent_id,
-                        intent_b=other.intent_id,
-                        state_machine=ConflictStateMachine(),
-                        related_intents=[intent_id, other.intent_id],
-                        related_ops=[],
-                    )
-                    self.conflicts[conflict_id] = conflict
-                    responses.append(self._make_envelope(
-                        MessageType.CONFLICT_REPORT.value,
-                        {
-                            "conflict_id": conflict_id,
-                            "category": "scope_overlap",
-                            "severity": "medium",
-                            "principal_a": intent.principal_id,
-                            "principal_b": other.principal_id,
-                            "intent_a": intent_id,
-                            "intent_b": other.intent_id,
-                        },
-                    ))
-
-        return responses
+            return self._detect_scope_overlaps(intent, skip_existing_conflicts=True)
+        return []
 
     def _handle_intent_withdraw(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle INTENT_WITHDRAW (Section 15.5)."""
+        """Withdraw an intent owned by the sender."""
         intent_id = envelope.payload.get("intent_id")
-
-        if intent_id not in self.intents:
+        intent = self.intents.get(intent_id)
+        if intent is None or intent.principal_id != envelope.sender.principal_id:
             return []
-
-        intent = self.intents[intent_id]
-
-        if intent.principal_id != envelope.sender.principal_id:
-            return []
-
         try:
             intent.state_machine.transition("WITHDRAWN")
         except ValueError:
             return []
-
-        cascade_responses = self._cascade_intent_termination(intent_id)
-        dismiss_responses = self._check_auto_dismiss()
-        return cascade_responses + dismiss_responses
+        responses = self._cascade_intent_termination(intent_id)
+        responses.extend(self._check_auto_dismiss())
+        return responses
 
     def _handle_intent_claim(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle INTENT_CLAIM (Section 14.5.4).
-
-        Allows a participant to claim a suspended intent from an unavailable
-        participant, creating a new intent that takes over its scope.
-        """
-        claim_id = envelope.payload.get("claim_id")
+        """Register a claim against a suspended intent."""
         original_intent_id = envelope.payload.get("original_intent_id")
-        new_intent_id = envelope.payload.get("new_intent_id")
-        objective = envelope.payload.get("objective")
-        scope_data = envelope.payload.get("scope")
-        claimer_pid = envelope.sender.principal_id
-
         if original_intent_id not in self.intents:
             return [self._make_protocol_error(
                 "INVALID_REFERENCE",
@@ -638,60 +531,653 @@ class SessionCoordinator:
                 f"Intent {original_intent_id} does not exist",
             )]
 
-        # First-claim-wins: reject if already claimed (check before state)
         if original_intent_id in self.claims:
             return [self._make_protocol_error(
                 "CLAIM_CONFLICT",
                 envelope.message_id,
-                f"Intent {original_intent_id} already claimed by claim {self.claims[original_intent_id]}",
+                f"Intent {original_intent_id} already has an accepted pending claim",
             )]
 
         original = self.intents[original_intent_id]
-
-        # Must be suspended
+        if original.claimed_by is not None and original.state_machine.current_state == IntentState.TRANSFERRED:
+            return [self._make_protocol_error(
+                "CLAIM_CONFLICT",
+                envelope.message_id,
+                f"Intent {original_intent_id} has already been transferred to another claimant",
+            )]
         if original.state_machine.current_state != IntentState.SUSPENDED:
             return [self._make_protocol_error(
                 "INVALID_REFERENCE",
                 envelope.message_id,
-                f"Intent {original_intent_id} is not SUSPENDED (state: {original.state_machine.current_state.value})",
+                f"Intent {original_intent_id} is not SUSPENDED",
             )]
 
-        # Register claim
-        self.claims[original_intent_id] = claim_id
-
-        # Mark original as claimed
-        original.claimed_by = claimer_pid
-
-        # Transition original intent to SUPERSEDED
-        try:
-            original.state_machine.transition("WITHDRAWN")
-        except ValueError:
-            pass
-
-        # Create new intent in ACTIVE state
+        scope_data = envelope.payload.get("scope")
         scope = Scope.from_dict(scope_data) if isinstance(scope_data, dict) else scope_data
-        state_machine = IntentStateMachine()
-        state_machine.transition("ACTIVE")
-
-        now = _now()
-        new_intent = Intent(
-            intent_id=new_intent_id,
-            principal_id=claimer_pid,
-            objective=objective,
+        claim = Claim(
+            claim_id=envelope.payload["claim_id"],
+            original_intent_id=original_intent_id,
+            original_principal_id=envelope.payload["original_principal_id"],
+            new_intent_id=envelope.payload["new_intent_id"],
+            claimer_principal_id=envelope.sender.principal_id,
+            objective=envelope.payload["objective"],
             scope=scope,
-            state_machine=state_machine,
-            received_at=now,
-            last_message_id=envelope.message_id,
+            justification=envelope.payload.get("justification"),
         )
-        self.intents[new_intent_id] = new_intent
+        self.claims[original_intent_id] = claim
+        self.claim_index[claim.claim_id] = claim
+        original.claimed_by = claim.claimer_principal_id
+        return []
+
+    # ================================================================
+    #  Operation layer handlers
+    # ================================================================
+
+    def _handle_op_propose(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
+        """Register a proposed operation."""
+        op = self._register_operation_from_payload(
+            payload=envelope.payload,
+            principal_id=envelope.sender.principal_id,
+            state=OperationState.PROPOSED,
+        )
+        responses = self._validate_operation_against_intent(op)
+        if self.execution_model == "pre_commit" and op.state_machine.current_state == OperationState.PROPOSED:
+            responses.extend(self._authorize_operation(op))
+        return responses
+
+    def _handle_op_commit(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
+        """Handle operation commit according to the session execution model."""
+        payload = envelope.payload
+        op_id = payload.get("op_id")
+
+        if self.execution_model == "pre_commit":
+            operation = self.operations.get(op_id)
+            if operation is None:
+                operation = self._register_operation_from_payload(
+                    payload=payload,
+                    principal_id=envelope.sender.principal_id,
+                    state=OperationState.PROPOSED,
+                )
+                responses = self._validate_operation_against_intent(operation)
+                if operation.state_machine.current_state == OperationState.PROPOSED:
+                    responses.extend(self._authorize_operation(operation))
+                return responses
+
+            if operation.state_machine.current_state == OperationState.FROZEN:
+                return [self._make_protocol_error(
+                    "SCOPE_FROZEN",
+                    envelope.message_id,
+                    f"Operation {op_id} is frozen until its intent is restored",
+                )]
+
+            if operation.authorized_at is None:
+                return [self._make_protocol_error(
+                    "AUTHORIZATION_FAILED",
+                    envelope.message_id,
+                    f"Operation {op_id} has not been authorized for execution",
+                )]
+
+            if operation.state_machine.current_state == OperationState.PROPOSED:
+                operation.state_ref_before = payload.get("state_ref_before")
+                operation.state_ref_after = payload.get("state_ref_after")
+                operation.target = payload.get("target", operation.target)
+                operation.op_kind = payload.get("op_kind", operation.op_kind)
+                operation.state_machine.transition("COMMITTED")
+            return []
+
+        self._commit_operation_entry(payload, envelope.sender.principal_id)
+        return []
+
+    def _handle_op_batch_commit(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
+        """Handle grouped operations that share a single batch envelope."""
+        payload = envelope.payload
+        batch_id = payload.get("batch_id")
+        atomicity = payload.get("atomicity", "all_or_nothing")
+        operations = payload.get("operations", [])
+        intent_id = payload.get("intent_id")
+
+        if not operations:
+            return [self._make_protocol_error(
+                "MALFORMED_MESSAGE",
+                envelope.message_id,
+                f"Batch {batch_id} must contain at least one operation entry",
+            )]
+
+        if self.execution_model == "pre_commit":
+            existing = [self.operations.get(entry["op_id"]) for entry in operations]
+            if all(existing):
+                for op in existing:
+                    if op is None or op.batch_id != batch_id:
+                        return [self._make_protocol_error(
+                            "INVALID_REFERENCE",
+                            envelope.message_id,
+                            f"Batch {batch_id} references unknown or mismatched operations",
+                        )]
+                    if op.authorized_at is None:
+                        return [self._make_protocol_error(
+                            "AUTHORIZATION_FAILED",
+                            envelope.message_id,
+                            f"Batch {batch_id} has not been authorized for execution",
+                        )]
+                for op, entry in zip(existing, operations):
+                    if op is None:
+                        continue
+                    op.state_ref_before = entry.get("state_ref_before")
+                    op.state_ref_after = entry.get("state_ref_after")
+                    if op.state_machine.current_state == OperationState.PROPOSED:
+                        op.state_machine.transition("COMMITTED")
+                return []
+
+            created: List[Operation] = []
+            rejections: List[str] = []
+            for entry in operations:
+                if intent_id is not None and entry.get("intent_id", intent_id) != intent_id:
+                    rejections.append(entry["op_id"])
+                    continue
+                op = self._register_operation_from_payload(
+                    payload={**entry, "intent_id": entry.get("intent_id", intent_id)},
+                    principal_id=envelope.sender.principal_id,
+                    state=OperationState.PROPOSED,
+                    batch_id=batch_id,
+                )
+                created.append(op)
+                if self._validate_operation_against_intent(op):
+                    if op.state_machine.current_state != OperationState.PROPOSED:
+                        rejections.append(op.op_id)
+
+            if atomicity == "all_or_nothing" and rejections:
+                return [self._make_batch_reject(batch_id, rejections, "batch_validation_failed")]
+
+            responses: List[MessageEnvelope] = []
+            for op in created:
+                if op.state_machine.current_state == OperationState.PROPOSED:
+                    responses.extend(self._authorize_operation(op, batch_id=batch_id))
+            return responses
+
+        rejections: List[str] = []
+        responses: List[MessageEnvelope] = []
+        committed_entries: List[Dict[str, Any]] = []
+
+        for entry in operations:
+            effective_entry = {**entry, "intent_id": entry.get("intent_id", intent_id)}
+            if intent_id is not None and effective_entry.get("intent_id") != intent_id:
+                rejections.append(entry["op_id"])
+                continue
+            temp_op = self._build_operation(
+                effective_entry,
+                envelope.sender.principal_id,
+                OperationState.COMMITTED,
+                batch_id=batch_id,
+            )
+            validation_responses = self._validate_operation_against_intent(temp_op, persist=False)
+            if validation_responses:
+                rejections.append(entry["op_id"])
+                responses.extend(validation_responses)
+                continue
+            committed_entries.append(effective_entry)
+
+        if atomicity == "all_or_nothing" and rejections:
+            return [self._make_batch_reject(batch_id, rejections, "batch_validation_failed")]
+
+        for entry in committed_entries:
+            self._commit_operation_entry(entry, envelope.sender.principal_id, batch_id=batch_id)
+
+        if atomicity != "all_or_nothing":
+            responses = [response for response in responses if response.message_type == MessageType.OP_REJECT.value]
+        return responses
+
+    def _handle_op_supersede(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
+        """Supersede a previously committed operation."""
+        payload = envelope.payload
+        supersedes_op_id = payload.get("supersedes_op_id")
+        old_op = self.operations.get(supersedes_op_id)
+        if old_op is None:
+            return [self._make_protocol_error(
+                "INVALID_REFERENCE",
+                envelope.message_id,
+                f"Operation {supersedes_op_id} does not exist",
+            )]
+        if old_op.state_machine.current_state != OperationState.COMMITTED:
+            return [self._make_protocol_error(
+                "INVALID_REFERENCE",
+                envelope.message_id,
+                f"Operation {supersedes_op_id} is not COMMITTED (state: {old_op.state_machine.current_state.value})",
+            )]
+
+        old_op.state_machine.transition("SUPERSEDED")
+        new_op = self._build_operation(
+            {
+                "op_id": payload.get("op_id"),
+                "intent_id": payload.get("intent_id", old_op.intent_id),
+                "target": payload.get("target", old_op.target),
+                "op_kind": payload.get("op_kind", old_op.op_kind),
+                "state_ref_before": old_op.state_ref_after,
+                "state_ref_after": payload.get("state_ref_after"),
+            },
+            envelope.sender.principal_id,
+            OperationState.COMMITTED,
+        )
+        self.operations[new_op.op_id] = new_op
+        self._track_operation_conflicts(new_op.intent_id, new_op.op_id)
+        return []
+
+    # ================================================================
+    #  Conflict layer handlers
+    # ================================================================
+
+    def _handle_conflict_report(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
+        """Register a conflict if it is not already known."""
+        payload = envelope.payload
+        conflict_id = payload.get("conflict_id")
+        if conflict_id not in self.conflicts:
+            self.conflicts[conflict_id] = Conflict(
+                conflict_id=conflict_id,
+                category=payload.get("category", "unknown"),
+                severity=payload.get("severity", "medium"),
+                principal_a=payload.get("principal_a", payload.get("involved_principals", ["", ""])[0]),
+                principal_b=payload.get("principal_b", payload.get("involved_principals", ["", ""])[1] if len(payload.get("involved_principals", [])) > 1 else ""),
+                intent_a=payload.get("intent_a", ""),
+                intent_b=payload.get("intent_b", ""),
+                state_machine=ConflictStateMachine(),
+                related_intents=[value for value in [payload.get("intent_a"), payload.get("intent_b")] if value],
+            )
+        return []
+
+    def _handle_conflict_ack(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
+        """Move an open conflict into ACKED state."""
+        conflict = self.conflicts.get(envelope.payload.get("conflict_id"))
+        if conflict and conflict.state_machine.current_state == ConflictState.OPEN:
+            conflict.state_machine.transition("ACKED")
+        return []
+
+    def _handle_conflict_escalate(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
+        """Escalate a conflict to an explicit target."""
+        conflict = self.conflicts.get(envelope.payload.get("conflict_id"))
+        if conflict is None:
+            return []
+        if conflict.state_machine.current_state == ConflictState.OPEN:
+            conflict.state_machine.transition("ACKED")
+        if conflict.state_machine.current_state == ConflictState.ACKED:
+            conflict.state_machine.transition("ESCALATED")
+        conflict.escalated_to = envelope.payload.get("escalate_to")
+        conflict.escalated_at = _now()
+        return []
+
+    def _handle_resolution(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
+        """Apply the first valid resolution for the conflict's current phase."""
+        payload = envelope.payload
+        conflict_id = payload.get("conflict_id")
+        conflict = self.conflicts.get(conflict_id)
+        if conflict is None:
+            return [self._make_protocol_error(
+                "INVALID_REFERENCE",
+                envelope.message_id,
+                f"Conflict {conflict_id} does not exist",
+            )]
+
+        if conflict.resolution_id is not None or conflict.state_machine.is_terminal():
+            return [self._make_protocol_error(
+                "RESOLUTION_CONFLICT",
+                envelope.message_id,
+                f"Conflict {conflict_id} already has an accepted resolution",
+            )]
+
+        if not self._is_authorized_resolver(conflict, envelope.sender.principal_id):
+            return [self._make_protocol_error(
+                "AUTHORIZATION_FAILED",
+                envelope.message_id,
+                f"Principal {envelope.sender.principal_id} is not authorized to resolve conflict {conflict_id}",
+            )]
+
+        outcome = payload.get("outcome") or {}
+        rejected_ids = outcome.get("rejected", []) if isinstance(outcome, dict) else []
+        committed_rejections = [
+            entity_id
+            for entity_id in rejected_ids
+            if entity_id in self.operations
+            and self.operations[entity_id].state_machine.current_state == OperationState.COMMITTED
+        ]
+        if committed_rejections and not outcome.get("rollback"):
+            return [self._make_protocol_error(
+                "MALFORMED_MESSAGE",
+                envelope.message_id,
+                "Resolutions rejecting committed operations must declare outcome.rollback",
+            )]
+
+        decision = payload.get("decision")
+        if decision == "dismissed":
+            if conflict.state_machine.current_state in (ConflictState.OPEN, ConflictState.ACKED, ConflictState.ESCALATED):
+                conflict.state_machine.transition("DISMISSED")
+        else:
+            if conflict.state_machine.current_state == ConflictState.OPEN:
+                conflict.state_machine.transition("ACKED")
+            if conflict.state_machine.current_state == ConflictState.ACKED:
+                conflict.state_machine.transition("RESOLVED")
+                conflict.state_machine.transition("CLOSED")
+            elif conflict.state_machine.current_state == ConflictState.ESCALATED:
+                conflict.state_machine.transition("RESOLVED")
+                conflict.state_machine.transition("CLOSED")
+
+        conflict.resolution_id = payload.get("resolution_id", str(uuid.uuid4()))
+        conflict.resolved_by = envelope.sender.principal_id
+        return []
+
+    # ================================================================
+    #  Lifecycle cascades
+    # ================================================================
+
+    def _cascade_intent_termination(self, intent_id: str) -> List[MessageEnvelope]:
+        """Reject dependent operations when their intent becomes terminal."""
+        intent = self.intents.get(intent_id)
+        if intent is None:
+            return []
 
         responses: List[MessageEnvelope] = []
+        for operation in list(self.operations.values()):
+            if operation.intent_id != intent_id:
+                continue
+            if operation.state_machine.current_state == OperationState.PROPOSED:
+                operation.state_machine.transition("REJECTED")
+                responses.append(self._make_op_reject(operation.op_id, "intent_terminated", intent.last_message_id))
+            elif operation.state_machine.current_state == OperationState.FROZEN:
+                operation.state_machine.transition("REJECTED")
+                responses.append(self._make_op_reject(operation.op_id, "intent_terminated", intent.last_message_id))
 
-        # Cascade the original intent termination (reject its proposals)
-        responses.extend(self._cascade_intent_termination(original_intent_id))
+        return responses
 
-        # Check scope overlaps for new intent
-        for other in self._find_overlapping_intents(new_intent):
+    def _check_auto_dismiss(self) -> List[MessageEnvelope]:
+        """Dismiss conflicts whose related intents and operations are all terminal."""
+        responses: List[MessageEnvelope] = []
+
+        for conflict in list(self.conflicts.values()):
+            if conflict.state_machine.is_terminal():
+                continue
+
+            all_intents_terminal = all(
+                self.intents.get(intent_id) is None
+                or self.intents[intent_id].state_machine.is_terminal()
+                for intent_id in conflict.related_intents
+            )
+            if not all_intents_terminal:
+                continue
+
+            has_committed = False
+            all_ops_terminal = True
+            for op_id in conflict.related_ops:
+                operation = self.operations.get(op_id)
+                if operation is None:
+                    continue
+                if operation.state_machine.current_state == OperationState.COMMITTED:
+                    has_committed = True
+                    break
+                if operation.state_machine.current_state not in (
+                    OperationState.REJECTED,
+                    OperationState.ABANDONED,
+                    OperationState.SUPERSEDED,
+                ):
+                    all_ops_terminal = False
+                    break
+
+            if has_committed or not all_ops_terminal:
+                continue
+
+            conflict.state_machine.transition("DISMISSED")
+            conflict.resolution_id = str(uuid.uuid4())
+            conflict.resolved_by = self.coordinator_id
+            responses.append(self._make_envelope(
+                MessageType.RESOLUTION.value,
+                {
+                    "resolution_id": conflict.resolution_id,
+                    "conflict_id": conflict.conflict_id,
+                    "decision": "dismissed",
+                    "rationale": "all_related_entities_terminated",
+                },
+            ))
+
+        return responses
+
+    def _handle_participant_unavailable(self, principal_id: str) -> List[MessageEnvelope]:
+        """Suspend active intents and abandon in-flight proposals for an unavailable participant."""
+        responses: List[MessageEnvelope] = [
+            self._make_envelope(
+                MessageType.PROTOCOL_ERROR.value,
+                {
+                    "error_code": "PARTICIPANT_UNAVAILABLE",
+                    "refers_to": principal_id,
+                    "description": f"Participant {principal_id} is unavailable (no heartbeat for >{self.unavailability_timeout_sec}s)",
+                },
+            )
+        ]
+
+        for intent in self.intents.values():
+            if intent.principal_id != principal_id:
+                continue
+            if intent.state_machine.current_state == IntentState.ACTIVE:
+                intent.state_machine.transition("SUSPENDED")
+                for operation in self.operations.values():
+                    if operation.intent_id == intent.intent_id and operation.state_machine.current_state == OperationState.PROPOSED:
+                        operation.state_machine.transition("FROZEN")
+
+        for operation in self.operations.values():
+            if operation.principal_id != principal_id:
+                continue
+            if operation.state_machine.current_state == OperationState.PROPOSED:
+                operation.state_machine.transition("ABANDONED")
+            elif operation.state_machine.current_state == OperationState.FROZEN:
+                operation.state_machine.transition("ABANDONED")
+
+        return responses
+
+    # ================================================================
+    #  Helpers
+    # ================================================================
+
+    def _make_envelope(self, message_type: str, payload: Dict[str, Any]) -> MessageEnvelope:
+        """Create a coordinator-authored envelope."""
+        return MessageEnvelope.create(
+            message_type=message_type,
+            session_id=self.session_id,
+            sender=Sender(
+                principal_id=self.coordinator_id,
+                principal_type="service",
+                sender_instance_id=self.coordinator_instance_id,
+            ),
+            payload={k: v for k, v in payload.items() if v is not None},
+            watermark=self.lamport_clock.create_watermark(),
+            coordinator_epoch=self.coordinator_epoch,
+        )
+
+    def _make_op_reject(self, op_id: str, reason: str, refers_to: Optional[str] = None) -> MessageEnvelope:
+        """Create an OP_REJECT message."""
+        payload: Dict[str, Any] = {"op_id": op_id, "reason": reason}
+        if refers_to:
+            payload["refers_to"] = refers_to
+        return self._make_envelope(MessageType.OP_REJECT.value, payload)
+
+    def _make_batch_reject(self, batch_id: str, rejected_ops: List[str], reason: str) -> MessageEnvelope:
+        """Create an OP_REJECT message for a batch."""
+        return self._make_envelope(
+            MessageType.OP_REJECT.value,
+            {
+                "op_id": batch_id,
+                "reason": reason,
+                "rejected_ops": rejected_ops,
+            },
+        )
+
+    def _make_protocol_error(self, error_code: str, refers_to: Optional[str], description: str) -> MessageEnvelope:
+        """Create a PROTOCOL_ERROR message."""
+        payload: Dict[str, Any] = {
+            "error_code": error_code,
+            "description": description,
+        }
+        if refers_to:
+            payload["refers_to"] = refers_to
+        return self._make_envelope(MessageType.PROTOCOL_ERROR.value, payload)
+
+    def _remember_message_id(self, message_id: str) -> None:
+        """Track recently seen message IDs for snapshot continuity."""
+        self.recent_message_ids.append(message_id)
+        if len(self.recent_message_ids) > 200:
+            self.recent_message_ids = self.recent_message_ids[-200:]
+
+    def _record_sender_frontier(self, envelope: MessageEnvelope) -> None:
+        """Track the latest timestamp and Lamport value seen for each sender incarnation."""
+        key = f"{envelope.sender.principal_id}|{envelope.sender.sender_instance_id}"
+        last_lamport = None
+        if envelope.watermark:
+            if envelope.watermark.kind == "lamport_clock":
+                last_lamport = int(envelope.watermark.value)
+            else:
+                last_lamport = envelope.watermark.lamport_value
+        self.sender_frontier[key] = {
+            "last_ts": envelope.ts,
+            "last_lamport": last_lamport,
+        }
+
+    def _build_operation(
+        self,
+        payload: Dict[str, Any],
+        principal_id: str,
+        state: OperationState,
+        batch_id: Optional[str] = None,
+    ) -> Operation:
+        """Build an internal Operation object from payload data."""
+        state_machine = OperationStateMachine()
+        if state == OperationState.COMMITTED:
+            state_machine.transition("COMMITTED")
+        elif state == OperationState.REJECTED:
+            state_machine.transition("REJECTED")
+        elif state == OperationState.ABANDONED:
+            state_machine.transition("ABANDONED")
+        elif state == OperationState.FROZEN:
+            state_machine.transition("FROZEN")
+
+        return Operation(
+            op_id=payload.get("op_id"),
+            intent_id=payload.get("intent_id", "") or "",
+            principal_id=principal_id,
+            target=payload.get("target", ""),
+            op_kind=payload.get("op_kind", ""),
+            state_machine=state_machine,
+            state_ref_before=payload.get("state_ref_before"),
+            state_ref_after=payload.get("state_ref_after"),
+            batch_id=batch_id,
+        )
+
+    def _register_operation_from_payload(
+        self,
+        payload: Dict[str, Any],
+        principal_id: str,
+        state: OperationState,
+        batch_id: Optional[str] = None,
+    ) -> Operation:
+        """Create and persist an operation object."""
+        operation = self._build_operation(payload, principal_id, state, batch_id=batch_id)
+        self.operations[operation.op_id] = operation
+        self._track_operation_conflicts(operation.intent_id, operation.op_id)
+        return operation
+
+    def _commit_operation_entry(
+        self,
+        payload: Dict[str, Any],
+        principal_id: str,
+        batch_id: Optional[str] = None,
+    ) -> Operation:
+        """Persist a committed operation entry."""
+        op_id = payload.get("op_id")
+        operation = self.operations.get(op_id)
+        if operation is None:
+            operation = self._register_operation_from_payload(
+                payload=payload,
+                principal_id=principal_id,
+                state=OperationState.COMMITTED,
+                batch_id=batch_id,
+            )
+        else:
+            operation.target = payload.get("target", operation.target)
+            operation.op_kind = payload.get("op_kind", operation.op_kind)
+            operation.intent_id = payload.get("intent_id", operation.intent_id)
+            operation.state_ref_before = payload.get("state_ref_before")
+            operation.state_ref_after = payload.get("state_ref_after")
+            if operation.state_machine.current_state == OperationState.PROPOSED:
+                operation.state_machine.transition("COMMITTED")
+        self._track_operation_conflicts(operation.intent_id, op_id)
+        return operation
+
+    def _validate_operation_against_intent(
+        self,
+        operation: Operation,
+        persist: bool = True,
+    ) -> List[MessageEnvelope]:
+        """Apply intent-state rules to an operation."""
+        intent = self.intents.get(operation.intent_id)
+        if intent is None:
+            return []
+
+        if intent.state_machine.is_terminal():
+            if persist and operation.state_machine.current_state == OperationState.PROPOSED:
+                operation.state_machine.transition("REJECTED")
+            return [self._make_op_reject(operation.op_id, "intent_terminated", intent.last_message_id)]
+
+        if intent.state_machine.current_state == IntentState.SUSPENDED:
+            if persist and operation.state_machine.current_state == OperationState.PROPOSED:
+                operation.state_machine.transition("FROZEN")
+            return []
+
+        return []
+
+    def _authorize_operation(self, operation: Operation, batch_id: Optional[str] = None) -> List[MessageEnvelope]:
+        """Mark a proposal as authorized without committing it yet."""
+        if operation.authorized_at is not None:
+            return []
+
+        operation.authorized_at = _now()
+        operation.authorized_by = self.coordinator_id
+        payload: Dict[str, Any] = {
+            "event": "authorization",
+            "authorized_op_id": operation.op_id,
+            "authorized_by": operation.authorized_by,
+        }
+        if batch_id is not None:
+            payload["authorized_batch_id"] = batch_id
+        return [self._make_envelope(MessageType.COORDINATOR_STATUS.value, payload)]
+
+    def _track_operation_conflicts(self, intent_id: str, op_id: str) -> None:
+        """Associate an operation with conflicts involving the same intent."""
+        if not intent_id:
+            return
+        for conflict in self.conflicts.values():
+            if intent_id in (conflict.intent_a, conflict.intent_b) and op_id not in conflict.related_ops:
+                conflict.related_ops.append(op_id)
+
+    def _detect_scope_overlaps(
+        self,
+        new_intent: Intent,
+        skip_existing_conflicts: bool = False,
+    ) -> List[MessageEnvelope]:
+        """Create conflicts for overlapping active or suspended intents."""
+        responses: List[MessageEnvelope] = []
+
+        for other in self.intents.values():
+            if other.intent_id == new_intent.intent_id:
+                continue
+            if other.state_machine.current_state not in (IntentState.ACTIVE, IntentState.SUSPENDED):
+                continue
+            if not scope_overlap(new_intent.scope, other.scope):
+                continue
+
+            if skip_existing_conflicts and any(
+                (
+                    conflict.intent_a == new_intent.intent_id and conflict.intent_b == other.intent_id
+                ) or (
+                    conflict.intent_b == new_intent.intent_id and conflict.intent_a == other.intent_id
+                )
+                for conflict in self.conflicts.values()
+                if not conflict.state_machine.is_terminal()
+            ):
+                continue
+
             conflict_id = str(uuid.uuid4())
             conflict = Conflict(
                 conflict_id=conflict_id,
@@ -699,11 +1185,10 @@ class SessionCoordinator:
                 severity="medium",
                 principal_a=new_intent.principal_id,
                 principal_b=other.principal_id,
-                intent_a=new_intent_id,
+                intent_a=new_intent.intent_id,
                 intent_b=other.intent_id,
                 state_machine=ConflictStateMachine(),
-                related_intents=[new_intent_id, other.intent_id],
-                related_ops=[],
+                related_intents=[new_intent.intent_id, other.intent_id],
             )
             self.conflicts[conflict_id] = conflict
             responses.append(self._make_envelope(
@@ -714,602 +1199,321 @@ class SessionCoordinator:
                     "severity": "medium",
                     "principal_a": new_intent.principal_id,
                     "principal_b": other.principal_id,
-                    "intent_a": new_intent_id,
+                    "intent_a": new_intent.intent_id,
                     "intent_b": other.intent_id,
                 },
             ))
 
         return responses
 
-    # ================================================================
-    #  Operation layer handlers
-    # ================================================================
-
-    def _handle_op_propose(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle OP_PROPOSE (Section 16.1)."""
-        op_id = envelope.payload.get("op_id")
-        intent_id = envelope.payload.get("intent_id")
-        target = envelope.payload.get("target")
-        op_kind = envelope.payload.get("op_kind")
-
-        state_machine = OperationStateMachine()
-        operation = Operation(
-            op_id=op_id,
-            intent_id=intent_id,
-            principal_id=envelope.sender.principal_id,
-            target=target,
-            op_kind=op_kind,
-            state_machine=state_machine,
-        )
-        self.operations[op_id] = operation
-
-        # Track operation in related conflicts
-        for conflict in self.conflicts.values():
-            if intent_id in (conflict.intent_a, conflict.intent_b):
-                if op_id not in conflict.related_ops:
-                    conflict.related_ops.append(op_id)
-
-        responses = []
-
-        if intent_id in self.intents:
-            intent = self.intents[intent_id]
-            if intent.state_machine.is_terminal():
-                state_machine.transition("REJECTED")
-                responses.append(self._make_op_reject(
-                    op_id, "intent_terminated", intent.last_message_id,
-                ))
-            elif intent.state_machine.current_state == IntentState.SUSPENDED:
-                state_machine.transition("FROZEN")
-
-        return responses
-
-    def _handle_op_commit(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle OP_COMMIT (Section 16.2)."""
-        op_id = envelope.payload.get("op_id")
-        intent_id = envelope.payload.get("intent_id")
-        state_ref_before = envelope.payload.get("state_ref_before")
-        state_ref_after = envelope.payload.get("state_ref_after")
-
-        if op_id in self.operations:
-            operation = self.operations[op_id]
-            operation.state_ref_before = state_ref_before
-            operation.state_ref_after = state_ref_after
-            operation.state_machine.transition("COMMITTED")
-        else:
-            state_machine = OperationStateMachine()
-            operation = Operation(
-                op_id=op_id,
-                intent_id=intent_id or "",
-                principal_id=envelope.sender.principal_id,
-                target=envelope.payload.get("target", ""),
-                op_kind=envelope.payload.get("op_kind", ""),
-                state_machine=state_machine,
-                state_ref_before=state_ref_before,
-                state_ref_after=state_ref_after,
-            )
-            state_machine.transition("COMMITTED")
-            self.operations[op_id] = operation
-
-            if intent_id:
-                for conflict in self.conflicts.values():
-                    if intent_id in (conflict.intent_a, conflict.intent_b):
-                        if op_id not in conflict.related_ops:
-                            conflict.related_ops.append(op_id)
-
-        return []
-
-    def _handle_op_supersede(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle OP_SUPERSEDE (Section 16.5).
-
-        Marks a previously committed operation as superseded by a new one.
-        """
-        op_id = envelope.payload.get("op_id")
-        supersedes_op_id = envelope.payload.get("supersedes_op_id")
-        intent_id = envelope.payload.get("intent_id")
-        target = envelope.payload.get("target")
-        reason = envelope.payload.get("reason")
-
-        # Validate the superseded operation exists and is COMMITTED
-        if supersedes_op_id not in self.operations:
-            return [self._make_protocol_error(
-                "INVALID_REFERENCE",
-                envelope.message_id,
-                f"Operation {supersedes_op_id} does not exist",
-            )]
-
-        old_op = self.operations[supersedes_op_id]
-        if old_op.state_machine.current_state != OperationState.COMMITTED:
-            return [self._make_protocol_error(
-                "INVALID_REFERENCE",
-                envelope.message_id,
-                f"Operation {supersedes_op_id} is not COMMITTED (state: {old_op.state_machine.current_state.value})",
-            )]
-
-        # Transition the old operation to SUPERSEDED
-        old_op.state_machine.transition("SUPERSEDED")
-
-        # Create the new operation as COMMITTED directly
-        state_machine = OperationStateMachine()
-        new_op = Operation(
-            op_id=op_id,
-            intent_id=intent_id or old_op.intent_id,
-            principal_id=envelope.sender.principal_id,
-            target=target or old_op.target,
-            op_kind=envelope.payload.get("op_kind", old_op.op_kind),
-            state_machine=state_machine,
-            state_ref_before=old_op.state_ref_after,  # chain state refs
-            state_ref_after=envelope.payload.get("state_ref_after"),
-        )
-        state_machine.transition("COMMITTED")
-        self.operations[op_id] = new_op
-
-        # Track in related conflicts
-        effective_intent_id = intent_id or old_op.intent_id
-        if effective_intent_id:
-            for conflict in self.conflicts.values():
-                if effective_intent_id in (conflict.intent_a, conflict.intent_b):
-                    if op_id not in conflict.related_ops:
-                        conflict.related_ops.append(op_id)
-
-        return []
-
-    # ================================================================
-    #  Conflict layer handlers
-    # ================================================================
-
-    def _handle_conflict_report(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle CONFLICT_REPORT."""
-        conflict_id = envelope.payload.get("conflict_id")
-
-        if conflict_id not in self.conflicts:
-            conflict = Conflict(
-                conflict_id=conflict_id,
-                category=envelope.payload.get("category", "unknown"),
-                severity=envelope.payload.get("severity", "medium"),
-                principal_a=envelope.payload.get("principal_a", ""),
-                principal_b=envelope.payload.get("principal_b", ""),
-                intent_a=envelope.payload.get("intent_a", ""),
-                intent_b=envelope.payload.get("intent_b", ""),
-                state_machine=ConflictStateMachine(),
-                related_intents=[
-                    x for x in [
-                        envelope.payload.get("intent_a"),
-                        envelope.payload.get("intent_b"),
-                    ] if x
-                ],
-            )
-            self.conflicts[conflict_id] = conflict
-
-        return []
-
-    def _handle_conflict_ack(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle CONFLICT_ACK (Section 17.3).
-
-        Transitions conflict from OPEN → ACKED.
-        """
-        conflict_id = envelope.payload.get("conflict_id")
-
-        if conflict_id not in self.conflicts:
-            return []
-
-        conflict = self.conflicts[conflict_id]
-
-        if conflict.state_machine.current_state == ConflictState.OPEN:
-            conflict.state_machine.transition("ACKED")
-
-        return []
-
-    def _handle_conflict_escalate(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle CONFLICT_ESCALATE (Section 17.5).
-
-        Transitions conflict to ESCALATED and records escalation target.
-        """
-        conflict_id = envelope.payload.get("conflict_id")
-        escalate_to = envelope.payload.get("escalate_to")
-
-        if conflict_id not in self.conflicts:
-            return []
-
-        conflict = self.conflicts[conflict_id]
-
-        try:
-            if conflict.state_machine.current_state == ConflictState.OPEN:
-                conflict.state_machine.transition("ACKED")
-            if conflict.state_machine.current_state == ConflictState.ACKED:
-                conflict.state_machine.transition("ESCALATED")
-        except ValueError:
-            return []
-
-        conflict.escalated_to = escalate_to
-        conflict.escalated_at = _now()
-
-        return []
-
-    def _handle_resolution(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle RESOLUTION (Section 17.7)."""
-        conflict_id = envelope.payload.get("conflict_id")
-        decision = envelope.payload.get("decision")
-
-        if conflict_id not in self.conflicts:
-            return []
-
-        conflict = self.conflicts[conflict_id]
-
-        # Handle from any non-terminal state
-        if conflict.state_machine.is_terminal():
-            return []
-
-        if decision == "dismissed":
-            # Direct dismiss from any open state
-            state = conflict.state_machine.current_state
-            if state == ConflictState.OPEN:
-                conflict.state_machine.transition("DISMISSED")
-            elif state == ConflictState.ACKED:
-                conflict.state_machine.transition("DISMISSED")
-            elif state == ConflictState.ESCALATED:
-                conflict.state_machine.transition("DISMISSED")
-        else:
-            # Resolve → Close
-            state = conflict.state_machine.current_state
-            if state == ConflictState.OPEN:
-                conflict.state_machine.transition("ACKED")
-            if conflict.state_machine.current_state == ConflictState.ACKED:
-                conflict.state_machine.transition("RESOLVED")
-                conflict.state_machine.transition("CLOSED")
-            elif conflict.state_machine.current_state == ConflictState.ESCALATED:
-                conflict.state_machine.transition("RESOLVED")
-                conflict.state_machine.transition("CLOSED")
-
-        return []
-
-    # ================================================================
-    #  Intent Expiry Cascade (Section 15.7)
-    # ================================================================
-
-    def _cascade_intent_termination(self, intent_id: str) -> List[MessageEnvelope]:
-        """Cascade intent termination to dependent operations."""
-        intent = self.intents.get(intent_id)
-        if intent is None:
-            return []
-
+    def _handle_owner_rejoin(self, principal_id: str) -> List[MessageEnvelope]:
+        """Restore suspended work when an original owner returns."""
         responses: List[MessageEnvelope] = []
 
-        for operation in list(self.operations.values()):
-            if operation.intent_id != intent_id:
+        for original_intent_id, claim in list(self.claims.items()):
+            if claim.original_principal_id != principal_id or claim.decision != "pending":
                 continue
+            responses.extend(self._withdraw_claim(claim, "original_owner_rejoined"))
 
-            current = operation.state_machine.current_state
-            if current == OperationState.PROPOSED:
-                operation.state_machine.transition("REJECTED")
-                responses.append(self._make_op_reject(
-                    operation.op_id, "intent_terminated", intent.last_message_id,
-                ))
-            elif current == OperationState.FROZEN:
-                operation.state_machine.transition("REJECTED")
-                responses.append(self._make_op_reject(
-                    operation.op_id, "intent_terminated", intent.last_message_id,
-                ))
-
-        return responses
-
-    # ================================================================
-    #  Conflict Auto-Dismissal (Section 17.9)
-    # ================================================================
-
-    def _check_auto_dismiss(self) -> List[MessageEnvelope]:
-        """Auto-dismiss conflicts where all related entities are terminal."""
-        responses: List[MessageEnvelope] = []
-
-        for conflict in list(self.conflicts.values()):
-            if conflict.state_machine.is_terminal():
-                continue
-
-            all_intents_terminal = all(
-                self.intents.get(iid) is None or self.intents[iid].state_machine.is_terminal()
-                for iid in conflict.related_intents
-            )
-            if not all_intents_terminal:
-                continue
-
-            has_committed = False
-            all_ops_terminal = True
-            for oid in conflict.related_ops:
-                op = self.operations.get(oid)
-                if op is None:
-                    continue
-                if op.state_machine.current_state == OperationState.COMMITTED:
-                    has_committed = True
-                    break
-                if not op.state_machine.is_terminal():
-                    all_ops_terminal = False
-                    break
-
-            if has_committed or not all_ops_terminal:
-                continue
-
-            try:
-                conflict.state_machine.transition("DISMISSED")
-            except ValueError:
-                continue
-
-            responses.append(self._make_envelope(
-                MessageType.RESOLUTION.value,
-                {
-                    "conflict_id": conflict.conflict_id,
-                    "decision": "dismissed",
-                    "rationale": "all_related_entities_terminated",
-                },
-            ))
-
-        return responses
-
-    # ================================================================
-    #  Liveness cascade
-    # ================================================================
-
-    def _handle_participant_unavailable(self, principal_id: str) -> List[MessageEnvelope]:
-        """Handle a participant becoming unavailable (Section 14.5).
-
-        - Broadcast PROTOCOL_ERROR(PARTICIPANT_UNAVAILABLE)
-        - Suspend their active intents
-        - Abandon their in-flight proposals
-        """
-        responses: List[MessageEnvelope] = []
-
-        # Broadcast unavailability
-        responses.append(self._make_envelope(
-            MessageType.PROTOCOL_ERROR.value,
-            {
-                "error_code": "PARTICIPANT_UNAVAILABLE",
-                "refers_to": principal_id,
-                "description": f"Participant {principal_id} is unavailable (no heartbeat for >{self.unavailability_timeout_sec}s)",
-            },
-        ))
-
-        # Suspend active intents (Section 14.5.2)
         for intent in self.intents.values():
-            if (
-                intent.principal_id == principal_id
-                and intent.state_machine.current_state == IntentState.ACTIVE
-            ):
-                intent.state_machine.transition("SUSPENDED")
-
-                # Freeze any PROPOSED operations referencing this intent
-                for op in self.operations.values():
-                    if (
-                        op.intent_id == intent.intent_id
-                        and op.state_machine.current_state == OperationState.PROPOSED
-                    ):
-                        op.state_machine.transition("FROZEN")
-
-        # Abandon orphaned proposals from this participant (Section 14.5.3)
-        for op in self.operations.values():
-            if op.principal_id != principal_id:
+            if intent.principal_id != principal_id:
                 continue
-            if op.state_machine.current_state == OperationState.PROPOSED:
-                op.state_machine.transition("ABANDONED")
-            elif op.state_machine.current_state == OperationState.FROZEN:
-                op.state_machine.transition("ABANDONED")
+            if intent.state_machine.current_state == IntentState.SUSPENDED and intent.claimed_by is None:
+                intent.state_machine.transition("ACTIVE")
+                for operation in self.operations.values():
+                    if operation.intent_id == intent.intent_id and operation.state_machine.current_state == OperationState.FROZEN:
+                        operation.state_machine.transition("PROPOSED")
 
         return responses
-
-    # ================================================================
-    #  Helpers
-    # ================================================================
-
-    def _make_envelope(self, message_type: str, payload: Dict[str, Any]) -> MessageEnvelope:
-        """Create a coordinator-originated envelope."""
-        return MessageEnvelope.create(
-            message_type=message_type,
-            session_id=self.session_id,
-            sender=Sender(principal_id="coordinator", principal_type="coordinator"),
-            payload=payload,
-            watermark=self.lamport_clock.create_watermark(),
-        )
-
-    def _make_op_reject(self, op_id: str, reason: str, refers_to: Optional[str] = None) -> MessageEnvelope:
-        """Create OP_REJECT envelope."""
-        payload: Dict[str, Any] = {"op_id": op_id, "reason": reason}
-        if refers_to:
-            payload["refers_to"] = refers_to
-        return self._make_envelope(MessageType.OP_REJECT.value, payload)
-
-    def _make_protocol_error(self, error_code: str, refers_to: Optional[str], description: str) -> MessageEnvelope:
-        """Create PROTOCOL_ERROR envelope."""
-        payload: Dict[str, Any] = {
-            "error_code": error_code,
-            "description": description,
-        }
-        if refers_to:
-            payload["refers_to"] = refers_to
-        return self._make_envelope(MessageType.PROTOCOL_ERROR.value, payload)
-
-    def _find_overlapping_intents(self, new_intent: Intent) -> List[Intent]:
-        """Find active intents that overlap with new intent."""
-        overlapping = []
-        for intent_id, intent in self.intents.items():
-            if intent_id == new_intent.intent_id:
-                continue
-            # ACTIVE and SUSPENDED scopes are considered occupied
-            if intent.state_machine.current_state not in (IntentState.ACTIVE, IntentState.SUSPENDED):
-                continue
-            if scope_overlap(new_intent.scope, intent.scope):
-                overlapping.append(intent)
-        return overlapping
 
     def _find_arbiter(self) -> Optional[str]:
-        """Find an available arbiter principal."""
+        """Return the first available arbiter."""
         for pid, info in self.participants.items():
-            if not info.is_available:
-                continue
-            if "arbiter" in info.principal.roles:
+            if info.is_available and "arbiter" in info.principal.roles:
                 return pid
         return None
 
+    def _find_claim_approver(self, claimer_principal_id: str) -> Optional[str]:
+        """Return the first available owner or arbiter for governance approval."""
+        for pid, info in self.participants.items():
+            if pid == claimer_principal_id or not info.is_available:
+                continue
+            roles = set(info.principal.roles or [])
+            if "owner" in roles or "arbiter" in roles:
+                return pid
+        return None
+
+    def _approve_claim(self, claim: Claim, approved_by: Optional[str]) -> List[MessageEnvelope]:
+        """Approve a pending claim and activate the replacement intent."""
+        original = self.intents.get(claim.original_intent_id)
+        if original is None:
+            return self._reject_claim(claim, "original_intent_missing")
+
+        claim.decision = "approved"
+        claim.approved_by = approved_by
+        original.claimed_by = claim.claimer_principal_id
+        if original.state_machine.current_state == IntentState.SUSPENDED:
+            original.state_machine.transition("TRANSFERRED")
+
+        state_machine = IntentStateMachine()
+        state_machine.transition("ACTIVE")
+        new_intent = Intent(
+            intent_id=claim.new_intent_id,
+            principal_id=claim.claimer_principal_id,
+            objective=claim.objective,
+            scope=claim.scope,
+            state_machine=state_machine,
+            last_message_id=claim.claim_id,
+        )
+        self.intents[claim.new_intent_id] = new_intent
+
+        responses = [
+            self._make_envelope(
+                MessageType.INTENT_CLAIM_STATUS.value,
+                {
+                    "claim_id": claim.claim_id,
+                    "original_intent_id": claim.original_intent_id,
+                    "new_intent_id": claim.new_intent_id,
+                    "decision": "approved",
+                    "approved_by": approved_by,
+                },
+            )
+        ]
+        responses.extend(self._cascade_intent_termination(claim.original_intent_id))
+        responses.extend(self._detect_scope_overlaps(new_intent))
+        del self.claims[claim.original_intent_id]
+        return responses
+
+    def _reject_claim(self, claim: Claim, reason: str) -> List[MessageEnvelope]:
+        """Reject a pending claim while keeping the original intent suspended."""
+        claim.decision = "rejected"
+        if claim.original_intent_id in self.claims:
+            del self.claims[claim.original_intent_id]
+        return [
+            self._make_envelope(
+                MessageType.INTENT_CLAIM_STATUS.value,
+                {
+                    "claim_id": claim.claim_id,
+                    "original_intent_id": claim.original_intent_id,
+                    "decision": "rejected",
+                    "reason": reason,
+                },
+            )
+        ]
+
+    def _withdraw_claim(self, claim: Claim, reason: str) -> List[MessageEnvelope]:
+        """Withdraw a pending claim because the original owner returned."""
+        original = self.intents.get(claim.original_intent_id)
+        if original and original.state_machine.current_state == IntentState.SUSPENDED:
+            original.claimed_by = None
+            original.state_machine.transition("ACTIVE")
+            for operation in self.operations.values():
+                if operation.intent_id == original.intent_id and operation.state_machine.current_state == OperationState.FROZEN:
+                    operation.state_machine.transition("PROPOSED")
+
+        claim.decision = "withdrawn"
+        if claim.original_intent_id in self.claims:
+            del self.claims[claim.original_intent_id]
+        return [
+            self._make_envelope(
+                MessageType.INTENT_CLAIM_STATUS.value,
+                {
+                    "claim_id": claim.claim_id,
+                    "original_intent_id": claim.original_intent_id,
+                    "decision": "withdrawn",
+                    "reason": reason,
+                },
+            )
+        ]
+
+    def _is_authorized_resolver(self, conflict: Conflict, principal_id: str) -> bool:
+        """Check whether a resolver is valid for the conflict's current authority phase."""
+        if principal_id == self.coordinator_id:
+            return True
+
+        info = self.participants.get(principal_id)
+        roles = set(info.principal.roles if info else [])
+        related_principal = principal_id in {conflict.principal_a, conflict.principal_b}
+
+        if conflict.state_machine.current_state == ConflictState.ESCALATED:
+            return principal_id == conflict.escalated_to or "arbiter" in roles
+
+        return related_principal or "owner" in roles or "arbiter" in roles
+
     # ================================================================
-    #  Fault Recovery (Section 8.1.1)
+    #  Fault recovery
     # ================================================================
 
     def recover_from_snapshot(self, snapshot_data: Dict[str, Any]) -> None:
-        """Restore coordinator state from a snapshot (Section 8.1.1.3).
-
-        Reconstructs all internal state from a previously captured snapshot.
-        After recovery, the audit log should be replayed for any messages
-        received after the snapshot was taken.
-        """
-        # Restore lamport clock
-        self.lamport_clock = LamportClock()
-        self.lamport_clock.reset(snapshot_data.get("lamport_clock", 0))
-
-        # Restore session state
+        """Restore coordinator state from a snapshot."""
+        self.lamport_clock = LamportClock(snapshot_data.get("lamport_clock", 0))
         self.session_closed = snapshot_data.get("session_closed", False)
+        self.coordinator_epoch = int(snapshot_data.get("coordinator_epoch", 1)) + 1
+        self.coordinator_instance_id = f"{self.coordinator_id}:epoch-{self.coordinator_epoch}"
 
-        # Restore participants
+        anti_replay = snapshot_data.get("anti_replay", {})
+        self.recent_message_ids = list(anti_replay.get("recent_message_ids", []))
+        self.sender_frontier = dict(anti_replay.get("sender_frontier", {}))
+
         self.participants.clear()
-        for p_data in snapshot_data.get("participants", []):
+        for participant in snapshot_data.get("participants", []):
             principal = Principal(
-                principal_id=p_data["principal_id"],
-                principal_type="agent",  # default; snapshot doesn't store type
-                display_name=p_data.get("display_name", ""),
-                roles=p_data.get("roles", ["participant"]),
+                principal_id=participant["principal_id"],
+                principal_type=participant.get("principal_type", "agent"),
+                display_name=participant.get("display_name", ""),
+                roles=participant.get("roles", ["participant"]),
+                capabilities=participant.get("capabilities", []),
             )
-            self.participants[p_data["principal_id"]] = ParticipantInfo(
+            self.participants[principal.principal_id] = ParticipantInfo(
                 principal=principal,
-                last_seen=datetime.fromisoformat(p_data["last_seen"]) if isinstance(p_data.get("last_seen"), str) else _now(),
-                status=p_data.get("status", "idle"),
-                is_available=p_data.get("is_available", True),
+                last_seen=_parse_dt(participant.get("last_seen")) or _now(),
+                status=participant.get("status", "idle"),
+                is_available=participant.get("is_available", True),
             )
 
-        # Restore intents
         self.intents.clear()
-        for i_data in snapshot_data.get("intents", []):
-            state_str = i_data.get("state", "ACTIVE")
-            initial_state = IntentState.ANNOUNCED
-            sm = IntentStateMachine(initial_state)
-            # Walk to target state
-            if state_str == "ACTIVE":
-                sm.transition("ACTIVE")
-            elif state_str == "EXPIRED":
-                sm.transition("ACTIVE")
-                sm.transition("EXPIRED")
-            elif state_str == "WITHDRAWN":
-                sm.transition("ACTIVE")
-                sm.transition("WITHDRAWN")
-            elif state_str == "SUPERSEDED":
-                sm.transition("ACTIVE")
-                sm.transition("SUPERSEDED")
-            elif state_str == "SUSPENDED":
-                sm.transition("ACTIVE")
-                sm.transition("SUSPENDED")
+        for intent_data in snapshot_data.get("intents", []):
+            state_machine = IntentStateMachine(IntentState.ANNOUNCED)
+            target_state = intent_data.get("state", "ACTIVE")
+            if target_state == "ACTIVE":
+                state_machine.transition("ACTIVE")
+            elif target_state == "EXPIRED":
+                state_machine.transition("ACTIVE")
+                state_machine.transition("EXPIRED")
+            elif target_state == "WITHDRAWN":
+                state_machine.transition("ACTIVE")
+                state_machine.transition("WITHDRAWN")
+            elif target_state == "SUPERSEDED":
+                state_machine.transition("ACTIVE")
+                state_machine.transition("SUPERSEDED")
+            elif target_state == "SUSPENDED":
+                state_machine.transition("ACTIVE")
+                state_machine.transition("SUSPENDED")
+            elif target_state == "TRANSFERRED":
+                state_machine.transition("ACTIVE")
+                state_machine.transition("TRANSFERRED")
 
-            scope_data = i_data.get("scope", {})
-            scope = Scope.from_dict(scope_data) if isinstance(scope_data, dict) else Scope(kind="file_set")
-
-            expires_at = None
-            if i_data.get("expires_at"):
-                try:
-                    expires_at = datetime.fromisoformat(i_data["expires_at"])
-                except (ValueError, TypeError):
-                    pass
-
-            intent = Intent(
-                intent_id=i_data["intent_id"],
-                principal_id=i_data.get("principal_id", ""),
-                objective=i_data.get("objective", ""),
+            scope_data = intent_data.get("scope", {"kind": "file_set"})
+            scope = Scope.from_dict(scope_data) if isinstance(scope_data, dict) else scope_data
+            self.intents[intent_data["intent_id"]] = Intent(
+                intent_id=intent_data["intent_id"],
+                principal_id=intent_data.get("principal_id", ""),
+                objective=intent_data.get("objective", ""),
                 scope=scope,
-                state_machine=sm,
-                expires_at=expires_at,
+                state_machine=state_machine,
+                received_at=_parse_dt(intent_data.get("received_at")) or _now(),
+                ttl_sec=intent_data.get("ttl_sec"),
+                expires_at=_parse_dt(intent_data.get("expires_at")),
+                last_message_id=intent_data.get("last_message_id"),
+                claimed_by=intent_data.get("claimed_by"),
             )
-            self.intents[i_data["intent_id"]] = intent
 
-        # Restore operations
         self.operations.clear()
-        for o_data in snapshot_data.get("operations", []):
-            state_str = o_data.get("state", "PROPOSED")
-            sm = OperationStateMachine()
-            if state_str == "COMMITTED":
-                sm.transition("COMMITTED")
-            elif state_str == "REJECTED":
-                sm.transition("REJECTED")
-            elif state_str == "ABANDONED":
-                sm.transition("ABANDONED")
-            elif state_str == "FROZEN":
-                sm.transition("FROZEN")
-            elif state_str == "SUPERSEDED":
-                sm.transition("COMMITTED")
-                sm.transition("SUPERSEDED")
+        for op_data in snapshot_data.get("operations", []):
+            state_machine = OperationStateMachine()
+            target_state = op_data.get("state", "PROPOSED")
+            if target_state == "COMMITTED":
+                state_machine.transition("COMMITTED")
+            elif target_state == "REJECTED":
+                state_machine.transition("REJECTED")
+            elif target_state == "ABANDONED":
+                state_machine.transition("ABANDONED")
+            elif target_state == "FROZEN":
+                state_machine.transition("FROZEN")
+            elif target_state == "SUPERSEDED":
+                state_machine.transition("COMMITTED")
+                state_machine.transition("SUPERSEDED")
 
-            op = Operation(
-                op_id=o_data["op_id"],
-                intent_id=o_data.get("intent_id", ""),
-                principal_id=o_data.get("principal_id", ""),
-                target=o_data.get("target", ""),
-                op_kind=o_data.get("op_kind", ""),
-                state_machine=sm,
+            self.operations[op_data["op_id"]] = Operation(
+                op_id=op_data["op_id"],
+                intent_id=op_data.get("intent_id", ""),
+                principal_id=op_data.get("principal_id", ""),
+                target=op_data.get("target", ""),
+                op_kind=op_data.get("op_kind", ""),
+                state_machine=state_machine,
+                state_ref_before=op_data.get("state_ref_before"),
+                state_ref_after=op_data.get("state_ref_after"),
+                batch_id=op_data.get("batch_id"),
+                authorized_at=_parse_dt(op_data.get("authorized_at")),
+                authorized_by=op_data.get("authorized_by"),
+                created_at=_parse_dt(op_data.get("created_at")) or _now(),
             )
-            self.operations[o_data["op_id"]] = op
 
-        # Restore conflicts
         self.conflicts.clear()
-        for c_data in snapshot_data.get("conflicts", []):
-            state_str = c_data.get("state", "OPEN")
-            sm = ConflictStateMachine()
-            if state_str == "ACKED":
-                sm.transition("ACKED")
-            elif state_str == "ESCALATED":
-                sm.transition("ACKED")
-                sm.transition("ESCALATED")
-            elif state_str == "RESOLVED":
-                sm.transition("ACKED")
-                sm.transition("RESOLVED")
-            elif state_str == "CLOSED":
-                sm.transition("ACKED")
-                sm.transition("RESOLVED")
-                sm.transition("CLOSED")
-            elif state_str == "DISMISSED":
-                sm.transition("DISMISSED")
+        for conflict_data in snapshot_data.get("conflicts", []):
+            state_machine = ConflictStateMachine()
+            target_state = conflict_data.get("state", "OPEN")
+            if target_state == "ACKED":
+                state_machine.transition("ACKED")
+            elif target_state == "ESCALATED":
+                state_machine.transition("ACKED")
+                state_machine.transition("ESCALATED")
+            elif target_state == "RESOLVED":
+                state_machine.transition("ACKED")
+                state_machine.transition("RESOLVED")
+            elif target_state == "CLOSED":
+                state_machine.transition("ACKED")
+                state_machine.transition("RESOLVED")
+                state_machine.transition("CLOSED")
+            elif target_state == "DISMISSED":
+                state_machine.transition("DISMISSED")
 
-            conflict = Conflict(
-                conflict_id=c_data["conflict_id"],
-                category=c_data.get("category", "scope_overlap"),
-                severity=c_data.get("severity", "medium"),
-                principal_a=c_data.get("principal_a", ""),
-                principal_b=c_data.get("principal_b", ""),
-                intent_a=c_data.get("intent_a", ""),
-                intent_b=c_data.get("intent_b", ""),
-                state_machine=sm,
-                related_intents=c_data.get("related_intents", []),
-                related_ops=c_data.get("related_ops", []),
+            self.conflicts[conflict_data["conflict_id"]] = Conflict(
+                conflict_id=conflict_data["conflict_id"],
+                category=conflict_data.get("category", "scope_overlap"),
+                severity=conflict_data.get("severity", "medium"),
+                principal_a=conflict_data.get("principal_a", ""),
+                principal_b=conflict_data.get("principal_b", ""),
+                intent_a=conflict_data.get("intent_a", ""),
+                intent_b=conflict_data.get("intent_b", ""),
+                state_machine=state_machine,
+                related_intents=conflict_data.get("related_intents", []),
+                related_ops=conflict_data.get("related_ops", []),
+                created_at=_parse_dt(conflict_data.get("created_at")) or _now(),
+                escalated_to=conflict_data.get("escalated_to"),
+                escalated_at=_parse_dt(conflict_data.get("escalated_at")),
+                resolution_id=conflict_data.get("resolution_id"),
+                resolved_by=conflict_data.get("resolved_by"),
             )
-            self.conflicts[c_data["conflict_id"]] = conflict
+
+        self.claims.clear()
+        self.claim_index.clear()
+        for claim_data in snapshot_data.get("pending_claims", []):
+            scope_data = claim_data.get("scope", {"kind": "file_set"})
+            scope = Scope.from_dict(scope_data) if isinstance(scope_data, dict) else scope_data
+            claim = Claim(
+                claim_id=claim_data["claim_id"],
+                original_intent_id=claim_data["original_intent_id"],
+                original_principal_id=claim_data.get("original_principal_id", ""),
+                new_intent_id=claim_data["new_intent_id"],
+                claimer_principal_id=claim_data["claimer_principal_id"],
+                objective=claim_data.get("objective", ""),
+                scope=scope,
+                justification=claim_data.get("justification"),
+                submitted_at=_parse_dt(claim_data.get("submitted_at")) or _now(),
+                decision=claim_data.get("decision", "pending"),
+                approved_by=claim_data.get("approved_by"),
+            )
+            self.claims[claim.original_intent_id] = claim
+            self.claim_index[claim.claim_id] = claim
 
     def replay_audit_log(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Replay audit log messages after snapshot recovery (Section 8.1.1.3).
-
-        Processes a list of messages that were received after the snapshot
-        was taken, in order. Returns all responses generated.
-        """
-        all_responses: List[Dict[str, Any]] = []
-        for msg in messages:
-            responses = self.process_message(msg)
-            all_responses.extend(responses)
-        return all_responses
+        """Replay messages captured after a snapshot."""
+        responses: List[Dict[str, Any]] = []
+        for message in messages:
+            responses.extend(self.process_message(message))
+        return responses
 
     # ================================================================
-    #  Session lifecycle (Section 9.6)
+    #  Session lifecycle
     # ================================================================
 
     def close_session(self, reason: str = "manual") -> List[Dict[str, Any]]:
-        """Close the session (Section 9.6 / 14.5).
-
-        Called externally to close the session. Generates SESSION_CLOSE message.
-        """
+        """Close the session and emit a SESSION_CLOSE message."""
         if self.session_closed:
             return []
 
         self.session_closed = True
-
-        # Withdraw all active intents
         for intent in self.intents.values():
             if not intent.state_machine.is_terminal() and intent.state_machine.current_state != IntentState.ANNOUNCED:
                 try:
@@ -1317,74 +1521,50 @@ class SessionCoordinator:
                 except ValueError:
                     pass
 
-        # Abandon all in-flight operations
-        for op in self.operations.values():
-            if op.state_machine.current_state in (OperationState.PROPOSED, OperationState.FROZEN):
+        for operation in self.operations.values():
+            if operation.state_machine.current_state in (OperationState.PROPOSED, OperationState.FROZEN):
                 try:
-                    op.state_machine.transition("ABANDONED")
+                    operation.state_machine.transition("ABANDONED")
                 except ValueError:
                     pass
 
-        summary = self._build_session_summary()
-
-        close_msg = self._make_envelope(
+        message = self._make_envelope(
             MessageType.SESSION_CLOSE.value,
             {
                 "reason": reason,
                 "final_lamport_clock": self.lamport_clock.value,
-                "summary": summary,
+                "summary": self._build_session_summary(),
                 "active_intents_disposition": "withdraw_all",
             },
         )
+        return [message.to_dict()]
 
-        return [close_msg.to_dict()]
-
-    def _handle_session_close(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
-        """Handle incoming SESSION_CLOSE (only valid from coordinator itself)."""
-        # SESSION_CLOSE is coordinator-originated; if received from participant, ignore
+    def _handle_session_close(self, _envelope: MessageEnvelope) -> List[MessageEnvelope]:
+        """Ignore participant-authored SESSION_CLOSE messages."""
         return []
 
     def check_auto_close(self) -> List[Dict[str, Any]]:
-        """Check if session should auto-close (Section 9.6.1).
-
-        Auto-closes when all intents terminal, all ops terminal, all conflicts closed.
-        """
-        if self.session_closed:
+        """Close the session when all tracked work has settled."""
+        if self.session_closed or not self.intents:
             return []
 
-        # Check if all intents are terminal
-        for intent in self.intents.values():
-            if not intent.state_machine.is_terminal():
-                return []
-
-        # Check if all operations are terminal
-        for op in self.operations.values():
-            if op.state_machine.current_state in (OperationState.PROPOSED, OperationState.FROZEN):
-                return []
-
-        # Check if all conflicts are closed/dismissed
-        for conflict in self.conflicts.values():
-            if conflict.state_machine.current_state not in (ConflictState.CLOSED, ConflictState.DISMISSED):
-                return []
-
-        # Must have at least one intent to auto-close (empty session doesn't auto-close)
-        if not self.intents:
+        if any(not intent.state_machine.is_terminal() for intent in self.intents.values()):
             return []
-
+        if any(operation.state_machine.current_state in (OperationState.PROPOSED, OperationState.FROZEN) for operation in self.operations.values()):
+            return []
+        if any(conflict.state_machine.current_state not in (ConflictState.CLOSED, ConflictState.DISMISSED) for conflict in self.conflicts.values()):
+            return []
         return self.close_session("completed")
 
     def coordinator_status(self, event: str = "heartbeat") -> List[Dict[str, Any]]:
-        """Generate a COORDINATOR_STATUS message (Section 14.6 / 8.1.1.1)."""
+        """Emit a COORDINATOR_STATUS message."""
         open_conflicts = sum(
-            1 for c in self.conflicts.values()
-            if c.state_machine.current_state not in (ConflictState.CLOSED, ConflictState.DISMISSED)
+            1
+            for conflict in self.conflicts.values()
+            if conflict.state_machine.current_state not in (ConflictState.CLOSED, ConflictState.DISMISSED)
         )
-        active_participants = sum(
-            1 for p in self.participants.values()
-            if p.is_available
-        )
-
-        msg = self._make_envelope(
+        active_participants = sum(1 for info in self.participants.values() if info.is_available)
+        message = self._make_envelope(
             MessageType.COORDINATOR_STATUS.value,
             {
                 "event": event,
@@ -1395,24 +1575,32 @@ class SessionCoordinator:
                 "snapshot_lamport_clock": self.lamport_clock.value,
             },
         )
-        return [msg.to_dict()]
+        return [message.to_dict()]
 
     def snapshot(self) -> Dict[str, Any]:
-        """Generate a state snapshot (Section 8.1.1.2)."""
+        """Capture a v0.1.10-compatible coordinator snapshot."""
         return {
-            "snapshot_version": 1,
+            "snapshot_version": 2,
             "session_id": self.session_id,
-            "protocol_version": "0.1.6",
-            "captured_at": _now().isoformat(),
+            "protocol_version": PROTOCOL_VERSION,
+            "captured_at": _iso(_now()),
+            "coordinator_epoch": self.coordinator_epoch,
             "lamport_clock": self.lamport_clock.value,
+            "anti_replay": {
+                "replay_window_sec": 300,
+                "recent_message_ids": list(self.recent_message_ids),
+                "sender_frontier": dict(self.sender_frontier),
+            },
             "participants": [
                 {
                     "principal_id": info.principal.principal_id,
+                    "principal_type": info.principal.principal_type,
                     "display_name": info.principal.display_name,
                     "roles": info.principal.roles,
+                    "capabilities": info.principal.capabilities,
                     "status": info.status,
                     "is_available": info.is_available,
-                    "last_seen": info.last_seen.isoformat(),
+                    "last_seen": _iso(info.last_seen),
                 }
                 for info in self.participants.values()
             ],
@@ -1420,52 +1608,80 @@ class SessionCoordinator:
                 {
                     "intent_id": intent.intent_id,
                     "principal_id": intent.principal_id,
+                    "objective": intent.objective,
                     "state": intent.state_machine.current_state.value,
-                    "scope": intent.scope.to_dict() if hasattr(intent.scope, 'to_dict') else intent.scope,
-                    "expires_at": intent.expires_at.isoformat() if intent.expires_at else None,
+                    "scope": intent.scope.to_dict() if hasattr(intent.scope, "to_dict") else intent.scope,
+                    "received_at": _iso(intent.received_at),
+                    "ttl_sec": intent.ttl_sec,
+                    "expires_at": _iso(intent.expires_at) if intent.expires_at else None,
+                    "last_message_id": intent.last_message_id,
+                    "claimed_by": intent.claimed_by,
                 }
                 for intent in self.intents.values()
             ],
             "operations": [
                 {
-                    "op_id": op.op_id,
-                    "intent_id": op.intent_id,
-                    "state": op.state_machine.current_state.value,
-                    "target": op.target,
+                    "op_id": operation.op_id,
+                    "intent_id": operation.intent_id,
+                    "principal_id": operation.principal_id,
+                    "state": operation.state_machine.current_state.value,
+                    "target": operation.target,
+                    "op_kind": operation.op_kind,
+                    "state_ref_before": operation.state_ref_before,
+                    "state_ref_after": operation.state_ref_after,
+                    "batch_id": operation.batch_id,
+                    "authorized_at": _iso(operation.authorized_at) if operation.authorized_at else None,
+                    "authorized_by": operation.authorized_by,
+                    "created_at": _iso(operation.created_at),
                 }
-                for op in self.operations.values()
+                for operation in self.operations.values()
             ],
             "conflicts": [
                 {
-                    "conflict_id": c.conflict_id,
-                    "state": c.state_machine.current_state.value,
-                    "related_intents": c.related_intents,
-                    "related_ops": c.related_ops,
+                    "conflict_id": conflict.conflict_id,
+                    "category": conflict.category,
+                    "severity": conflict.severity,
+                    "principal_a": conflict.principal_a,
+                    "principal_b": conflict.principal_b,
+                    "intent_a": conflict.intent_a,
+                    "intent_b": conflict.intent_b,
+                    "state": conflict.state_machine.current_state.value,
+                    "related_intents": conflict.related_intents,
+                    "related_ops": conflict.related_ops,
+                    "created_at": _iso(conflict.created_at),
+                    "escalated_to": conflict.escalated_to,
+                    "escalated_at": _iso(conflict.escalated_at) if conflict.escalated_at else None,
+                    "resolution_id": conflict.resolution_id,
+                    "resolved_by": conflict.resolved_by,
                 }
-                for c in self.conflicts.values()
+                for conflict in self.conflicts.values()
+            ],
+            "pending_claims": [
+                {
+                    "claim_id": claim.claim_id,
+                    "original_intent_id": claim.original_intent_id,
+                    "original_principal_id": claim.original_principal_id,
+                    "new_intent_id": claim.new_intent_id,
+                    "claimer_principal_id": claim.claimer_principal_id,
+                    "objective": claim.objective,
+                    "scope": claim.scope.to_dict() if hasattr(claim.scope, "to_dict") else claim.scope,
+                    "justification": claim.justification,
+                    "submitted_at": _iso(claim.submitted_at),
+                    "decision": claim.decision,
+                    "approved_by": claim.approved_by,
+                }
+                for claim in self.claims.values()
             ],
             "session_closed": self.session_closed,
         }
 
     def _build_session_summary(self) -> Dict[str, Any]:
-        """Build session summary for SESSION_CLOSE."""
-        now = _now()
-        duration = (now - self.session_started_at).total_seconds()
-
-        intent_states = {}
-        for intent in self.intents.values():
-            state = intent.state_machine.current_state.value
-            intent_states[state] = intent_states.get(state, 0) + 1
-
-        op_states = {}
-        for op in self.operations.values():
-            state = op.state_machine.current_state.value
-            op_states[state] = op_states.get(state, 0) + 1
-
+        """Summarize the session lifecycle for SESSION_CLOSE."""
+        duration_sec = int((_now() - self.session_started_at).total_seconds())
         return {
             "total_intents": len(self.intents),
             "total_operations": len(self.operations),
             "total_conflicts": len(self.conflicts),
             "total_participants": len(self.participants),
-            "duration_sec": int(duration),
+            "duration_sec": duration_sec,
         }

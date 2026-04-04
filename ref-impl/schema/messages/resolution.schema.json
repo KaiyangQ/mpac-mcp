@@ -9,7 +9,7 @@
     "conflict_id": { "type": "string" },
     "decision": {
       "type": "string",
-      "enum": ["approved", "rejected", "dismissed", "human_override", "policy_override", "merged", "deferred"]
+      "enum": ["approved", "rejected", "dismissed", "human_override", "policy_override", "merged"]
     },
     "outcome": { "$ref": "../objects/outcome.schema.json" },
     "rationale": { "type": "string" }

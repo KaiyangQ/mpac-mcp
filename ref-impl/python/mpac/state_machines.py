@@ -13,11 +13,18 @@ class IntentStateMachine:
             IntentState.WITHDRAWN,
             IntentState.SUPERSEDED,
             IntentState.SUSPENDED,
+            IntentState.TRANSFERRED,
         ],
         IntentState.EXPIRED: [],
         IntentState.WITHDRAWN: [],
         IntentState.SUPERSEDED: [],
-        IntentState.SUSPENDED: [IntentState.ACTIVE, IntentState.WITHDRAWN, IntentState.EXPIRED],
+        IntentState.SUSPENDED: [
+            IntentState.ACTIVE,
+            IntentState.WITHDRAWN,
+            IntentState.EXPIRED,
+            IntentState.TRANSFERRED,
+        ],
+        IntentState.TRANSFERRED: [],
     }
 
     def __init__(self, initial_state: IntentState = IntentState.ANNOUNCED):
@@ -55,6 +62,7 @@ class IntentStateMachine:
             IntentState.EXPIRED,
             IntentState.WITHDRAWN,
             IntentState.SUPERSEDED,
+            IntentState.TRANSFERRED,
         ]
 
 

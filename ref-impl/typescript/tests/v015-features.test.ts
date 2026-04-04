@@ -145,11 +145,15 @@ describe("v0.1.5 Features", () => {
       // Get snapshot
       const snap = coord.snapshot();
       expect(snap).toBeDefined();
-      expect(snap.snapshot_version).toBe(1);
+      expect(snap.snapshot_version).toBe(2);
       expect(snap.session_id).toBe(sid);
-      expect(snap.protocol_version).toBe("0.1.6");
+      expect(snap.protocol_version).toBe("0.1.10");
       expect(snap.captured_at).toBeDefined();
+      expect(snap.coordinator_epoch).toBeDefined();
       expect(snap.lamport_clock).toBeDefined();
+      expect(snap.anti_replay).toBeDefined();
+      expect(snap.anti_replay.recent_message_ids).toBeDefined();
+      expect(snap.anti_replay.sender_frontier).toBeDefined();
 
       // Check participants
       expect(snap.participants).toBeDefined();

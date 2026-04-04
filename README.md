@@ -126,37 +126,30 @@ Do not commit `local_config.json` to a public repository.
 
 ## Current Coverage
 
-The reference implementations cover most of the v0.1.8 protocol surface across both Python and TypeScript (70 + 56 tests, 14-message cross-language interop, real Claude API end-to-end verification), but they do not yet fully cover the newest v0.1.9-v0.1.10 closure changes:
+The repository now carries the full v0.1.10 message surface in schema plus both reference implementations, including the execution/governance closure work from v0.1.9-v0.1.10. The Python reference implementation is the most heavily exercised path today (75 tests plus a live Claude API demo), and the TypeScript source has been updated to the same protocol shape.
 
-| Dimension | Covered | Not yet covered |
-|-----------|---------|-----------------|
-| Message types | **19 of 21** (90%) | `OP_BATCH_COMMIT`, `INTENT_CLAIM_STATUS` |
-| State machines | Full lifecycle: Expiry Cascade, Auto-Dismiss, FROZEN/SUSPENDED, resume/unfreeze, SUPERSEDED | — |
-| Liveness | Heartbeat tracking, unavailability detection, intent suspension, proposal abandonment, reconnection restoration | — |
-| Governance | ACK → ESCALATE → Arbiter RESOLUTION, auto-escalation on resolution timeout | Frozen scope enforcement |
-| Intent lifecycle | Announce, Update (objective/scope/TTL), Withdraw, Claim (first-claim-wins) | — |
-| Security | Credential exchange (5 types), enum definitions | Signature verification, replay detection, role-based access |
-| Session lifecycle | SESSION_CLOSE, auto-close, summary, post-close rejection | Transcript export, lifecycle policy persistence |
-| Consistency & execution model | — | Pre-commit confirmation flow, execution_model in SESSION_INFO (new in v0.1.7) |
-| Fault recovery | Coordinator status/heartbeat, state snapshot, snapshot recovery + audit log replay | Split-brain detection, multi-coordinator election |
-| Coordinator accountability | — | Coordinator message signing, tamper-evident coordinator log (new in v0.1.7, Verified profile) |
-| Frozen scope | — | Progressive degradation 3-phase system (new in v0.1.7) |
-| Robustness | Liveness detection, INTENT_CLAIM, disconnection recovery, OP_SUPERSEDE chains | — |
+| Dimension | Covered | Remaining gaps |
+|-----------|---------|----------------|
+| Message types | **21 of 21** including `OP_BATCH_COMMIT` and `INTENT_CLAIM_STATUS` | — |
+| State machines | Full lifecycle: Expiry Cascade, Auto-Dismiss, FROZEN/SUSPENDED, resume/unfreeze, SUPERSEDED, TRANSFERRED | Frozen-scope progressive degradation |
+| Liveness | Heartbeat tracking, unavailability detection, intent suspension, proposal abandonment, reconnection restoration, claim withdrawal on owner return | Role-based liveness policy enforcement |
+| Governance | ACK → ESCALATE → phase-scoped RESOLUTION, duplicate-resolution rejection, claim approval attribution | Frozen scope enforcement |
+| Intent lifecycle | Announce, Update (objective/scope/TTL), Withdraw, Claim, `INTENT_CLAIM_STATUS`, `TRANSFERRED` alignment | Richer scope narrowing validation on claims |
+| Security | Credential exchange (5 types), sender incarnation tracking, snapshot anti-replay checkpoint persistence | Signature verification, runtime replay rejection, trust binding |
+| Session lifecycle | `SESSION_INFO` execution model declaration, SESSION_CLOSE, auto-close, summary, post-close rejection | Transcript export policy persistence |
+| Consistency & execution model | Post-commit and governance-only pre-commit authorization/completion flow, coordinator epoch on outbound messages | Multi-coordinator fencing during live handover |
+| Fault recovery | Coordinator status/heartbeat, v0.1.10 snapshot format, snapshot recovery + audit log replay, coordinator epoch bump on recovery | Split-brain detection, multi-coordinator election |
+| Robustness | OP_SUPERSEDE chains, batch commit tracking, claim conflict / resolution conflict handling | Conformance harness in a Node-enabled TypeScript CI lane |
 
 ---
 
 ## What's Next
 
-**P1 — v0.1.10 conformance closure:**
-- `OP_BATCH_COMMIT` handler (atomic multi-target operations)
-- `INTENT_CLAIM_STATUS` handler and `TRANSFERRED` intent-state alignment
-- `coordinator_epoch` fencing in coordinator recovery / handover flows
-- `sender_instance_id` support and Lamport monotonicity tests across reconnect / restart
-- anti-replay checkpoint persistence across snapshot recovery
-- pre-commit authorization / completion flow and governance-only `pre_commit` enforcement
-- escalated-conflict authority gating and arbiter-finality handling
-- claim approval attribution (`approved_by`) and `TRANSFERRED`-aware conflict auto-dismiss
-- JSON Schema synchronization with the v0.1.10 envelope and payload requirements
+**P1 — Verification and hardening:**
+- TypeScript build/test execution in a Node-enabled environment and refreshed `dist/` artifacts
+- runtime replay rejection and Lamport monotonicity enforcement across reconnect / restart
+- split-brain fencing and live handover validation for `coordinator_epoch`
+- frozen-scope progressive degradation implementation
 - `MPAC_Developer_Reference.md` synchronization with the v0.1.10 root spec
 
 **P2 — Protocol evolution and verification:**

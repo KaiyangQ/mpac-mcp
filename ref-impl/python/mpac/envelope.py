@@ -12,14 +12,15 @@ from .models import Sender, Watermark
 class MessageEnvelope:
     """MPAC message envelope."""
     protocol: str = "MPAC"
-    version: str = "0.1.4"
+    version: str = "0.1.10"
     message_type: str = ""
     message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str = ""
-    sender: Sender = field(default_factory=lambda: Sender("", ""))
+    sender: Sender = field(default_factory=lambda: Sender("", "", ""))
     ts: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
     payload: Dict[str, Any] = field(default_factory=dict)
     watermark: Optional[Watermark] = None
+    coordinator_epoch: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for JSON serialization."""
@@ -35,6 +36,8 @@ class MessageEnvelope:
         }
         if self.watermark:
             data["watermark"] = self.watermark.to_dict()
+        if self.coordinator_epoch is not None:
+            data["coordinator_epoch"] = self.coordinator_epoch
         return data
 
     def to_json(self) -> str:
@@ -70,11 +73,12 @@ class MessageEnvelope:
         sender: Sender,
         payload: Dict[str, Any],
         watermark: Optional[Watermark] = None,
+        coordinator_epoch: Optional[int] = None,
     ) -> "MessageEnvelope":
         """Factory method to create a message envelope."""
         return cls(
             protocol="MPAC",
-            version="0.1.4",
+            version="0.1.10",
             message_type=message_type,
             message_id=str(uuid.uuid4()),
             session_id=session_id,
@@ -82,4 +86,5 @@ class MessageEnvelope:
             ts=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             payload=payload,
             watermark=watermark,
+            coordinator_epoch=coordinator_epoch,
         )

@@ -9,7 +9,9 @@ export declare enum MessageType {
     INTENT_UPDATE = "INTENT_UPDATE",
     INTENT_WITHDRAW = "INTENT_WITHDRAW",
     INTENT_CLAIM = "INTENT_CLAIM",
+    INTENT_CLAIM_STATUS = "INTENT_CLAIM_STATUS",
     OP_PROPOSE = "OP_PROPOSE",
+    OP_BATCH_COMMIT = "OP_BATCH_COMMIT",
     OP_COMMIT = "OP_COMMIT",
     OP_REJECT = "OP_REJECT",
     OP_SUPERSEDE = "OP_SUPERSEDE",
@@ -25,22 +27,24 @@ export declare enum IntentState {
     EXPIRED = "EXPIRED",
     WITHDRAWN = "WITHDRAWN",
     SUPERSEDED = "SUPERSEDED",
-    SUSPENDED = "SUSPENDED"
+    SUSPENDED = "SUSPENDED",
+    TRANSFERRED = "TRANSFERRED"
 }
 export declare enum OperationState {
     PROPOSED = "PROPOSED",
     COMMITTED = "COMMITTED",
     REJECTED = "REJECTED",
     ABANDONED = "ABANDONED",
-    FROZEN = "FROZEN"
+    FROZEN = "FROZEN",
+    SUPERSEDED = "SUPERSEDED"
 }
 export declare enum ConflictState {
     OPEN = "OPEN",
     ACKED = "ACKED",
     ESCALATED = "ESCALATED",
+    DISMISSED = "DISMISSED",
     RESOLVED = "RESOLVED",
-    CLOSED = "CLOSED",
-    DISMISSED = "DISMISSED"
+    CLOSED = "CLOSED"
 }
 export declare enum ScopeKind {
     FILE_SET = "file_set",
@@ -112,36 +116,37 @@ export declare enum Decision {
     DISMISSED = "dismissed",
     HUMAN_OVERRIDE = "human_override",
     POLICY_OVERRIDE = "policy_override",
-    MERGED = "merged",
-    DEFERRED = "deferred"
+    MERGED = "merged"
 }
 export declare enum ErrorCode {
-    MALFORMED_MESSAGE = "malformed_message",
-    UNKNOWN_MESSAGE_TYPE = "unknown_message_type",
-    INVALID_REFERENCE = "invalid_reference",
-    VERSION_MISMATCH = "version_mismatch",
-    CAPABILITY_UNSUPPORTED = "capability_unsupported",
-    AUTHORIZATION_FAILED = "authorization_failed",
-    PARTICIPANT_UNAVAILABLE = "participant_unavailable",
-    RESOLUTION_TIMEOUT = "resolution_timeout",
-    SCOPE_FROZEN = "scope_frozen",
-    CLAIM_CONFLICT = "claim_conflict",
-    COORDINATOR_CONFLICT = "coordinator_conflict",
-    STATE_DIVERGENCE = "state_divergence",
-    SESSION_CLOSED = "session_closed",
-    CREDENTIAL_REJECTED = "credential_rejected"
+    MALFORMED_MESSAGE = "MALFORMED_MESSAGE",
+    UNKNOWN_MESSAGE_TYPE = "UNKNOWN_MESSAGE_TYPE",
+    INVALID_REFERENCE = "INVALID_REFERENCE",
+    VERSION_MISMATCH = "VERSION_MISMATCH",
+    CAPABILITY_UNSUPPORTED = "CAPABILITY_UNSUPPORTED",
+    AUTHORIZATION_FAILED = "AUTHORIZATION_FAILED",
+    PARTICIPANT_UNAVAILABLE = "PARTICIPANT_UNAVAILABLE",
+    RESOLUTION_TIMEOUT = "RESOLUTION_TIMEOUT",
+    SCOPE_FROZEN = "SCOPE_FROZEN",
+    CLAIM_CONFLICT = "CLAIM_CONFLICT",
+    RESOLUTION_CONFLICT = "RESOLUTION_CONFLICT",
+    COORDINATOR_CONFLICT = "COORDINATOR_CONFLICT",
+    STATE_DIVERGENCE = "STATE_DIVERGENCE",
+    SESSION_CLOSED = "SESSION_CLOSED",
+    CREDENTIAL_REJECTED = "CREDENTIAL_REJECTED"
 }
 export interface Principal {
     principal_id: string;
     principal_type: string;
     display_name?: string;
-    roles?: Role[];
+    roles?: Array<Role | string>;
     capabilities?: string[];
     joined_at?: string;
 }
 export interface Sender {
     principal_id: string;
     principal_type: string;
+    sender_instance_id: string;
 }
 export interface Watermark {
     kind: string;
@@ -188,78 +193,114 @@ export interface Outcome {
     rollback?: string;
 }
 export interface GovernancePolicy {
-    approval_required?: boolean;
-    auto_resolve_conflicts?: boolean;
-    conflict_resolution_timeout_ms?: number;
-    intent_expiry_ms?: number;
+    require_acknowledgment?: boolean;
+    intent_expiry_grace_sec?: number;
 }
 export interface LivenessPolicy {
-    heartbeat_interval_ms?: number;
-    session_timeout_ms?: number;
-    participant_timeout_ms?: number;
+    heartbeat_interval_sec?: number;
+    unavailability_timeout_sec?: number;
+    intent_claim_grace_period_sec?: number;
+    resolution_timeout_sec?: number;
 }
 export interface SessionConfig {
     session_id: string;
     security_profile?: SecurityProfile;
     compliance_profile?: ComplianceProfile;
+    execution_model?: "pre_commit" | "post_commit";
+    state_ref_format?: string;
     governance_policy?: GovernancePolicy;
     liveness_policy?: LivenessPolicy;
 }
 export interface HelloPayload {
     display_name?: string;
-    roles?: Role[];
+    roles?: Array<Role | string>;
     capabilities?: string[];
+    credential?: Credential;
 }
 export interface SessionInfoPayload {
     session_id: string;
-    coordinator_principal_id: string;
-    created_at: string;
-    security_profile: SecurityProfile;
-    compliance_profile: ComplianceProfile;
+    protocol_version: string;
+    security_profile: SecurityProfile | string;
+    compliance_profile: ComplianceProfile | string;
+    watermark_kind: string;
+    execution_model: "pre_commit" | "post_commit";
+    state_ref_format: string;
     governance_policy?: GovernancePolicy;
     liveness_policy?: LivenessPolicy;
-    participants: Principal[];
+    participant_count?: number;
+    granted_roles: string[];
+    identity_verified?: boolean;
+    identity_method?: string;
+    compatibility_errors?: string[];
 }
 export interface IntentAnnouncePayload {
     intent_id: string;
     objective: string;
     scope: Scope;
-    basis?: Basis;
+    ttl_sec?: number;
     expiry_ms?: number;
-    tags?: Record<string, string>;
+}
+export interface IntentClaimStatusPayload {
+    claim_id: string;
+    original_intent_id: string;
+    new_intent_id?: string;
+    decision: "approved" | "rejected" | "withdrawn";
+    reason?: string;
+    approved_by?: string;
 }
 export interface OpProposePayload {
     op_id: string;
-    intent_id: string;
+    intent_id?: string;
     target: string;
     op_kind: string;
-    basis?: Basis;
-    tags?: Record<string, string>;
+    change_ref?: string;
+    summary?: string;
 }
 export interface OpCommitPayload {
     op_id: string;
-    intent_id: string;
+    intent_id?: string;
     target: string;
     op_kind: string;
     state_ref_before?: string;
     state_ref_after?: string;
-    basis?: Basis;
-    tags?: Record<string, string>;
+    change_ref?: string;
+    summary?: string;
+}
+export interface BatchOperationEntry {
+    op_id: string;
+    intent_id?: string;
+    target: string;
+    op_kind: string;
+    state_ref_before?: string;
+    state_ref_after?: string;
+    change_ref?: string;
+    summary?: string;
+}
+export interface OpBatchCommitPayload {
+    batch_id: string;
+    intent_id?: string;
+    atomicity: "all_or_nothing" | "best_effort";
+    operations: BatchOperationEntry[];
+    summary?: string;
 }
 export interface ConflictReportPayload {
     conflict_id: string;
-    category: ConflictCategory;
-    severity: Severity;
-    involved_principals: string[];
-    scope_a: Scope;
-    scope_b: Scope;
-    basis: Basis;
+    category: ConflictCategory | string;
+    severity: Severity | string;
+    principal_a?: string;
+    principal_b?: string;
+    intent_a?: string;
+    intent_b?: string;
+    involved_principals?: string[];
+    scope_a?: Scope;
+    scope_b?: Scope;
+    basis?: Basis;
     details?: string;
 }
 export interface ResolutionPayload {
+    resolution_id?: string;
     conflict_id: string;
-    decision: Decision;
-    resolved_principal_id: string;
+    decision: Decision | string;
     rationale?: string;
     outcome?: Outcome;
 }
@@ -271,40 +312,17 @@ export interface OpRejectPayload {
     op_id: string;
     reason: string;
     refers_to?: string;
+    rejected_ops?: string[];
 }
 export interface ProtocolErrorPayload {
-    error_code: ErrorCode;
-    message: string;
-    details?: unknown;
-    related_message_id?: string;
+    error_code: ErrorCode | string;
+    description: string;
+    refers_to?: string;
 }
 export interface Credential {
     type: string;
     value: string;
     issuer?: string;
     expires_at?: string;
-}
-export interface SessionClosePayload {
-    reason: string;
-    final_lamport_clock: number;
-    summary?: SessionSummary;
-    active_intents_disposition?: string;
-    transcript_ref?: string;
-}
-export interface SessionSummary {
-    total_intents: number;
-    total_operations: number;
-    total_conflicts: number;
-    total_participants: number;
-    duration_sec: number;
-}
-export interface CoordinatorStatusPayload {
-    event: string;
-    coordinator_id: string;
-    session_health: string;
-    active_participants?: number;
-    open_conflicts?: number;
-    snapshot_lamport_clock?: number;
-    successor_coordinator_id?: string;
 }
 //# sourceMappingURL=models.d.ts.map

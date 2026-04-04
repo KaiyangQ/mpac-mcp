@@ -1,307 +1,314 @@
 import { v4 as uuidv4 } from "uuid";
-import { MessageType, SecurityProfile, ComplianceProfile, IntentState, OperationState, ConflictState, ConflictCategory, Severity, } from "./models.js";
 import { createEnvelope } from "./envelope.js";
-import { LamportClock } from "./watermark.js";
+import { ComplianceProfile, ConflictCategory, ConflictState, MessageType, OperationState, SecurityProfile, Severity, IntentState, } from "./models.js";
 import { scopeOverlap } from "./scope.js";
-import { IntentStateMachine, OperationStateMachine, ConflictStateMachine, } from "./state-machines.js";
+import { ConflictStateMachine, IntentStateMachine, OperationStateMachine } from "./state-machines.js";
+import { LamportClock } from "./watermark.js";
+const PROTOCOL_VERSION = "0.1.10";
 export class SessionCoordinator {
     sessionId;
-    coordinatorId = "coordinator-" + uuidv4();
+    coordinatorId;
+    coordinatorInstanceId;
+    coordinatorEpoch;
     securityProfile;
     complianceProfile;
+    executionModel;
+    stateRefFormat;
+    watermarkKind;
     participants = new Map();
     intents = new Map();
     operations = new Map();
     conflicts = new Map();
+    claims = new Map();
+    claimIndex = new Map();
+    auditLog = [];
     lamportClock;
-    createdAt;
+    recentMessageIds = [];
+    senderFrontier = {};
     intentExpiryGraceSec;
+    heartbeatIntervalSec;
     unavailabilityTimeoutMs;
     resolutionTimeoutMs;
-    claims = new Map(); // original_intent_id → claim_id
+    intentClaimGraceMs;
     sessionClosed;
     sessionStartedAt;
-    constructor(sessionId, securityProfile = SecurityProfile.OPEN, complianceProfile = ComplianceProfile.CORE, intentExpiryGraceSec = 30, unavailabilityTimeoutSec = 90, resolutionTimeoutSec = 300) {
+    constructor(sessionId, securityProfile = SecurityProfile.OPEN, complianceProfile = ComplianceProfile.CORE, intentExpiryGraceSec = 30, unavailabilityTimeoutSec = 90, resolutionTimeoutSec = 300, executionModel = "post_commit", stateRefFormat = "sha256", intentClaimGraceSec = 0) {
+        if (executionModel === "pre_commit" && complianceProfile !== ComplianceProfile.GOVERNANCE) {
+            throw new Error("pre_commit sessions require Governance Profile compliance");
+        }
         this.sessionId = sessionId;
         this.securityProfile = securityProfile;
         this.complianceProfile = complianceProfile;
-        this.lamportClock = new LamportClock();
-        this.createdAt = new Date().toISOString();
+        this.executionModel = executionModel;
+        this.stateRefFormat = stateRefFormat;
+        this.watermarkKind = "lamport_clock";
         this.intentExpiryGraceSec = intentExpiryGraceSec;
+        this.heartbeatIntervalSec = 30;
         this.unavailabilityTimeoutMs = unavailabilityTimeoutSec * 1000;
         this.resolutionTimeoutMs = resolutionTimeoutSec * 1000;
+        this.intentClaimGraceMs = intentClaimGraceSec * 1000;
+        this.coordinatorEpoch = 1;
         this.coordinatorId = `service:coordinator-${sessionId}`;
+        this.coordinatorInstanceId = `${this.coordinatorId}:epoch-${this.coordinatorEpoch}`;
+        this.lamportClock = new LamportClock();
         this.sessionClosed = false;
         this.sessionStartedAt = Date.now();
     }
-    // ================================================================
-    //  Main message processing
-    // ================================================================
     processMessage(envelope) {
-        const responses = [];
+        this.auditLog.push(envelope);
+        this.rememberMessageId(envelope.message_id);
+        this.recordSenderFrontier(envelope);
         if (envelope.watermark) {
             this.lamportClock.processWatermark(envelope.watermark);
         }
-        // Update liveness for sender
-        const pid = envelope.sender.principal_id;
-        const pInfo = this.participants.get(pid);
-        if (pInfo)
-            pInfo.last_seen = Date.now();
-        const mt = envelope.message_type;
-        // Reject messages for closed sessions
-        if (this.sessionClosed && mt !== MessageType.SESSION_CLOSE && mt !== MessageType.GOODBYE) {
-            return [this.makeEnvelope(MessageType.PROTOCOL_ERROR, {
-                    error_code: "SESSION_CLOSED",
-                    refers_to: envelope.message_id,
-                    description: `Session ${this.sessionId} has been closed`,
-                })];
+        const existingParticipant = this.participants.get(envelope.sender.principal_id);
+        if (existingParticipant) {
+            existingParticipant.last_seen = Date.now();
         }
-        switch (mt) {
+        if (this.sessionClosed && envelope.message_type !== MessageType.GOODBYE) {
+            return [this.makeProtocolError("SESSION_CLOSED", envelope.message_id, `Session ${this.sessionId} has been closed`)];
+        }
+        let responses = [];
+        switch (envelope.message_type) {
             case MessageType.HELLO:
-                responses.push(...this.handleHello(envelope));
+                responses = this.handleHello(envelope);
                 break;
             case MessageType.HEARTBEAT:
-                responses.push(...this.handleHeartbeat(envelope));
+                responses = this.handleHeartbeat(envelope);
                 break;
             case MessageType.GOODBYE:
-                responses.push(...this.handleGoodbye(envelope));
+                responses = this.handleGoodbye(envelope);
                 break;
             case MessageType.INTENT_ANNOUNCE:
-                responses.push(...this.handleIntentAnnounce(envelope));
+                responses = this.handleIntentAnnounce(envelope);
                 break;
             case MessageType.INTENT_UPDATE:
-                responses.push(...this.handleIntentUpdate(envelope));
+                responses = this.handleIntentUpdate(envelope);
                 break;
             case MessageType.INTENT_WITHDRAW:
-                responses.push(...this.handleIntentWithdraw(envelope));
+                responses = this.handleIntentWithdraw(envelope);
                 break;
             case MessageType.INTENT_CLAIM:
-                responses.push(...this.handleIntentClaim(envelope));
+                responses = this.handleIntentClaim(envelope);
                 break;
             case MessageType.OP_PROPOSE:
-                responses.push(...this.handleOpPropose(envelope));
+                responses = this.handleOpPropose(envelope);
                 break;
             case MessageType.OP_COMMIT:
-                responses.push(...this.handleOpCommit(envelope));
+                responses = this.handleOpCommit(envelope);
+                break;
+            case MessageType.OP_BATCH_COMMIT:
+                responses = this.handleOpBatchCommit(envelope);
+                break;
+            case MessageType.OP_SUPERSEDE:
+                responses = this.handleOpSupersede(envelope);
                 break;
             case MessageType.CONFLICT_REPORT:
-                responses.push(...this.handleConflictReport(envelope));
+                responses = this.handleConflictReport(envelope);
                 break;
             case MessageType.CONFLICT_ACK:
-                responses.push(...this.handleConflictAck(envelope));
+                responses = this.handleConflictAck(envelope);
                 break;
             case MessageType.CONFLICT_ESCALATE:
-                responses.push(...this.handleConflictEscalate(envelope));
+                responses = this.handleConflictEscalate(envelope);
                 break;
             case MessageType.RESOLUTION:
-                responses.push(...this.handleResolution(envelope));
+                responses = this.handleResolution(envelope);
                 break;
             case MessageType.SESSION_CLOSE:
-                // SESSION_CLOSE is coordinator-originated only
-                return [];
             case MessageType.COORDINATOR_STATUS:
-                // COORDINATOR_STATUS is outbound-only
-                return [];
+                responses = [];
+                break;
+            default:
+                responses = [];
         }
+        responses.push(...this.checkPendingClaims());
         return responses;
     }
-    // ================================================================
-    //  Time-based lifecycle
-    // ================================================================
-    checkExpiry(nowMs) {
-        const now = nowMs ?? Date.now();
-        const allResponses = [];
+    checkExpiry(nowMs = Date.now()) {
+        const responses = [];
         for (const intent of this.intents.values()) {
             if (intent.expires_at !== undefined &&
                 !intent.stateMachine.isTerminal() &&
                 intent.stateMachine.currentState !== IntentState.ANNOUNCED &&
-                now >= intent.expires_at) {
-                intent.stateMachine.transition("expire");
-                allResponses.push(...this.cascadeIntentTermination(intent.intent_id));
+                nowMs >= intent.expires_at) {
+                intent.stateMachine.transition("EXPIRED");
+                responses.push(...this.cascadeIntentTermination(intent.intent_id));
             }
         }
-        allResponses.push(...this.checkAutoDismiss());
-        return allResponses;
+        responses.push(...this.checkAutoDismiss());
+        responses.push(...this.checkPendingClaims(nowMs));
+        return responses;
     }
-    checkLiveness(nowMs) {
-        const now = nowMs ?? Date.now();
-        const allResponses = [];
-        for (const [pid, info] of this.participants) {
+    checkLiveness(nowMs = Date.now()) {
+        const responses = [];
+        for (const [principalId, info] of this.participants.entries()) {
             if (!info.is_available || info.status === "offline")
                 continue;
-            if (now - info.last_seen > this.unavailabilityTimeoutMs) {
+            if (nowMs - info.last_seen > this.unavailabilityTimeoutMs) {
                 info.is_available = false;
-                allResponses.push(...this.handleParticipantUnavailable(pid));
+                responses.push(...this.handleParticipantUnavailable(principalId));
             }
         }
-        return allResponses;
+        responses.push(...this.checkPendingClaims(nowMs));
+        return responses;
     }
-    checkResolutionTimeouts(nowMs) {
-        const now = nowMs ?? Date.now();
-        const allResponses = [];
+    checkResolutionTimeouts(nowMs = Date.now()) {
+        const responses = [];
         for (const conflict of this.conflicts.values()) {
-            const st = conflict.stateMachine.currentState;
-            if (st !== ConflictState.OPEN && st !== ConflictState.ACKED)
+            if (conflict.stateMachine.currentState !== ConflictState.OPEN && conflict.stateMachine.currentState !== ConflictState.ACKED) {
                 continue;
-            if (now - conflict.created_at <= this.resolutionTimeoutMs)
+            }
+            if (nowMs - conflict.created_at <= this.resolutionTimeoutMs) {
                 continue;
+            }
             const arbiterId = this.findArbiter();
             if (arbiterId) {
-                try {
-                    if (st === ConflictState.OPEN)
-                        conflict.stateMachine.transition("ack");
-                    conflict.stateMachine.transition("escalate");
-                }
-                catch {
-                    continue;
-                }
+                if (conflict.stateMachine.currentState === ConflictState.OPEN)
+                    conflict.stateMachine.transition("ACKED");
+                conflict.stateMachine.transition("ESCALATED");
                 conflict.escalated_to = arbiterId;
-                conflict.escalated_at = now;
-                allResponses.push(this.makeEnvelope(MessageType.CONFLICT_ESCALATE, {
+                conflict.escalated_at = nowMs;
+                responses.push(this.makeEnvelope(MessageType.CONFLICT_ESCALATE, {
                     conflict_id: conflict.conflict_id,
                     escalate_to: arbiterId,
                     reason: "resolution_timeout",
                 }));
             }
             else {
-                allResponses.push(this.makeEnvelope(MessageType.PROTOCOL_ERROR, {
-                    error_code: "RESOLUTION_TIMEOUT",
-                    refers_to: conflict.conflict_id,
-                    description: `No arbiter; conflict ${conflict.conflict_id} unresolved`,
-                }));
+                responses.push(this.makeProtocolError("RESOLUTION_TIMEOUT", conflict.conflict_id, `No arbiter available for conflict ${conflict.conflict_id}`));
             }
         }
-        return allResponses;
+        return responses;
     }
-    // ================================================================
-    //  Session layer handlers
-    // ================================================================
     handleHello(envelope) {
         const payload = envelope.payload;
+        const requestedRoles = (payload.roles ?? ["participant"]);
         const principal = {
             principal_id: envelope.sender.principal_id,
             principal_type: envelope.sender.principal_type,
             display_name: payload.display_name,
-            roles: payload.roles,
-            capabilities: payload.capabilities,
+            roles: requestedRoles,
+            capabilities: payload.capabilities ?? [],
             joined_at: new Date().toISOString(),
         };
         this.participants.set(principal.principal_id, {
-            principal, last_seen: Date.now(), status: "idle", is_available: true,
+            principal,
+            last_seen: Date.now(),
+            status: "idle",
+            is_available: true,
         });
-        // Restore suspended intents on reconnection
-        for (const intent of this.intents.values()) {
-            if (intent.principal_id === principal.principal_id &&
-                intent.stateMachine.currentState === IntentState.SUSPENDED &&
-                !intent.claimed_by) {
-                intent.stateMachine.transition("resume");
-            }
-        }
-        return [this.makeEnvelope(MessageType.SESSION_INFO, {
-                session_id: this.sessionId,
-                coordinator_principal_id: this.coordinatorId,
-                created_at: this.createdAt,
-                security_profile: this.securityProfile,
-                compliance_profile: this.complianceProfile,
-                participants: Array.from(this.participants.values()).map(p => p.principal),
-            })];
+        const responses = this.handleOwnerRejoin(principal.principal_id);
+        responses.push(this.makeEnvelope(MessageType.SESSION_INFO, {
+            session_id: this.sessionId,
+            protocol_version: PROTOCOL_VERSION,
+            security_profile: this.securityProfile,
+            compliance_profile: this.complianceProfile,
+            watermark_kind: this.watermarkKind,
+            execution_model: this.executionModel,
+            state_ref_format: this.stateRefFormat,
+            governance_policy: {
+                require_acknowledgment: true,
+                intent_expiry_grace_sec: this.intentExpiryGraceSec,
+            },
+            liveness_policy: {
+                heartbeat_interval_sec: this.heartbeatIntervalSec,
+                unavailability_timeout_sec: this.unavailabilityTimeoutMs / 1000,
+                intent_claim_grace_period_sec: this.intentClaimGraceMs / 1000,
+                resolution_timeout_sec: this.resolutionTimeoutMs / 1000,
+            },
+            participant_count: this.participants.size,
+            granted_roles: requestedRoles,
+            identity_verified: this.securityProfile === SecurityProfile.OPEN || Boolean(payload.credential),
+            identity_method: payload.credential?.type,
+            compatibility_errors: [],
+        }));
+        return responses;
     }
     handleHeartbeat(envelope) {
         const payload = envelope.payload;
-        const pid = envelope.sender.principal_id;
-        const info = this.participants.get(pid);
-        if (info) {
-            info.last_seen = Date.now();
-            info.status = payload.status || "idle";
-            if (!info.is_available) {
-                info.is_available = true;
-                for (const intent of this.intents.values()) {
-                    if (intent.principal_id === pid &&
-                        intent.stateMachine.currentState === IntentState.SUSPENDED &&
-                        !intent.claimed_by) {
-                        intent.stateMachine.transition("resume");
-                    }
-                }
-            }
+        const info = this.participants.get(envelope.sender.principal_id);
+        const responses = [];
+        if (!info)
+            return responses;
+        info.last_seen = Date.now();
+        info.status = payload.status ?? "idle";
+        if (!info.is_available) {
+            info.is_available = true;
+            responses.push(...this.handleOwnerRejoin(envelope.sender.principal_id));
         }
-        return [];
+        return responses;
     }
     handleGoodbye(envelope) {
         const payload = envelope.payload;
-        const pid = envelope.sender.principal_id;
-        const disposition = payload.intent_disposition || "withdraw";
+        const principalId = envelope.sender.principal_id;
+        const disposition = payload.intent_disposition ?? "withdraw";
         const responses = [];
-        const info = this.participants.get(pid);
+        const info = this.participants.get(principalId);
         if (info) {
             info.is_available = false;
             info.status = "offline";
         }
-        let activeIntentIds = payload.active_intents || [];
+        let activeIntentIds = (payload.active_intents ?? []);
         if (activeIntentIds.length === 0) {
-            for (const [iid, intent] of this.intents) {
-                if (intent.principal_id === pid && !intent.stateMachine.isTerminal() &&
-                    intent.stateMachine.currentState !== IntentState.ANNOUNCED) {
-                    activeIntentIds.push(iid);
-                }
-            }
+            activeIntentIds = [...this.intents.values()]
+                .filter((intent) => intent.principal_id === principalId && !intent.stateMachine.isTerminal() && intent.stateMachine.currentState !== IntentState.ANNOUNCED)
+                .map((intent) => intent.intent_id);
         }
-        if (disposition === "withdraw") {
-            for (const iid of activeIntentIds) {
-                const intent = this.intents.get(iid);
-                if (intent) {
-                    try {
-                        intent.stateMachine.transition("withdraw");
-                        responses.push(...this.cascadeIntentTermination(iid));
-                    }
-                    catch { }
-                }
-            }
-        }
-        // Abandon in-flight proposals
-        for (const op of this.operations.values()) {
-            if (op.principal_id !== pid)
+        for (const intentId of activeIntentIds) {
+            const intent = this.intents.get(intentId);
+            if (!intent)
                 continue;
-            if (op.stateMachine.currentState === OperationState.PROPOSED) {
-                op.stateMachine.transition("abandon");
+            try {
+                if (disposition === "transfer") {
+                    if (intent.stateMachine.currentState === IntentState.ACTIVE)
+                        intent.stateMachine.transition("SUSPENDED");
+                }
+                else if (disposition !== "expire") {
+                    intent.stateMachine.transition("WITHDRAWN");
+                    responses.push(...this.cascadeIntentTermination(intentId));
+                }
+            }
+            catch {
+                // Ignore invalid transitions.
+            }
+        }
+        for (const operation of this.operations.values()) {
+            if (operation.principal_id !== principalId)
+                continue;
+            if (operation.stateMachine.currentState === OperationState.PROPOSED) {
+                operation.stateMachine.transition("ABANDONED");
+            }
+            else if (operation.stateMachine.currentState === OperationState.FROZEN) {
+                operation.stateMachine.transition("ABANDONED");
             }
         }
         responses.push(...this.checkAutoDismiss());
         return responses;
     }
-    // ================================================================
-    //  Intent layer handlers
-    // ================================================================
     handleIntentAnnounce(envelope) {
         const payload = envelope.payload;
-        const intentId = payload.intent_id;
-        const principalId = envelope.sender.principal_id;
-        const now = Date.now();
+        const ttlSec = payload.ttl_sec ?? (payload.expiry_ms !== undefined ? Number(payload.expiry_ms) / 1000 : undefined);
+        const stateMachine = new IntentStateMachine();
+        stateMachine.transition("ACTIVE");
+        const receivedAt = Date.now();
         const intent = {
-            intent_id: intentId,
-            principal_id: principalId,
+            intent_id: payload.intent_id,
+            principal_id: envelope.sender.principal_id,
             objective: payload.objective,
             scope: payload.scope,
-            stateMachine: new IntentStateMachine(IntentState.ANNOUNCED),
-            created_at: new Date().toISOString(),
-            received_at: now,
+            stateMachine,
+            received_at: receivedAt,
+            ttl_sec: ttlSec,
+            expires_at: ttlSec !== undefined ? receivedAt + Number(ttlSec) * 1000 : undefined,
             last_message_id: envelope.message_id,
         };
-        if (payload.ttl_sec !== undefined) {
-            intent.ttl_sec = Number(payload.ttl_sec);
-            intent.expires_at = now + intent.ttl_sec * 1000;
-        }
-        else if (payload.expiry_ms !== undefined) {
-            intent.ttl_sec = Number(payload.expiry_ms) / 1000;
-            intent.expires_at = now + Number(payload.expiry_ms);
-        }
-        this.intents.set(intentId, intent);
-        intent.stateMachine.transition("activate");
+        this.intents.set(intent.intent_id, intent);
         return this.detectScopeOverlaps(intent);
     }
     handleIntentUpdate(envelope) {
         const payload = envelope.payload;
-        const intentId = payload.intent_id;
-        const intent = this.intents.get(intentId);
+        const intent = this.intents.get(payload.intent_id);
         if (!intent || intent.principal_id !== envelope.sender.principal_id)
             return [];
         if (intent.stateMachine.currentState !== IntentState.ACTIVE)
@@ -318,164 +325,221 @@ export class SessionCoordinator {
             intent.expires_at = Date.now() + intent.ttl_sec * 1000;
         }
         intent.last_message_id = envelope.message_id;
-        if (scopeChanged) {
-            return this.detectScopeOverlaps(intent, true);
-        }
-        return [];
+        return scopeChanged ? this.detectScopeOverlaps(intent, true) : [];
     }
     handleIntentWithdraw(envelope) {
         const payload = envelope.payload;
-        const intentId = payload.intent_id;
-        const intent = this.intents.get(intentId);
+        const intent = this.intents.get(payload.intent_id);
         if (!intent || intent.principal_id !== envelope.sender.principal_id)
             return [];
         try {
-            intent.stateMachine.transition("withdraw");
+            intent.stateMachine.transition("WITHDRAWN");
         }
         catch {
             return [];
         }
-        return [...this.cascadeIntentTermination(intentId), ...this.checkAutoDismiss()];
+        return [...this.cascadeIntentTermination(payload.intent_id), ...this.checkAutoDismiss()];
     }
     handleIntentClaim(envelope) {
         const payload = envelope.payload;
         const originalIntentId = payload.original_intent_id;
-        const newIntentId = payload.new_intent_id;
-        const claimerId = envelope.sender.principal_id;
-        if (!this.intents.has(originalIntentId)) {
-            return [this.makeEnvelope(MessageType.PROTOCOL_ERROR, {
-                    error_code: "INVALID_REFERENCE",
-                    refers_to: envelope.message_id,
-                    description: `Intent ${originalIntentId} does not exist`,
-                })];
+        const original = this.intents.get(originalIntentId);
+        if (!original) {
+            return [this.makeProtocolError("INVALID_REFERENCE", envelope.message_id, `Intent ${originalIntentId} does not exist`)];
         }
         if (this.claims.has(originalIntentId)) {
-            return [this.makeEnvelope(MessageType.PROTOCOL_ERROR, {
-                    error_code: "CLAIM_CONFLICT",
-                    refers_to: envelope.message_id,
-                    description: `Intent ${originalIntentId} already claimed`,
-                })];
+            return [this.makeProtocolError("CLAIM_CONFLICT", envelope.message_id, `Intent ${originalIntentId} already has an accepted pending claim`)];
         }
-        const original = this.intents.get(originalIntentId);
+        if (original.claimed_by && original.stateMachine.currentState === IntentState.TRANSFERRED) {
+            return [this.makeProtocolError("CLAIM_CONFLICT", envelope.message_id, `Intent ${originalIntentId} has already been transferred to another claimant`)];
+        }
         if (original.stateMachine.currentState !== IntentState.SUSPENDED) {
-            return [this.makeEnvelope(MessageType.PROTOCOL_ERROR, {
-                    error_code: "INVALID_REFERENCE",
-                    refers_to: envelope.message_id,
-                    description: `Intent ${originalIntentId} is not SUSPENDED`,
-                })];
+            return [this.makeProtocolError("INVALID_REFERENCE", envelope.message_id, `Intent ${originalIntentId} is not SUSPENDED`)];
         }
-        this.claims.set(originalIntentId, payload.claim_id);
-        original.claimed_by = claimerId;
-        try {
-            original.stateMachine.transition("withdraw");
-        }
-        catch { }
-        const now = Date.now();
-        const newIntent = {
-            intent_id: newIntentId,
-            principal_id: claimerId,
+        const claim = {
+            claim_id: payload.claim_id,
+            original_intent_id: originalIntentId,
+            original_principal_id: payload.original_principal_id,
+            new_intent_id: payload.new_intent_id,
+            claimer_principal_id: envelope.sender.principal_id,
             objective: payload.objective,
             scope: payload.scope,
-            stateMachine: new IntentStateMachine(IntentState.ANNOUNCED),
-            created_at: new Date().toISOString(),
-            received_at: now,
-            last_message_id: envelope.message_id,
+            justification: payload.justification,
+            submitted_at: Date.now(),
+            decision: "pending",
         };
-        this.intents.set(newIntentId, newIntent);
-        newIntent.stateMachine.transition("activate");
-        const responses = this.cascadeIntentTermination(originalIntentId);
-        responses.push(...this.detectScopeOverlaps(newIntent));
-        return responses;
-    }
-    // ================================================================
-    //  Operation layer handlers
-    // ================================================================
-    handleOpPropose(envelope) {
-        const payload = envelope.payload;
-        const opId = payload.op_id;
-        const intentId = payload.intent_id;
-        const operation = {
-            op_id: opId,
-            intent_id: intentId,
-            principal_id: envelope.sender.principal_id,
-            target: payload.target,
-            op_kind: payload.op_kind,
-            stateMachine: new OperationStateMachine(OperationState.PROPOSED),
-            created_at: new Date().toISOString(),
-        };
-        this.operations.set(opId, operation);
-        for (const conflict of this.conflicts.values()) {
-            if (intentId === conflict.intent_a || intentId === conflict.intent_b) {
-                if (!conflict.related_ops.includes(opId))
-                    conflict.related_ops.push(opId);
-            }
-        }
-        const intent = this.intents.get(intentId);
-        if (intent) {
-            if (intent.stateMachine.isTerminal()) {
-                operation.stateMachine.transition("reject");
-                return [this.makeOpReject(opId, "intent_terminated", intent.last_message_id)];
-            }
-            else if (intent.stateMachine.currentState === IntentState.SUSPENDED) {
-                operation.stateMachine.transition("freeze");
-            }
-        }
+        original.claimed_by = claim.claimer_principal_id;
+        this.claims.set(originalIntentId, claim);
+        this.claimIndex.set(claim.claim_id, claim);
         return [];
+    }
+    handleOpPropose(envelope) {
+        const operation = this.registerOperationFromPayload(envelope.payload, envelope.sender.principal_id, OperationState.PROPOSED);
+        const responses = this.validateOperationAgainstIntent(operation);
+        if (this.executionModel === "pre_commit" && operation.stateMachine.currentState === OperationState.PROPOSED) {
+            responses.push(...this.authorizeOperation(operation));
+        }
+        return responses;
     }
     handleOpCommit(envelope) {
         const payload = envelope.payload;
         const opId = payload.op_id;
-        const intentId = payload.intent_id;
-        const operation = this.operations.get(opId);
-        if (operation) {
-            operation.stateMachine.transition("commit");
+        if (this.executionModel === "pre_commit") {
+            let operation = this.operations.get(opId);
+            if (!operation) {
+                operation = this.registerOperationFromPayload(payload, envelope.sender.principal_id, OperationState.PROPOSED);
+                const responses = this.validateOperationAgainstIntent(operation);
+                if (operation.stateMachine.currentState === OperationState.PROPOSED) {
+                    responses.push(...this.authorizeOperation(operation));
+                }
+                return responses;
+            }
+            if (operation.stateMachine.currentState === OperationState.FROZEN) {
+                return [this.makeProtocolError("SCOPE_FROZEN", envelope.message_id, `Operation ${opId} is frozen until its intent is restored`)];
+            }
+            if (operation.authorized_at === undefined) {
+                return [this.makeProtocolError("AUTHORIZATION_FAILED", envelope.message_id, `Operation ${opId} has not been authorized for execution`)];
+            }
+            if (operation.stateMachine.currentState === OperationState.PROPOSED) {
+                operation.target = payload.target ?? operation.target;
+                operation.op_kind = payload.op_kind ?? operation.op_kind;
+                operation.state_ref_before = payload.state_ref_before;
+                operation.state_ref_after = payload.state_ref_after;
+                operation.stateMachine.transition("COMMITTED");
+            }
+            return [];
         }
-        else {
-            const newOp = {
-                op_id: opId, intent_id: intentId || "",
-                principal_id: envelope.sender.principal_id,
-                target: payload.target || "", op_kind: payload.op_kind || "",
-                stateMachine: new OperationStateMachine(OperationState.PROPOSED),
-                created_at: new Date().toISOString(),
-            };
-            newOp.stateMachine.transition("commit");
-            this.operations.set(opId, newOp);
-            if (intentId) {
-                for (const conflict of this.conflicts.values()) {
-                    if (intentId === conflict.intent_a || intentId === conflict.intent_b) {
-                        if (!conflict.related_ops.includes(opId))
-                            conflict.related_ops.push(opId);
+        this.commitOperationEntry(payload, envelope.sender.principal_id);
+        return [];
+    }
+    handleOpBatchCommit(envelope) {
+        const payload = envelope.payload;
+        const batchId = payload.batch_id;
+        const atomicity = payload.atomicity ?? "all_or_nothing";
+        const operations = (payload.operations ?? []);
+        const intentId = payload.intent_id;
+        if (operations.length === 0) {
+            return [this.makeProtocolError("MALFORMED_MESSAGE", envelope.message_id, `Batch ${batchId} must contain at least one operation entry`)];
+        }
+        if (this.executionModel === "pre_commit") {
+            const existing = operations.map((entry) => this.operations.get(entry.op_id));
+            if (existing.every(Boolean)) {
+                for (const op of existing) {
+                    if (!op || op.batch_id !== batchId) {
+                        return [this.makeProtocolError("INVALID_REFERENCE", envelope.message_id, `Batch ${batchId} references unknown or mismatched operations`)];
+                    }
+                    if (op.authorized_at === undefined) {
+                        return [this.makeProtocolError("AUTHORIZATION_FAILED", envelope.message_id, `Batch ${batchId} has not been authorized for execution`)];
                     }
                 }
+                for (const [index, op] of existing.entries()) {
+                    if (!op)
+                        continue;
+                    op.state_ref_before = operations[index].state_ref_before;
+                    op.state_ref_after = operations[index].state_ref_after;
+                    if (op.stateMachine.currentState === OperationState.PROPOSED) {
+                        op.stateMachine.transition("COMMITTED");
+                    }
+                }
+                return [];
             }
+            const created = [];
+            const rejectedOps = [];
+            for (const entry of operations) {
+                const effectiveEntry = { ...entry, intent_id: entry.intent_id ?? intentId };
+                if (intentId && effectiveEntry.intent_id !== intentId) {
+                    rejectedOps.push(effectiveEntry.op_id);
+                    continue;
+                }
+                const op = this.registerOperationFromPayload(effectiveEntry, envelope.sender.principal_id, OperationState.PROPOSED, batchId);
+                created.push(op);
+                this.validateOperationAgainstIntent(op).forEach(() => undefined);
+                if (op.stateMachine.currentState !== OperationState.PROPOSED) {
+                    rejectedOps.push(op.op_id);
+                }
+            }
+            if (atomicity === "all_or_nothing" && rejectedOps.length > 0) {
+                return [this.makeBatchReject(batchId, rejectedOps, "batch_validation_failed")];
+            }
+            const responses = [];
+            for (const op of created) {
+                if (op.stateMachine.currentState === OperationState.PROPOSED) {
+                    responses.push(...this.authorizeOperation(op, batchId));
+                }
+            }
+            return responses;
+        }
+        const rejectedOps = [];
+        for (const entry of operations) {
+            const effectiveEntry = { ...entry, intent_id: entry.intent_id ?? intentId };
+            if (intentId && effectiveEntry.intent_id !== intentId) {
+                rejectedOps.push(effectiveEntry.op_id);
+                continue;
+            }
+            const temp = this.buildOperation(effectiveEntry, envelope.sender.principal_id, OperationState.COMMITTED, batchId);
+            const validation = this.validateOperationAgainstIntent(temp, false);
+            if (validation.length > 0) {
+                rejectedOps.push(temp.op_id);
+            }
+        }
+        if (atomicity === "all_or_nothing" && rejectedOps.length > 0) {
+            return [this.makeBatchReject(batchId, rejectedOps, "batch_validation_failed")];
+        }
+        for (const entry of operations) {
+            const effectiveEntry = { ...entry, intent_id: entry.intent_id ?? intentId };
+            if (rejectedOps.includes(effectiveEntry.op_id))
+                continue;
+            this.commitOperationEntry(effectiveEntry, envelope.sender.principal_id, batchId);
         }
         return [];
     }
-    // ================================================================
-    //  Conflict layer handlers
-    // ================================================================
+    handleOpSupersede(envelope) {
+        const payload = envelope.payload;
+        const oldOp = this.operations.get(payload.supersedes_op_id);
+        if (!oldOp) {
+            return [this.makeProtocolError("INVALID_REFERENCE", envelope.message_id, `Operation ${payload.supersedes_op_id} does not exist`)];
+        }
+        if (oldOp.stateMachine.currentState !== OperationState.COMMITTED) {
+            return [this.makeProtocolError("INVALID_REFERENCE", envelope.message_id, `Operation ${payload.supersedes_op_id} is not COMMITTED (state: ${oldOp.stateMachine.currentState})`)];
+        }
+        oldOp.stateMachine.transition("SUPERSEDED");
+        const newOp = this.buildOperation({
+            op_id: payload.op_id,
+            intent_id: payload.intent_id ?? oldOp.intent_id,
+            target: payload.target ?? oldOp.target,
+            op_kind: payload.op_kind ?? oldOp.op_kind,
+            state_ref_before: oldOp.state_ref_after,
+            state_ref_after: payload.state_ref_after,
+        }, envelope.sender.principal_id, OperationState.COMMITTED);
+        this.operations.set(newOp.op_id, newOp);
+        this.trackOperationConflicts(newOp.intent_id, newOp.op_id);
+        return [];
+    }
     handleConflictReport(envelope) {
         const payload = envelope.payload;
         const conflictId = payload.conflict_id;
         if (!this.conflicts.has(conflictId)) {
+            const involvedPrincipals = (payload.involved_principals ?? []);
             this.conflicts.set(conflictId, {
-                conflict_id: conflictId, category: payload.category, severity: payload.severity,
-                involved_principals: payload.involved_principals || [],
-                scope_a: payload.scope_a, scope_b: payload.scope_b,
-                intent_a: payload.intent_a || "", intent_b: payload.intent_b || "",
-                stateMachine: new ConflictStateMachine(ConflictState.OPEN),
-                created_at: Date.now(),
+                conflict_id: conflictId,
+                category: payload.category ?? ConflictCategory.SCOPE_OVERLAP,
+                severity: payload.severity ?? Severity.MEDIUM,
+                principal_a: payload.principal_a ?? involvedPrincipals[0] ?? "",
+                principal_b: payload.principal_b ?? involvedPrincipals[1] ?? "",
+                intent_a: payload.intent_a ?? "",
+                intent_b: payload.intent_b ?? "",
+                stateMachine: new ConflictStateMachine(),
                 related_intents: [payload.intent_a, payload.intent_b].filter(Boolean),
                 related_ops: [],
+                created_at: Date.now(),
             });
         }
         return [];
     }
     handleConflictAck(envelope) {
-        const payload = envelope.payload;
-        const conflict = this.conflicts.get(payload.conflict_id);
+        const conflict = this.conflicts.get(envelope.payload.conflict_id);
         if (conflict && conflict.stateMachine.currentState === ConflictState.OPEN) {
-            conflict.stateMachine.transition("ack");
+            conflict.stateMachine.transition("ACKED");
         }
         return [];
     }
@@ -484,15 +548,10 @@ export class SessionCoordinator {
         const conflict = this.conflicts.get(payload.conflict_id);
         if (!conflict)
             return [];
-        try {
-            if (conflict.stateMachine.currentState === ConflictState.OPEN)
-                conflict.stateMachine.transition("ack");
-            if (conflict.stateMachine.currentState === ConflictState.ACKED)
-                conflict.stateMachine.transition("escalate");
-        }
-        catch {
-            return [];
-        }
+        if (conflict.stateMachine.currentState === ConflictState.OPEN)
+            conflict.stateMachine.transition("ACKED");
+        if (conflict.stateMachine.currentState === ConflictState.ACKED)
+            conflict.stateMachine.transition("ESCALATED");
         conflict.escalated_to = payload.escalate_to;
         conflict.escalated_at = Date.now();
         return [];
@@ -500,48 +559,62 @@ export class SessionCoordinator {
     handleResolution(envelope) {
         const payload = envelope.payload;
         const conflict = this.conflicts.get(payload.conflict_id);
-        if (!conflict || conflict.stateMachine.isTerminal())
-            return [];
-        const decision = payload.decision;
-        if (decision === "dismissed") {
-            conflict.stateMachine.transition("dismiss");
+        if (!conflict) {
+            return [this.makeProtocolError("INVALID_REFERENCE", envelope.message_id, `Conflict ${payload.conflict_id} does not exist`)];
+        }
+        if (conflict.resolution_id || conflict.stateMachine.isTerminal()) {
+            return [this.makeProtocolError("RESOLUTION_CONFLICT", envelope.message_id, `Conflict ${payload.conflict_id} already has an accepted resolution`)];
+        }
+        if (!this.isAuthorizedResolver(conflict, envelope.sender.principal_id)) {
+            return [this.makeProtocolError("AUTHORIZATION_FAILED", envelope.message_id, `Principal ${envelope.sender.principal_id} is not authorized to resolve conflict ${payload.conflict_id}`)];
+        }
+        const outcome = (payload.outcome ?? {});
+        const rejected = Array.isArray(outcome.rejected) ? outcome.rejected : [];
+        const committedRejections = rejected.filter((id) => {
+            const op = this.operations.get(id);
+            return op?.stateMachine.currentState === OperationState.COMMITTED;
+        });
+        if (committedRejections.length > 0 && !outcome.rollback) {
+            return [this.makeProtocolError("MALFORMED_MESSAGE", envelope.message_id, "Resolutions rejecting committed operations must declare outcome.rollback")];
+        }
+        if (payload.decision === "dismissed") {
+            if (conflict.stateMachine.currentState === ConflictState.OPEN ||
+                conflict.stateMachine.currentState === ConflictState.ACKED ||
+                conflict.stateMachine.currentState === ConflictState.ESCALATED) {
+                conflict.stateMachine.transition("DISMISSED");
+            }
         }
         else {
-            const st = conflict.stateMachine.currentState;
-            if (st === ConflictState.OPEN) {
-                conflict.stateMachine.transition("ack");
-                conflict.stateMachine.transition("resolve");
-                conflict.stateMachine.transition("close");
+            if (conflict.stateMachine.currentState === ConflictState.OPEN)
+                conflict.stateMachine.transition("ACKED");
+            if (conflict.stateMachine.currentState === ConflictState.ACKED) {
+                conflict.stateMachine.transition("RESOLVED");
+                conflict.stateMachine.transition("CLOSED");
             }
-            else if (st === ConflictState.ACKED) {
-                conflict.stateMachine.transition("resolve");
-                conflict.stateMachine.transition("close");
-            }
-            else if (st === ConflictState.ESCALATED) {
-                conflict.stateMachine.transition("resolve");
-                conflict.stateMachine.transition("close");
+            else if (conflict.stateMachine.currentState === ConflictState.ESCALATED) {
+                conflict.stateMachine.transition("RESOLVED");
+                conflict.stateMachine.transition("CLOSED");
             }
         }
+        conflict.resolution_id = payload.resolution_id ?? uuidv4();
+        conflict.resolved_by = envelope.sender.principal_id;
         return [];
     }
-    // ================================================================
-    //  Cascade & Auto-dismiss
-    // ================================================================
     cascadeIntentTermination(intentId) {
         const intent = this.intents.get(intentId);
         if (!intent)
             return [];
         const responses = [];
-        for (const op of this.operations.values()) {
-            if (op.intent_id !== intentId)
+        for (const operation of this.operations.values()) {
+            if (operation.intent_id !== intentId)
                 continue;
-            if (op.stateMachine.currentState === OperationState.PROPOSED) {
-                op.stateMachine.transition("reject");
-                responses.push(this.makeOpReject(op.op_id, "intent_terminated", intent.last_message_id));
+            if (operation.stateMachine.currentState === OperationState.PROPOSED) {
+                operation.stateMachine.transition("REJECTED");
+                responses.push(this.makeOpReject(operation.op_id, "intent_terminated", intent.last_message_id));
             }
-            else if (op.stateMachine.currentState === OperationState.FROZEN) {
-                op.stateMachine.transition("reject");
-                responses.push(this.makeOpReject(op.op_id, "intent_terminated", intent.last_message_id));
+            else if (operation.stateMachine.currentState === OperationState.FROZEN) {
+                operation.stateMachine.transition("REJECTED");
+                responses.push(this.makeOpReject(operation.op_id, "intent_terminated", intent.last_message_id));
             }
         }
         return responses;
@@ -551,202 +624,604 @@ export class SessionCoordinator {
         for (const conflict of this.conflicts.values()) {
             if (conflict.stateMachine.isTerminal())
                 continue;
-            const allIT = conflict.related_intents.every(iid => {
-                const i = this.intents.get(iid);
-                return !i || i.stateMachine.isTerminal();
+            const allIntentsTerminal = conflict.related_intents.every((intentId) => {
+                const intent = this.intents.get(intentId);
+                return !intent || intent.stateMachine.isTerminal();
             });
-            if (!allIT)
+            if (!allIntentsTerminal)
                 continue;
-            let ok = true, hasCommitted = false;
-            for (const oid of conflict.related_ops) {
-                const op = this.operations.get(oid);
-                if (!op)
+            let hasCommitted = false;
+            let allOpsTerminal = true;
+            for (const opId of conflict.related_ops) {
+                const operation = this.operations.get(opId);
+                if (!operation)
                     continue;
-                if (op.stateMachine.currentState === OperationState.COMMITTED) {
+                if (operation.stateMachine.currentState === OperationState.COMMITTED) {
                     hasCommitted = true;
                     break;
                 }
-                if (!op.stateMachine.isTerminal()) {
-                    ok = false;
+                if (![OperationState.REJECTED, OperationState.ABANDONED, OperationState.SUPERSEDED].includes(operation.stateMachine.currentState)) {
+                    allOpsTerminal = false;
                     break;
                 }
             }
-            if (hasCommitted || !ok)
+            if (hasCommitted || !allOpsTerminal)
                 continue;
-            try {
-                conflict.stateMachine.transition("dismiss");
-            }
-            catch {
-                continue;
-            }
+            conflict.stateMachine.transition("DISMISSED");
+            conflict.resolution_id = uuidv4();
+            conflict.resolved_by = this.coordinatorId;
             responses.push(this.makeEnvelope(MessageType.RESOLUTION, {
-                conflict_id: conflict.conflict_id, decision: "dismissed",
+                resolution_id: conflict.resolution_id,
+                conflict_id: conflict.conflict_id,
+                decision: "dismissed",
                 rationale: "all_related_entities_terminated",
             }));
         }
         return responses;
     }
-    // ================================================================
-    //  Liveness cascade
-    // ================================================================
     handleParticipantUnavailable(principalId) {
-        const responses = [];
-        responses.push(this.makeEnvelope(MessageType.PROTOCOL_ERROR, {
-            error_code: "PARTICIPANT_UNAVAILABLE",
-            refers_to: principalId,
-            description: `Participant ${principalId} is unavailable`,
-        }));
-        // Suspend intents
+        const responses = [
+            this.makeEnvelope(MessageType.PROTOCOL_ERROR, {
+                error_code: "PARTICIPANT_UNAVAILABLE",
+                refers_to: principalId,
+                description: `Participant ${principalId} is unavailable (no heartbeat for >${this.unavailabilityTimeoutMs / 1000}s)`,
+            }),
+        ];
         for (const intent of this.intents.values()) {
-            if (intent.principal_id === principalId && intent.stateMachine.currentState === IntentState.ACTIVE) {
-                intent.stateMachine.transition("suspend");
-                for (const op of this.operations.values()) {
-                    if (op.intent_id === intent.intent_id && op.stateMachine.currentState === OperationState.PROPOSED) {
-                        op.stateMachine.transition("freeze");
+            if (intent.principal_id !== principalId)
+                continue;
+            if (intent.stateMachine.currentState === IntentState.ACTIVE) {
+                intent.stateMachine.transition("SUSPENDED");
+                for (const operation of this.operations.values()) {
+                    if (operation.intent_id === intent.intent_id && operation.stateMachine.currentState === OperationState.PROPOSED) {
+                        operation.stateMachine.transition("FROZEN");
                     }
                 }
             }
         }
-        // Abandon orphaned proposals
-        for (const op of this.operations.values()) {
-            if (op.principal_id !== principalId)
+        for (const operation of this.operations.values()) {
+            if (operation.principal_id !== principalId)
                 continue;
-            if (op.stateMachine.currentState === OperationState.PROPOSED) {
-                op.stateMachine.transition("abandon");
+            if (operation.stateMachine.currentState === OperationState.PROPOSED) {
+                operation.stateMachine.transition("ABANDONED");
             }
-            else if (op.stateMachine.currentState === OperationState.FROZEN) {
-                op.stateMachine.transition("abandon");
+            else if (operation.stateMachine.currentState === OperationState.FROZEN) {
+                operation.stateMachine.transition("ABANDONED");
             }
         }
         return responses;
     }
-    // ================================================================
-    //  Helpers
-    // ================================================================
     makeEnvelope(messageType, payload) {
-        return createEnvelope(messageType, this.sessionId, { principal_id: this.coordinatorId, principal_type: "coordinator" }, payload, this.lamportClock.createWatermark());
+        return createEnvelope(messageType, this.sessionId, {
+            principal_id: this.coordinatorId,
+            principal_type: "service",
+            sender_instance_id: this.coordinatorInstanceId,
+        }, Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined)), this.lamportClock.createWatermark(), this.coordinatorEpoch);
     }
     makeOpReject(opId, reason, refersTo) {
-        const payload = { op_id: opId, reason };
-        if (refersTo)
-            payload.refers_to = refersTo;
-        return this.makeEnvelope(MessageType.OP_REJECT, payload);
+        return this.makeEnvelope(MessageType.OP_REJECT, {
+            op_id: opId,
+            reason,
+            refers_to: refersTo,
+        });
+    }
+    makeBatchReject(batchId, rejectedOps, reason) {
+        return this.makeEnvelope(MessageType.OP_REJECT, {
+            op_id: batchId,
+            reason,
+            rejected_ops: rejectedOps,
+        });
+    }
+    makeProtocolError(errorCode, refersTo, description) {
+        return this.makeEnvelope(MessageType.PROTOCOL_ERROR, {
+            error_code: errorCode,
+            refers_to: refersTo,
+            description,
+        });
+    }
+    rememberMessageId(messageId) {
+        this.recentMessageIds.push(messageId);
+        if (this.recentMessageIds.length > 200) {
+            this.recentMessageIds = this.recentMessageIds.slice(-200);
+        }
+    }
+    recordSenderFrontier(envelope) {
+        const key = `${envelope.sender.principal_id}|${envelope.sender.sender_instance_id}`;
+        let lamportValue;
+        if (envelope.watermark) {
+            lamportValue = envelope.watermark.kind === "lamport_clock"
+                ? Number(envelope.watermark.value)
+                : envelope.watermark.lamport_value;
+        }
+        this.senderFrontier[key] = {
+            last_ts: envelope.ts,
+            last_lamport: lamportValue,
+        };
+    }
+    buildOperation(payload, principalId, state, batchId) {
+        const stateMachine = new OperationStateMachine();
+        if (state === OperationState.COMMITTED)
+            stateMachine.transition("COMMITTED");
+        else if (state === OperationState.REJECTED)
+            stateMachine.transition("REJECTED");
+        else if (state === OperationState.ABANDONED)
+            stateMachine.transition("ABANDONED");
+        else if (state === OperationState.FROZEN)
+            stateMachine.transition("FROZEN");
+        return {
+            op_id: payload.op_id,
+            intent_id: payload.intent_id ?? "",
+            principal_id: principalId,
+            target: payload.target ?? "",
+            op_kind: payload.op_kind ?? "",
+            stateMachine,
+            state_ref_before: payload.state_ref_before,
+            state_ref_after: payload.state_ref_after,
+            batch_id: batchId,
+            created_at: Date.now(),
+        };
+    }
+    registerOperationFromPayload(payload, principalId, state, batchId) {
+        const operation = this.buildOperation(payload, principalId, state, batchId);
+        this.operations.set(operation.op_id, operation);
+        this.trackOperationConflicts(operation.intent_id, operation.op_id);
+        return operation;
+    }
+    commitOperationEntry(payload, principalId, batchId) {
+        const opId = payload.op_id;
+        let operation = this.operations.get(opId);
+        if (!operation) {
+            operation = this.registerOperationFromPayload(payload, principalId, OperationState.COMMITTED, batchId);
+        }
+        else {
+            operation.intent_id = payload.intent_id ?? operation.intent_id;
+            operation.target = payload.target ?? operation.target;
+            operation.op_kind = payload.op_kind ?? operation.op_kind;
+            operation.state_ref_before = payload.state_ref_before;
+            operation.state_ref_after = payload.state_ref_after;
+            if (operation.stateMachine.currentState === OperationState.PROPOSED) {
+                operation.stateMachine.transition("COMMITTED");
+            }
+        }
+        this.trackOperationConflicts(operation.intent_id, opId);
+        return operation;
+    }
+    validateOperationAgainstIntent(operation, persist = true) {
+        const intent = this.intents.get(operation.intent_id);
+        if (!intent)
+            return [];
+        if (intent.stateMachine.isTerminal()) {
+            if (persist && operation.stateMachine.currentState === OperationState.PROPOSED) {
+                operation.stateMachine.transition("REJECTED");
+            }
+            return [this.makeOpReject(operation.op_id, "intent_terminated", intent.last_message_id)];
+        }
+        if (intent.stateMachine.currentState === IntentState.SUSPENDED) {
+            if (persist && operation.stateMachine.currentState === OperationState.PROPOSED) {
+                operation.stateMachine.transition("FROZEN");
+            }
+        }
+        return [];
+    }
+    authorizeOperation(operation, batchId) {
+        if (operation.authorized_at !== undefined)
+            return [];
+        operation.authorized_at = Date.now();
+        operation.authorized_by = this.coordinatorId;
+        return [this.makeEnvelope(MessageType.COORDINATOR_STATUS, {
+                event: "authorization",
+                authorized_op_id: operation.op_id,
+                authorized_batch_id: batchId,
+                authorized_by: operation.authorized_by,
+            })];
+    }
+    trackOperationConflicts(intentId, opId) {
+        if (!intentId)
+            return;
+        for (const conflict of this.conflicts.values()) {
+            if ((conflict.intent_a === intentId || conflict.intent_b === intentId) && !conflict.related_ops.includes(opId)) {
+                conflict.related_ops.push(opId);
+            }
+        }
     }
     detectScopeOverlaps(intent, skipExistingConflicts = false) {
         const responses = [];
-        for (const existing of this.intents.values()) {
-            if (existing.intent_id === intent.intent_id)
+        for (const other of this.intents.values()) {
+            if (other.intent_id === intent.intent_id)
                 continue;
-            if (existing.stateMachine.currentState !== IntentState.ACTIVE &&
-                existing.stateMachine.currentState !== IntentState.SUSPENDED)
+            if (other.stateMachine.currentState !== IntentState.ACTIVE && other.stateMachine.currentState !== IntentState.SUSPENDED)
                 continue;
-            if (!scopeOverlap(intent.scope, existing.scope))
+            if (!scopeOverlap(intent.scope, other.scope))
                 continue;
             if (skipExistingConflicts) {
-                let alreadyExists = false;
-                for (const c of this.conflicts.values()) {
-                    if (c.stateMachine.isTerminal())
-                        continue;
-                    if ((c.intent_a === intent.intent_id && c.intent_b === existing.intent_id) ||
-                        (c.intent_b === intent.intent_id && c.intent_a === existing.intent_id)) {
-                        alreadyExists = true;
-                        break;
-                    }
-                }
-                if (alreadyExists)
+                const existing = [...this.conflicts.values()].some((conflict) => {
+                    if (conflict.stateMachine.isTerminal())
+                        return false;
+                    return ((conflict.intent_a === intent.intent_id && conflict.intent_b === other.intent_id) ||
+                        (conflict.intent_b === intent.intent_id && conflict.intent_a === other.intent_id));
+                });
+                if (existing)
                     continue;
             }
-            const conflictId = "conflict-" + uuidv4();
+            const conflictId = uuidv4();
             this.conflicts.set(conflictId, {
-                conflict_id: conflictId, category: ConflictCategory.SCOPE_OVERLAP, severity: Severity.MEDIUM,
-                involved_principals: [intent.principal_id, existing.principal_id],
-                scope_a: intent.scope, scope_b: existing.scope,
-                intent_a: intent.intent_id, intent_b: existing.intent_id,
-                stateMachine: new ConflictStateMachine(ConflictState.OPEN),
+                conflict_id: conflictId,
+                category: ConflictCategory.SCOPE_OVERLAP,
+                severity: Severity.MEDIUM,
+                principal_a: intent.principal_id,
+                principal_b: other.principal_id,
+                intent_a: intent.intent_id,
+                intent_b: other.intent_id,
+                stateMachine: new ConflictStateMachine(),
+                related_intents: [intent.intent_id, other.intent_id],
+                related_ops: [],
                 created_at: Date.now(),
-                related_intents: [intent.intent_id, existing.intent_id], related_ops: [],
             });
             responses.push(this.makeEnvelope(MessageType.CONFLICT_REPORT, {
-                conflict_id: conflictId, category: ConflictCategory.SCOPE_OVERLAP, severity: Severity.MEDIUM,
-                involved_principals: [intent.principal_id, existing.principal_id],
-                scope_a: intent.scope, scope_b: existing.scope,
-                intent_a: intent.intent_id, intent_b: existing.intent_id,
+                conflict_id: conflictId,
+                category: ConflictCategory.SCOPE_OVERLAP,
+                severity: Severity.MEDIUM,
+                involved_principals: [intent.principal_id, other.principal_id],
+                principal_a: intent.principal_id,
+                principal_b: other.principal_id,
+                intent_a: intent.intent_id,
+                intent_b: other.intent_id,
             }));
         }
         return responses;
     }
+    handleOwnerRejoin(principalId) {
+        const responses = [];
+        for (const claim of [...this.claims.values()]) {
+            if (claim.original_principal_id === principalId && claim.decision === "pending") {
+                responses.push(...this.withdrawClaim(claim, "original_owner_rejoined"));
+            }
+        }
+        for (const intent of this.intents.values()) {
+            if (intent.principal_id !== principalId)
+                continue;
+            if (intent.stateMachine.currentState === IntentState.SUSPENDED && !intent.claimed_by) {
+                intent.stateMachine.transition("ACTIVE");
+                for (const operation of this.operations.values()) {
+                    if (operation.intent_id === intent.intent_id && operation.stateMachine.currentState === OperationState.FROZEN) {
+                        operation.stateMachine.transition("PROPOSED");
+                    }
+                }
+            }
+        }
+        return responses;
+    }
     findArbiter() {
-        for (const [pid, info] of this.participants) {
+        for (const [principalId, info] of this.participants.entries()) {
             if (!info.is_available)
                 continue;
-            if (info.principal.roles?.includes("arbiter"))
-                return pid;
+            if ((info.principal.roles ?? []).includes("arbiter"))
+                return principalId;
         }
         return undefined;
     }
-    // ================================================================
-    //  Session lifecycle (v0.1.5)
-    // ================================================================
+    findClaimApprover(claimerPrincipalId) {
+        for (const [principalId, info] of this.participants.entries()) {
+            if (principalId === claimerPrincipalId || !info.is_available)
+                continue;
+            const roles = new Set((info.principal.roles ?? []).map(String));
+            if (roles.has("owner") || roles.has("arbiter"))
+                return principalId;
+        }
+        return undefined;
+    }
+    approveClaim(claim, approvedBy) {
+        const original = this.intents.get(claim.original_intent_id);
+        if (!original)
+            return this.rejectClaim(claim, "original_intent_missing");
+        claim.decision = "approved";
+        claim.approved_by = approvedBy;
+        original.claimed_by = claim.claimer_principal_id;
+        if (original.stateMachine.currentState === IntentState.SUSPENDED) {
+            original.stateMachine.transition("TRANSFERRED");
+        }
+        const stateMachine = new IntentStateMachine();
+        stateMachine.transition("ACTIVE");
+        const newIntent = {
+            intent_id: claim.new_intent_id,
+            principal_id: claim.claimer_principal_id,
+            objective: claim.objective,
+            scope: claim.scope,
+            stateMachine,
+            received_at: Date.now(),
+            last_message_id: claim.claim_id,
+        };
+        this.intents.set(newIntent.intent_id, newIntent);
+        this.claims.delete(claim.original_intent_id);
+        const responses = [
+            this.makeEnvelope(MessageType.INTENT_CLAIM_STATUS, {
+                claim_id: claim.claim_id,
+                original_intent_id: claim.original_intent_id,
+                new_intent_id: claim.new_intent_id,
+                decision: "approved",
+                approved_by: approvedBy,
+            }),
+        ];
+        responses.push(...this.cascadeIntentTermination(claim.original_intent_id));
+        responses.push(...this.detectScopeOverlaps(newIntent));
+        return responses;
+    }
+    rejectClaim(claim, reason) {
+        claim.decision = "rejected";
+        this.claims.delete(claim.original_intent_id);
+        return [this.makeEnvelope(MessageType.INTENT_CLAIM_STATUS, {
+                claim_id: claim.claim_id,
+                original_intent_id: claim.original_intent_id,
+                decision: "rejected",
+                reason,
+            })];
+    }
+    withdrawClaim(claim, reason) {
+        const original = this.intents.get(claim.original_intent_id);
+        if (original && original.stateMachine.currentState === IntentState.SUSPENDED) {
+            original.claimed_by = undefined;
+            original.stateMachine.transition("ACTIVE");
+            for (const operation of this.operations.values()) {
+                if (operation.intent_id === original.intent_id && operation.stateMachine.currentState === OperationState.FROZEN) {
+                    operation.stateMachine.transition("PROPOSED");
+                }
+            }
+        }
+        claim.decision = "withdrawn";
+        this.claims.delete(claim.original_intent_id);
+        return [this.makeEnvelope(MessageType.INTENT_CLAIM_STATUS, {
+                claim_id: claim.claim_id,
+                original_intent_id: claim.original_intent_id,
+                decision: "withdrawn",
+                reason,
+            })];
+    }
+    checkPendingClaims(nowMs = Date.now()) {
+        const responses = [];
+        for (const claim of [...this.claims.values()]) {
+            if (claim.decision !== "pending")
+                continue;
+            const original = this.intents.get(claim.original_intent_id);
+            if (!original) {
+                responses.push(...this.rejectClaim(claim, "original_intent_missing"));
+                continue;
+            }
+            if (original.stateMachine.currentState !== IntentState.SUSPENDED) {
+                responses.push(...this.rejectClaim(claim, "intent_no_longer_suspended"));
+                continue;
+            }
+            if (this.complianceProfile === ComplianceProfile.GOVERNANCE) {
+                const approver = this.findClaimApprover(claim.claimer_principal_id);
+                if (!approver)
+                    continue;
+                responses.push(...this.approveClaim(claim, approver));
+                continue;
+            }
+            if (nowMs - claim.submitted_at >= this.intentClaimGraceMs) {
+                responses.push(...this.approveClaim(claim));
+            }
+        }
+        return responses;
+    }
+    isAuthorizedResolver(conflict, principalId) {
+        if (principalId === this.coordinatorId)
+            return true;
+        const participant = this.participants.get(principalId);
+        const roles = new Set((participant?.principal.roles ?? []).map(String));
+        const relatedPrincipal = principalId === conflict.principal_a || principalId === conflict.principal_b;
+        if (conflict.stateMachine.currentState === ConflictState.ESCALATED) {
+            return principalId === conflict.escalated_to || roles.has("arbiter");
+        }
+        return relatedPrincipal || roles.has("owner") || roles.has("arbiter");
+    }
+    recoverFromSnapshot(snapshotData) {
+        this.lamportClock = new LamportClock(snapshotData.lamport_clock ?? 0);
+        this.sessionClosed = snapshotData.session_closed ?? false;
+        this.coordinatorEpoch = Number(snapshotData.coordinator_epoch ?? 1) + 1;
+        this.coordinatorInstanceId = `${this.coordinatorId}:epoch-${this.coordinatorEpoch}`;
+        this.recentMessageIds = [...(snapshotData.anti_replay?.recent_message_ids ?? [])];
+        this.senderFrontier = { ...(snapshotData.anti_replay?.sender_frontier ?? {}) };
+        this.participants.clear();
+        for (const participant of snapshotData.participants ?? []) {
+            this.participants.set(participant.principal_id, {
+                principal: {
+                    principal_id: participant.principal_id,
+                    principal_type: participant.principal_type ?? "agent",
+                    display_name: participant.display_name,
+                    roles: participant.roles ?? ["participant"],
+                    capabilities: participant.capabilities ?? [],
+                },
+                last_seen: participant.last_seen ? new Date(participant.last_seen).getTime() : Date.now(),
+                status: participant.status ?? "idle",
+                is_available: participant.is_available ?? true,
+            });
+        }
+        this.intents.clear();
+        for (const intentData of snapshotData.intents ?? []) {
+            const stateMachine = new IntentStateMachine();
+            const targetState = intentData.state;
+            if (targetState === "ACTIVE")
+                stateMachine.transition("ACTIVE");
+            else if (targetState === "EXPIRED") {
+                stateMachine.transition("ACTIVE");
+                stateMachine.transition("EXPIRED");
+            }
+            else if (targetState === "WITHDRAWN") {
+                stateMachine.transition("ACTIVE");
+                stateMachine.transition("WITHDRAWN");
+            }
+            else if (targetState === "SUPERSEDED") {
+                stateMachine.transition("ACTIVE");
+                stateMachine.transition("SUPERSEDED");
+            }
+            else if (targetState === "SUSPENDED") {
+                stateMachine.transition("ACTIVE");
+                stateMachine.transition("SUSPENDED");
+            }
+            else if (targetState === "TRANSFERRED") {
+                stateMachine.transition("ACTIVE");
+                stateMachine.transition("TRANSFERRED");
+            }
+            this.intents.set(intentData.intent_id, {
+                intent_id: intentData.intent_id,
+                principal_id: intentData.principal_id ?? "",
+                objective: intentData.objective ?? "",
+                scope: intentData.scope ?? { kind: "file_set" },
+                stateMachine,
+                received_at: intentData.received_at ? new Date(intentData.received_at).getTime() : Date.now(),
+                ttl_sec: intentData.ttl_sec,
+                expires_at: intentData.expires_at ? new Date(intentData.expires_at).getTime() : undefined,
+                last_message_id: intentData.last_message_id,
+                claimed_by: intentData.claimed_by,
+            });
+        }
+        this.operations.clear();
+        for (const opData of snapshotData.operations ?? []) {
+            const stateMachine = new OperationStateMachine();
+            const targetState = opData.state;
+            if (targetState === "COMMITTED")
+                stateMachine.transition("COMMITTED");
+            else if (targetState === "REJECTED")
+                stateMachine.transition("REJECTED");
+            else if (targetState === "ABANDONED")
+                stateMachine.transition("ABANDONED");
+            else if (targetState === "FROZEN")
+                stateMachine.transition("FROZEN");
+            else if (targetState === "SUPERSEDED") {
+                stateMachine.transition("COMMITTED");
+                stateMachine.transition("SUPERSEDED");
+            }
+            this.operations.set(opData.op_id, {
+                op_id: opData.op_id,
+                intent_id: opData.intent_id ?? "",
+                principal_id: opData.principal_id ?? "",
+                target: opData.target ?? "",
+                op_kind: opData.op_kind ?? "",
+                stateMachine,
+                state_ref_before: opData.state_ref_before,
+                state_ref_after: opData.state_ref_after,
+                batch_id: opData.batch_id,
+                authorized_at: opData.authorized_at ? new Date(opData.authorized_at).getTime() : undefined,
+                authorized_by: opData.authorized_by,
+                created_at: opData.created_at ? new Date(opData.created_at).getTime() : Date.now(),
+            });
+        }
+        this.conflicts.clear();
+        for (const conflictData of snapshotData.conflicts ?? []) {
+            const stateMachine = new ConflictStateMachine();
+            const targetState = conflictData.state;
+            if (targetState === "ACKED")
+                stateMachine.transition("ACKED");
+            else if (targetState === "ESCALATED") {
+                stateMachine.transition("ACKED");
+                stateMachine.transition("ESCALATED");
+            }
+            else if (targetState === "RESOLVED") {
+                stateMachine.transition("ACKED");
+                stateMachine.transition("RESOLVED");
+            }
+            else if (targetState === "CLOSED") {
+                stateMachine.transition("ACKED");
+                stateMachine.transition("RESOLVED");
+                stateMachine.transition("CLOSED");
+            }
+            else if (targetState === "DISMISSED")
+                stateMachine.transition("DISMISSED");
+            this.conflicts.set(conflictData.conflict_id, {
+                conflict_id: conflictData.conflict_id,
+                category: conflictData.category ?? ConflictCategory.SCOPE_OVERLAP,
+                severity: conflictData.severity ?? Severity.MEDIUM,
+                principal_a: conflictData.principal_a ?? "",
+                principal_b: conflictData.principal_b ?? "",
+                intent_a: conflictData.intent_a ?? "",
+                intent_b: conflictData.intent_b ?? "",
+                stateMachine,
+                related_intents: conflictData.related_intents ?? [],
+                related_ops: conflictData.related_ops ?? [],
+                created_at: conflictData.created_at ? new Date(conflictData.created_at).getTime() : Date.now(),
+                escalated_to: conflictData.escalated_to,
+                escalated_at: conflictData.escalated_at ? new Date(conflictData.escalated_at).getTime() : undefined,
+                resolution_id: conflictData.resolution_id,
+                resolved_by: conflictData.resolved_by,
+            });
+        }
+        this.claims.clear();
+        this.claimIndex.clear();
+        for (const claimData of snapshotData.pending_claims ?? []) {
+            const claim = {
+                claim_id: claimData.claim_id,
+                original_intent_id: claimData.original_intent_id,
+                original_principal_id: claimData.original_principal_id ?? "",
+                new_intent_id: claimData.new_intent_id,
+                claimer_principal_id: claimData.claimer_principal_id,
+                objective: claimData.objective ?? "",
+                scope: claimData.scope ?? { kind: "file_set" },
+                justification: claimData.justification,
+                submitted_at: claimData.submitted_at ? new Date(claimData.submitted_at).getTime() : Date.now(),
+                decision: claimData.decision ?? "pending",
+                approved_by: claimData.approved_by,
+            };
+            this.claims.set(claim.original_intent_id, claim);
+            this.claimIndex.set(claim.claim_id, claim);
+        }
+    }
+    replayAuditLog(messages) {
+        const responses = [];
+        for (const message of messages) {
+            responses.push(...this.processMessage(message));
+        }
+        return responses;
+    }
+    getAuditLog() {
+        return [...this.auditLog];
+    }
     closeSession(reason = "manual") {
         if (this.sessionClosed)
             return [];
         this.sessionClosed = true;
-        // Withdraw all active intents
         for (const intent of this.intents.values()) {
             if (!intent.stateMachine.isTerminal() && intent.stateMachine.currentState !== IntentState.ANNOUNCED) {
                 try {
-                    intent.stateMachine.transition("withdraw");
+                    intent.stateMachine.transition("WITHDRAWN");
                 }
                 catch { }
             }
         }
-        // Abandon all in-flight operations
-        for (const op of this.operations.values()) {
-            if (op.stateMachine.currentState === OperationState.PROPOSED || op.stateMachine.currentState === OperationState.FROZEN) {
+        for (const operation of this.operations.values()) {
+            if (operation.stateMachine.currentState === OperationState.PROPOSED || operation.stateMachine.currentState === OperationState.FROZEN) {
                 try {
-                    op.stateMachine.transition("abandon");
+                    operation.stateMachine.transition("ABANDONED");
                 }
                 catch { }
             }
         }
-        const summary = this.buildSessionSummary();
         return [this.makeEnvelope(MessageType.SESSION_CLOSE, {
                 reason,
                 final_lamport_clock: this.lamportClock.value,
-                summary,
+                summary: this.buildSessionSummary(),
                 active_intents_disposition: "withdraw_all",
             })];
     }
     checkAutoClose() {
-        if (this.sessionClosed)
+        if (this.sessionClosed || this.intents.size === 0)
             return [];
         for (const intent of this.intents.values()) {
             if (!intent.stateMachine.isTerminal())
                 return [];
         }
-        for (const op of this.operations.values()) {
-            if (op.stateMachine.currentState === OperationState.PROPOSED || op.stateMachine.currentState === OperationState.FROZEN)
+        for (const operation of this.operations.values()) {
+            if (operation.stateMachine.currentState === OperationState.PROPOSED || operation.stateMachine.currentState === OperationState.FROZEN)
                 return [];
         }
         for (const conflict of this.conflicts.values()) {
             if (conflict.stateMachine.currentState !== ConflictState.CLOSED && conflict.stateMachine.currentState !== ConflictState.DISMISSED)
                 return [];
         }
-        if (this.intents.size === 0)
-            return [];
         return this.closeSession("completed");
     }
     coordinatorStatus(event = "heartbeat") {
-        let openConflicts = 0;
-        for (const c of this.conflicts.values()) {
-            if (c.stateMachine.currentState !== ConflictState.CLOSED && c.stateMachine.currentState !== ConflictState.DISMISSED)
-                openConflicts++;
-        }
-        let activeParticipants = 0;
-        for (const p of this.participants.values()) {
-            if (p.is_available)
-                activeParticipants++;
-        }
+        const openConflicts = [...this.conflicts.values()].filter((conflict) => conflict.stateMachine.currentState !== ConflictState.CLOSED && conflict.stateMachine.currentState !== ConflictState.DISMISSED).length;
+        const activeParticipants = [...this.participants.values()].filter((participant) => participant.is_available).length;
         return [this.makeEnvelope(MessageType.COORDINATOR_STATUS, {
                 event,
                 coordinator_id: this.coordinatorId,
@@ -757,77 +1232,103 @@ export class SessionCoordinator {
             })];
     }
     snapshot() {
-        const participants = [];
-        for (const [pid, info] of this.participants.entries()) {
-            participants.push({
-                principal_id: pid,
+        return {
+            snapshot_version: 2,
+            session_id: this.sessionId,
+            protocol_version: PROTOCOL_VERSION,
+            captured_at: new Date().toISOString(),
+            coordinator_epoch: this.coordinatorEpoch,
+            lamport_clock: this.lamportClock.value,
+            anti_replay: {
+                replay_window_sec: 300,
+                recent_message_ids: [...this.recentMessageIds],
+                sender_frontier: { ...this.senderFrontier },
+            },
+            participants: [...this.participants.values()].map((info) => ({
+                principal_id: info.principal.principal_id,
+                principal_type: info.principal.principal_type,
                 display_name: info.principal.display_name,
                 roles: info.principal.roles,
+                capabilities: info.principal.capabilities,
                 status: info.status,
                 is_available: info.is_available,
                 last_seen: new Date(info.last_seen).toISOString(),
-            });
-        }
-        const intents = [];
-        for (const intent of this.intents.values()) {
-            intents.push({
+            })),
+            intents: [...this.intents.values()].map((intent) => ({
                 intent_id: intent.intent_id,
                 principal_id: intent.principal_id,
+                objective: intent.objective,
                 state: intent.stateMachine.currentState,
                 scope: intent.scope,
+                received_at: new Date(intent.received_at).toISOString(),
+                ttl_sec: intent.ttl_sec,
                 expires_at: intent.expires_at ? new Date(intent.expires_at).toISOString() : null,
-            });
-        }
-        const operations = [];
-        for (const op of this.operations.values()) {
-            operations.push({
-                op_id: op.op_id,
-                intent_id: op.intent_id,
-                state: op.stateMachine.currentState,
-                target: op.target,
-            });
-        }
-        const conflicts = [];
-        for (const c of this.conflicts.values()) {
-            conflicts.push({
-                conflict_id: c.conflict_id,
-                state: c.stateMachine.currentState,
-                related_intents: c.related_intents || [c.intent_a, c.intent_b],
-                related_ops: c.related_ops || [],
-            });
-        }
-        return {
-            snapshot_version: 1,
-            session_id: this.sessionId,
-            protocol_version: "0.1.5",
-            captured_at: new Date().toISOString(),
-            lamport_clock: this.lamportClock.value,
-            participants,
-            intents,
-            operations,
-            conflicts,
+                last_message_id: intent.last_message_id,
+                claimed_by: intent.claimed_by,
+            })),
+            operations: [...this.operations.values()].map((operation) => ({
+                op_id: operation.op_id,
+                intent_id: operation.intent_id,
+                principal_id: operation.principal_id,
+                state: operation.stateMachine.currentState,
+                target: operation.target,
+                op_kind: operation.op_kind,
+                state_ref_before: operation.state_ref_before,
+                state_ref_after: operation.state_ref_after,
+                batch_id: operation.batch_id,
+                authorized_at: operation.authorized_at ? new Date(operation.authorized_at).toISOString() : null,
+                authorized_by: operation.authorized_by,
+                created_at: new Date(operation.created_at).toISOString(),
+            })),
+            conflicts: [...this.conflicts.values()].map((conflict) => ({
+                conflict_id: conflict.conflict_id,
+                category: conflict.category,
+                severity: conflict.severity,
+                principal_a: conflict.principal_a,
+                principal_b: conflict.principal_b,
+                intent_a: conflict.intent_a,
+                intent_b: conflict.intent_b,
+                state: conflict.stateMachine.currentState,
+                related_intents: conflict.related_intents,
+                related_ops: conflict.related_ops,
+                created_at: new Date(conflict.created_at).toISOString(),
+                escalated_to: conflict.escalated_to,
+                escalated_at: conflict.escalated_at ? new Date(conflict.escalated_at).toISOString() : null,
+                resolution_id: conflict.resolution_id,
+                resolved_by: conflict.resolved_by,
+            })),
+            pending_claims: [...this.claims.values()].map((claim) => ({
+                claim_id: claim.claim_id,
+                original_intent_id: claim.original_intent_id,
+                original_principal_id: claim.original_principal_id,
+                new_intent_id: claim.new_intent_id,
+                claimer_principal_id: claim.claimer_principal_id,
+                objective: claim.objective,
+                scope: claim.scope,
+                justification: claim.justification,
+                submitted_at: new Date(claim.submitted_at).toISOString(),
+                decision: claim.decision,
+                approved_by: claim.approved_by,
+            })),
             session_closed: this.sessionClosed,
         };
     }
     buildSessionSummary() {
-        const nowMs = Date.now();
-        const durationSec = Math.floor((nowMs - this.sessionStartedAt) / 1000);
         return {
             total_intents: this.intents.size,
             total_operations: this.operations.size,
             total_conflicts: this.conflicts.size,
             total_participants: this.participants.size,
-            duration_sec: durationSec,
+            duration_sec: Math.floor((Date.now() - this.sessionStartedAt) / 1000),
         };
     }
-    // Accessors for testing
     getParticipant(id) { return this.participants.get(id); }
     getIntent(id) { return this.intents.get(id); }
     getOperation(id) { return this.operations.get(id); }
     getConflict(id) { return this.conflicts.get(id); }
-    getParticipants() { return Array.from(this.participants.values()); }
-    getIntents() { return Array.from(this.intents.values()); }
-    getOperations() { return Array.from(this.operations.values()); }
-    getConflicts() { return Array.from(this.conflicts.values()); }
+    getParticipants() { return [...this.participants.values()]; }
+    getIntents() { return [...this.intents.values()]; }
+    getOperations() { return [...this.operations.values()]; }
+    getConflicts() { return [...this.conflicts.values()]; }
 }
 //# sourceMappingURL=coordinator.js.map

@@ -7,7 +7,7 @@
   "properties": {
     "event": {
       "type": "string",
-      "enum": ["heartbeat", "recovered", "handover", "assumed"]
+      "description": "Standard events include heartbeat, recovered, handover, and assumed; implementations may also use implementation-defined coordinator events such as authorization."
     },
     "coordinator_id": { "type": "string" },
     "session_health": {

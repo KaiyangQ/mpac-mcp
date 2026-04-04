@@ -11,6 +11,7 @@ export interface MessageEnvelope {
   ts: string;
   payload: unknown;
   watermark?: Watermark;
+  coordinator_epoch?: number;
 }
 
 export function createEnvelope(
@@ -18,11 +19,12 @@ export function createEnvelope(
   sessionId: string,
   sender: Sender,
   payload: unknown,
-  watermark?: Watermark
+  watermark?: Watermark,
+  coordinatorEpoch?: number
 ): MessageEnvelope {
   return {
     protocol: "MPAC",
-    version: "0.1.4",
+    version: "0.1.10",
     message_type: messageType,
     message_id: uuidv4(),
     session_id: sessionId,
@@ -30,6 +32,7 @@ export function createEnvelope(
     ts: new Date().toISOString(),
     payload,
     watermark,
+    coordinator_epoch: coordinatorEpoch,
   };
 }
 

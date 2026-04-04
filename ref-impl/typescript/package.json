@@ -1,7 +1,7 @@
 {
   "name": "mpac-ref-ts",
-  "version": "0.1.4",
-  "description": "TypeScript reference implementation for MPAC (Multi-Principal Agent Coordination Protocol) v0.1.4",
+  "version": "0.1.10",
+  "description": "TypeScript reference implementation for MPAC (Multi-Principal Agent Coordination Protocol) v0.1.10",
   "type": "module",
   "main": "dist/index.js",
   "exports": {

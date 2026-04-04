@@ -69,8 +69,11 @@ describe("INTENT_CLAIM (Section 14.5.4)", () => {
     expect(coord.getIntent("i-a")!.stateMachine.currentState).toBe(IntentState.SUSPENDED);
 
     // Bob claims
-    coord.processMessage(bob.claimIntent(sid, "claim-1", "i-a", "agent:alice", "i-b", "Continue", scope as any));
-    expect(coord.getIntent("i-a")!.stateMachine.currentState).toBe(IntentState.WITHDRAWN);
+    const responses = coord.processMessage(bob.claimIntent(sid, "claim-1", "i-a", "agent:alice", "i-b", "Continue", scope as any));
+    const statusMessages = responses.filter((message) => message.message_type === MessageType.INTENT_CLAIM_STATUS);
+    expect(statusMessages.length).toBe(1);
+    expect((statusMessages[0].payload as any).decision).toBe("approved");
+    expect(coord.getIntent("i-a")!.stateMachine.currentState).toBe(IntentState.TRANSFERRED);
     expect(coord.getIntent("i-b")!.stateMachine.currentState).toBe(IntentState.ACTIVE);
     expect(coord.getIntent("i-b")!.principal_id).toBe("agent:bob");
   });

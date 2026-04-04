@@ -2,19 +2,19 @@
   "$id": "https://mpac-protocol.org/schema/envelope.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "MPAC Message Envelope",
-  "description": "Outer wrapper for all MPAC messages.",
+  "description": "Outer wrapper for all MPAC v0.1.10 messages.",
   "type": "object",
   "required": ["protocol", "version", "message_type", "message_id", "session_id", "sender", "ts", "payload"],
   "properties": {
     "protocol": { "type": "string", "const": "MPAC" },
-    "version": { "type": "string", "description": "Protocol version, e.g. '0.1.6'" },
+    "version": { "type": "string", "description": "Protocol version, e.g. '0.1.10'" },
     "message_type": {
       "type": "string",
       "enum": [
         "HELLO", "SESSION_INFO", "HEARTBEAT", "GOODBYE",
         "SESSION_CLOSE", "COORDINATOR_STATUS",
-        "INTENT_ANNOUNCE", "INTENT_UPDATE", "INTENT_WITHDRAW", "INTENT_CLAIM",
-        "OP_PROPOSE", "OP_COMMIT", "OP_REJECT", "OP_SUPERSEDE",
+        "INTENT_ANNOUNCE", "INTENT_UPDATE", "INTENT_WITHDRAW", "INTENT_CLAIM", "INTENT_CLAIM_STATUS",
+        "OP_PROPOSE", "OP_BATCH_COMMIT", "OP_COMMIT", "OP_REJECT", "OP_SUPERSEDE",
         "CONFLICT_REPORT", "CONFLICT_ACK", "CONFLICT_ESCALATE",
         "RESOLUTION", "PROTOCOL_ERROR"
       ]
@@ -23,15 +23,17 @@
     "session_id": { "type": "string" },
     "sender": {
       "type": "object",
-      "required": ["principal_id", "principal_type"],
+      "required": ["principal_id", "principal_type", "sender_instance_id"],
       "properties": {
         "principal_id": { "type": "string" },
-        "principal_type": { "type": "string", "enum": ["human", "agent", "service"] }
+        "principal_type": { "type": "string", "enum": ["human", "agent", "service"] },
+        "sender_instance_id": { "type": "string" }
       }
     },
     "ts": { "type": "string", "format": "date-time", "description": "RFC 3339 UTC timestamp." },
     "payload": { "type": "object" },
     "watermark": { "$ref": "objects/watermark.schema.json" },
+    "coordinator_epoch": { "type": "integer", "minimum": 1 },
     "in_reply_to": { "type": "string" },
     "trace_id": { "type": "string" },
     "policy_ref": { "type": "string" },

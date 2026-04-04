@@ -76,7 +76,7 @@ def main():
     print_phase("MPAC Live Demo — AI Agent Coordination")
     print(f"  Session: {SESSION_ID}")
     print(f"  Scenario: Two AI agents independently decide how to fix a Python web app.")
-    print(f"  Protocol: MPAC v0.1.6 with coordinator-managed conflict detection.\n")
+    print(f"  Protocol: MPAC v0.1.10 with coordinator-managed conflict detection.\n")
 
     # ---- Setup ----
     coordinator = SessionCoordinator(SESSION_ID)
@@ -217,8 +217,8 @@ def main():
     process(bob_commit, "Bob commit")
     print()
 
-    # ════════════════ Phase 5: OP_SUPERSEDE (v0.1.6) ════════════════
-    print_phase("Phase 5: OP_SUPERSEDE — Alice Revises Her Operation (v0.1.6)")
+    # ════════════════ Phase 5: OP_SUPERSEDE ════════════════
+    print_phase("Phase 5: OP_SUPERSEDE — Alice Revises Her Operation")
 
     print("  Alice realizes her first commit needs a revision...")
     print(f"  Superseding op: {alice_op.get('op_id', 'op-alice-?')}\n")
@@ -251,7 +251,7 @@ def main():
         print(f"  New op ({new_op_id}): state={new_op_obj.state_machine.current_state.value}")
     print()
 
-    # ════════════════ Phase 6: Coordinator Status (v0.1.5) ════════════════
+    # ════════════════ Phase 6: Coordinator Status ════════════════
     print_phase("Phase 6: Coordinator Status")
 
     status_msgs = coordinator.coordinator_status("heartbeat")
@@ -260,7 +260,7 @@ def main():
         transcript.append({"direction": "← coordinator", "label": "coordinator_status", "envelope": s})
     print()
 
-    # ════════════════ Phase 7: State Snapshot (v0.1.5) ════════════════
+    # ════════════════ Phase 7: State Snapshot ════════════════
     print_phase("Phase 7: State Snapshot")
 
     snap = coordinator.snapshot()
@@ -279,8 +279,8 @@ def main():
         print(f"    {c['conflict_id'][:12]}...: state={c['state']}")
     print()
 
-    # ════════════════ Phase 8: Fault Recovery (v0.1.6) ════════════════
-    print_phase("Phase 8: Fault Recovery — Snapshot + Audit Log Replay (v0.1.6)")
+    # ════════════════ Phase 8: Fault Recovery ════════════════
+    print_phase("Phase 8: Fault Recovery — Snapshot + Audit Log Replay")
 
     # Take snapshot + capture audit log position
     pre_crash_snap = coordinator.snapshot()
@@ -375,7 +375,7 @@ def main():
     else:
         print(f"\n  No file overlap — agents naturally partitioned work.")
 
-    print(f"\n  v0.1.6 features exercised:")
+    print(f"\n  v0.1.10 features exercised:")
     print(f"    ✓ COORDINATOR_STATUS heartbeat")
     print(f"    ✓ State snapshot ({len(snap['participants'])} participants, {len(snap['intents'])} intents, {len(snap['operations'])} ops)")
     print(f"    ✓ OP_SUPERSEDE (Alice revised her commit)")

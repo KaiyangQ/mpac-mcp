@@ -137,8 +137,12 @@ def test_claim_suspended_intent():
     )
     responses = coord.process_message(claim)
 
-    # Original intent should be WITHDRAWN (terminated)
-    assert coord.intents["intent-a"].state_machine.current_state == IntentState.WITHDRAWN
+    status_messages = [r for r in responses if r["message_type"] == "INTENT_CLAIM_STATUS"]
+    assert len(status_messages) == 1
+    assert status_messages[0]["payload"]["decision"] == "approved"
+
+    # Original intent should be TRANSFERRED under v0.1.10
+    assert coord.intents["intent-a"].state_machine.current_state == IntentState.TRANSFERRED
     assert coord.intents["intent-a"].claimed_by == "agent:bob"
 
     # New intent should be ACTIVE

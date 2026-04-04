@@ -3,18 +3,21 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "SESSION_INFO Payload",
   "type": "object",
-  "required": ["session_id", "protocol_version", "security_profile", "compliance_profile", "watermark_kind", "state_ref_format", "granted_roles"],
+  "required": ["session_id", "protocol_version", "security_profile", "compliance_profile", "watermark_kind", "execution_model", "state_ref_format", "granted_roles"],
   "properties": {
     "session_id": { "type": "string" },
     "protocol_version": { "type": "string" },
     "security_profile": { "type": "string", "enum": ["open", "authenticated", "verified"] },
     "compliance_profile": { "type": "string", "enum": ["core", "governance", "semantic"] },
     "watermark_kind": { "type": "string" },
+    "execution_model": { "type": "string", "enum": ["pre_commit", "post_commit"] },
     "state_ref_format": { "type": "string" },
     "governance_policy": { "type": "object" },
     "liveness_policy": { "type": "object" },
     "participant_count": { "type": "integer" },
     "granted_roles": { "type": "array", "items": { "type": "string" } },
+    "identity_verified": { "type": "boolean" },
+    "identity_method": { "type": "string" },
     "compatibility_errors": { "type": "array", "items": { "type": "string" } }
   }
 }

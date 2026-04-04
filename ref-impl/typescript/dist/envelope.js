@@ -1,8 +1,8 @@
 import { v4 as uuidv4 } from "uuid";
-export function createEnvelope(messageType, sessionId, sender, payload, watermark) {
+export function createEnvelope(messageType, sessionId, sender, payload, watermark, coordinatorEpoch) {
     return {
         protocol: "MPAC",
-        version: "0.1.4",
+        version: "0.1.10",
         message_type: messageType,
         message_id: uuidv4(),
         session_id: sessionId,
@@ -10,6 +10,7 @@ export function createEnvelope(messageType, sessionId, sender, payload, watermar
         ts: new Date().toISOString(),
         payload,
         watermark,
+        coordinator_epoch: coordinatorEpoch,
     };
 }
 export function envelopeToJSON(envelope) {

@@ -210,11 +210,15 @@ def test_snapshot_contains_all_state():
     snapshot = coord.snapshot()
 
     # Verify structure
-    assert snapshot["snapshot_version"] == 1
+    assert snapshot["snapshot_version"] == 2
     assert snapshot["session_id"] == sid
-    assert snapshot["protocol_version"] == "0.1.6"
+    assert snapshot["protocol_version"] == "0.1.10"
     assert "captured_at" in snapshot
+    assert "coordinator_epoch" in snapshot
     assert "lamport_clock" in snapshot
+    assert "anti_replay" in snapshot
+    assert "recent_message_ids" in snapshot["anti_replay"]
+    assert "sender_frontier" in snapshot["anti_replay"]
 
     # Verify participants
     assert len(snapshot["participants"]) == 2
