@@ -102,23 +102,24 @@ Being clear about boundaries is as important as explaining capabilities:
 
 ## Current Status
 
-MPAC is at **v0.1.4** — a draft protocol with working reference implementations but not yet a production standard.
+MPAC is at **v0.1.7** — a draft protocol with working reference implementations but not yet a production standard.
 
 What exists today:
 
-- **Full protocol specification** ([SPEC.md](../SPEC.md)) — 24 sections covering all five layers, three security profiles, three compliance profiles, and cross-lifecycle state machine rules.
-- **Developer reference** ([MPAC_Developer_Reference.md](../MPAC_Developer_Reference.md)) — complete data dictionary with 10 core objects, 17 message types, 3 state machines, and an implementation checklist.
+- **Full protocol specification** ([SPEC.md](../SPEC.md)) — 30 sections covering all five layers, three security profiles, three compliance profiles, explicit consistency and execution models, normative state transition tables, and cross-lifecycle state machine rules.
+- **Developer reference** ([MPAC_Developer_Reference.md](../MPAC_Developer_Reference.md)) — complete data dictionary with 10 core objects, 20 message types, 3 state machines with normative transition tables, and an implementation checklist.
 - **JSON Schema** ([ref-impl/schema/](../ref-impl/schema/)) — machine-readable wire format definitions for envelope and all message payloads.
-- **Reference implementations** in [Python](../ref-impl/python/) and [TypeScript](../ref-impl/typescript/) — both pass cross-language interoperability tests.
-- **AI agent demo** ([ref-impl/demo/](../ref-impl/demo/)) — two Claude agents coordinating through the full protocol lifecycle.
-- **Audit-driven evolution** — every version change is archived with rationale, and an independent five-dimension audit informed the v0.1.3→v0.1.4 revision.
+- **Reference implementations** in [Python](../ref-impl/python/) and [TypeScript](../ref-impl/typescript/) — ~90% protocol coverage (70 + 56 tests), 14-message cross-language interoperability, real Claude API end-to-end verification.
+- **AI agent demo** ([ref-impl/demo/](../ref-impl/demo/)) — two Claude agents coordinating through the full protocol lifecycle, exercising session join, intent declaration, conflict detection, negotiation, commit, coordinator status, state snapshot, and session close.
+- **Audit-driven evolution** — every version change is archived with rationale. The protocol has been through seven revision rounds including a five-dimension audit (v0.1.3→v0.1.4), a gap analysis (v0.1.4→v0.1.5), and a SOSP/OSDI-level deep review (v0.1.6→v0.1.7).
 
 What's still missing:
 
 - **Conformance test suite** — the interop tests exist but aren't yet a formal compliance certification.
-- **Complete reference implementation** — current coverage is ~30% of protocol semantics (core path only; no governance profile, no failure recovery, no security enforcement).
+- **v0.1.7 feature implementation** — `OP_BATCH_COMMIT`, pre-commit execution model, frozen scope progressive degradation, and coordinator accountability are specified but not yet implemented in reference code.
+- **Authenticated security profile** — signature verification, replay detection, and role-based access are specified but not yet enforced in reference implementations.
 - **Production deployment** — no known production system runs MPAC yet.
-- **Formal verification** — the state machine interactions have been analyzed but not formally verified (e.g., TLA+).
+- **Formal verification** — the state machine interactions have normative transition tables but haven't been formally verified (e.g., TLA+).
 
 MPAC is best suited today for research discussion, prototype implementations, and early ecosystem conversations about multi-agent coordination standards.
 
