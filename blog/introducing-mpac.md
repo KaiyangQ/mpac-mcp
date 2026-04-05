@@ -39,17 +39,20 @@ This layering is what makes MPAC different from "just use a message queue" or "j
 
 ## How It Works in Practice
 
-Here's what a real MPAC session looks like, using two AI agents (Claude) that independently decide what to work on:
+Here's what a real MPAC session looks like, using two AI agents (Claude) that independently decide what to work on.
 
 **Setup:** A Flask web application has several known issues — a token expiry bug, N+1 queries, code duplication. Two AI agents join a session: Alice (security engineer) and Bob (code quality engineer).
 
-**Phase 1 — Session Join:**
+**Phase 1 — Session Join & Capability Negotiation:**
+
 ```
-Alice  → Coordinator:  HELLO  (roles: contributor, capabilities: intent.broadcast, op.commit)
-Coordinator → Alice:   SESSION_INFO  (profile: open, compliance: core)
-Bob    → Coordinator:  HELLO
+Alice  → Coordinator:  HELLO  (roles: owner, capabilities: intent.broadcast, op.commit)
+Coordinator → Alice:   SESSION_INFO  (profile: open, compliance: core, execution_model: post_commit)
+Bob    → Coordinator:  HELLO  (roles: contributor)
 Coordinator → Bob:     SESSION_INFO
 ```
+
+The coordinator validates credentials (required for non-open security profiles), assigns roles, and returns the session configuration. Unregistered senders cannot participate — any message other than HELLO from an unknown principal is rejected immediately.
 
 **Phase 2 — Intent Declaration:**
 
@@ -67,7 +70,7 @@ Bob   → Coordinator:  INTENT_ANNOUNCE
 
 **Phase 3 — Automatic Conflict Detection:**
 
-The coordinator detects that both intents touch `auth.py` and `auth_middleware.py`. It automatically generates a structured conflict report:
+The coordinator detects that both intents touch `src/auth.py` and `src/auth_middleware.py`. It automatically generates a structured conflict report:
 
 ```
 Coordinator → All:  CONFLICT_REPORT
@@ -76,6 +79,8 @@ Coordinator → All:  CONFLICT_REPORT
   severity: "medium"
 ```
 
+If the conflict remains unresolved past `resolution_timeout_sec` and no arbiter is available, the overlapping scope enters a **frozen state**. While frozen, new operations targeting those files are blocked with `SCOPE_FROZEN`, and new intents fully contained within the frozen scope are rejected — though intents that only partially overlap are accepted with a warning.
+
 **Phase 4 — AI-Driven Negotiation:**
 
 Both agents are asked how to handle the conflict. Each independently calls Claude:
@@ -83,13 +88,30 @@ Both agents are asked how to handle the conflict. Each independently calls Claud
 - **Alice:** "This is a critical security vulnerability. I should proceed first, then Bob can incorporate my changes into his refactoring."
 - **Bob:** "Alice's security fix is urgent. My refactoring can wait. Let her go first, and I'll build on her changes."
 
-Two independent AI agents, with no shared prompt and no hardcoded coordination logic, reached the same conclusion through the protocol's structured conflict channel.
+Two independent AI agents, with no shared prompt and no hardcoded coordination logic, reached the same conclusion through the protocol's structured conflict channel. Only the owner or a designated arbiter can submit the resolution — the protocol enforces this based on participant roles.
 
 **Phase 5 — Execution:**
 
-Both agents plan and commit their operations through `OP_COMMIT`, carrying state references (`state_ref_before`, `state_ref_after`) and causal watermarks for auditability.
+Both agents plan and commit their operations through `OP_COMMIT`, carrying state references (`state_ref_before`, `state_ref_after`) and causal watermarks for auditability. For multi-file changes, `OP_BATCH_COMMIT` provides atomic batches with `all_or_nothing` or `best_effort` semantics — including rollback of partially-created operations on validation failure.
 
 Total protocol messages: **10.** The entire coordination — from joining to conflict resolution to commit — happened through structured MPAC messages, not ad-hoc chat or manual human intervention.
+
+## What Makes v0.1.12 Different
+
+MPAC has evolved through twelve revision rounds, each driven by independent audit. The current version represents a step-change in maturity: the protocol is no longer just a specification — it has machine-enforceable constraints and adversarial-tested reference implementations.
+
+**Schema conformance closure.** All 21 message types have dedicated JSON Schema definitions (Draft 2020-12). The envelope schema dispatches payload validation to the correct message-specific schema via `if/then` conditional constraints. A third-party implementation can now get wire compatibility by passing schema validation alone.
+
+**Runtime enforcement.** Both reference implementations enforce normative spec requirements that were previously only in prose:
+
+- **HELLO-first gate** — unregistered senders are rejected immediately; only HELLO is exempt.
+- **Credential validation** — non-open security profiles reject HELLO without valid credentials.
+- **Resolution authority** — only owners/arbiters can resolve conflicts pre-escalation; only the escalation target or arbiter can resolve post-escalation.
+- **Frozen-scope enforcement** — operations targeting resources within a frozen conflict scope are blocked. The check is target-based, not intent-based, so it cannot be bypassed by omitting optional fields.
+- **Batch atomicity** — `all_or_nothing` batches that fail validation clean up all already-registered operations before returning the rejection.
+- **Snapshot persistence** — frozen state survives coordinator recovery. A coordinator restart doesn't silently unfreeze contested scopes.
+
+**Adversarial testing.** 66 new tests (34 Python + 32 TypeScript) specifically target enforcement bypass attempts: unregistered senders, missing credentials, unauthorized resolvers, frozen-scope evasion via omitted `intent_id`, snapshot recovery state loss, and partial-overlap edge cases. These tests were written in response to real findings from four rounds of independent audit.
 
 ## What MPAC Does *Not* Do
 
@@ -102,26 +124,24 @@ Being clear about boundaries is as important as explaining capabilities:
 
 ## Current Status
 
-MPAC is at **v0.1.7** — a draft protocol with working reference implementations but not yet a production standard.
+MPAC is at **v0.1.12** — a draft protocol with conformance-tested reference implementations.
 
 What exists today:
 
 - **Full protocol specification** ([SPEC.md](../SPEC.md)) — 30 sections covering all five layers, three security profiles, three compliance profiles, explicit consistency and execution models, normative state transition tables, and cross-lifecycle state machine rules.
-- **Developer reference** ([MPAC_Developer_Reference.md](../MPAC_Developer_Reference.md)) — complete data dictionary with 10 core objects, 20 message types, 3 state machines with normative transition tables, and an implementation checklist.
-- **JSON Schema** ([ref-impl/schema/](../ref-impl/schema/)) — machine-readable wire format definitions for envelope and all message payloads.
-- **Reference implementations** in [Python](../ref-impl/python/) and [TypeScript](../ref-impl/typescript/) — ~90% protocol coverage (70 + 56 tests), 14-message cross-language interoperability, real Claude API end-to-end verification.
+- **Developer reference** ([MPAC_Developer_Reference.md](../MPAC_Developer_Reference.md)) — complete data dictionary with 10 core objects, 21 message types, 3 state machines with normative transition tables, and an implementation checklist.
+- **JSON Schema** ([ref-impl/schema/](../ref-impl/schema/)) — machine-readable wire format definitions for envelope and all 21 message payload schemas, with `if/then` conditional constraints for coordinator-only messages, handover fields, claim status decisions, and authorization events.
+- **Reference implementations** in [Python](../ref-impl/python/) (109 tests) and [TypeScript](../ref-impl/typescript/) (88 tests) — full protocol coverage including session lifecycle, intent management, operation execution (pre-commit and post-commit models), conflict detection and resolution, coordinator fault recovery with snapshot persistence, atomic batch operations, frozen-scope enforcement, and credential validation.
 - **AI agent demo** ([ref-impl/demo/](../ref-impl/demo/)) — two Claude agents coordinating through the full protocol lifecycle, exercising session join, intent declaration, conflict detection, negotiation, commit, coordinator status, state snapshot, and session close.
-- **Audit-driven evolution** — every version change is archived with rationale. The protocol has been through seven revision rounds including a five-dimension audit (v0.1.3→v0.1.4), a gap analysis (v0.1.4→v0.1.5), and a SOSP/OSDI-level deep review (v0.1.6→v0.1.7).
+- **Audit-driven evolution** — every version change is archived with rationale. The protocol has been through twelve revision rounds including a five-dimension audit (v0.1.3), a gap analysis (v0.1.4→v0.1.5), a SOSP/OSDI-level deep review (v0.1.6→v0.1.7), schema conformance closure (v0.1.12), and four rounds of adversarial runtime enforcement audit.
 
-What's still missing:
+What's still ahead:
 
-- **Conformance test suite** — the interop tests exist but aren't yet a formal compliance certification.
-- **v0.1.7 feature implementation** — `OP_BATCH_COMMIT`, pre-commit execution model, frozen scope progressive degradation, and coordinator accountability are specified but not yet implemented in reference code.
-- **Authenticated security profile** — signature verification, replay detection, and role-based access are specified but not yet enforced in reference implementations.
-- **Production deployment** — no known production system runs MPAC yet.
+- **Replay rejection enforcement** — Lamport monotonicity and sender-frontier checks are specified but not yet enforced at runtime.
+- **Frozen scope progressive degradation** — the three-phase degradation sequence (normal → escalate+priority bypass → first-committer-wins) is specified in Section 18.6.2.1 but not yet implemented.
+- **Multi-coordinator fencing** — split-brain prevention via epoch comparison is specified but not yet exercised under concurrent coordinator scenarios.
 - **Formal verification** — the state machine interactions have normative transition tables but haven't been formally verified (e.g., TLA+).
-
-MPAC is best suited today for research discussion, prototype implementations, and early ecosystem conversations about multi-agent coordination standards.
+- **Production deployment** — no known production system runs MPAC yet.
 
 ## Why Now
 
@@ -131,7 +151,7 @@ Three trends are converging that make multi-principal coordination increasingly 
 
 **Multi-agent architectures are proliferating.** MCP and A2A have established that agents won't operate in isolation. But the more agents interact, the more likely they'll serve different principals with different goals — and the more urgent the need for coordination semantics that don't assume a single authority.
 
-**Accountability requirements are tightening.** As agents make consequential decisions on behalf of people, the ability to trace *who instructed what, based on which information, and why* becomes a governance requirement, not a nice-to-have. MPAC's causal watermarking and structured conflict objects are designed to make this traceability a first-class protocol feature.
+**Accountability requirements are tightening.** As agents make consequential decisions on behalf of people, the ability to trace *who instructed what, based on which information, and why* becomes a governance requirement, not a nice-to-have. MPAC's causal watermarking, structured conflict objects, and role-enforced resolution authority are designed to make this traceability a first-class protocol feature.
 
 ## Get Involved
 
