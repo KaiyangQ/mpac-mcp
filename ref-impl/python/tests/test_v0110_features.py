@@ -18,7 +18,7 @@ def test_session_info_declares_execution_model_and_epoch():
 
     session_info = responses[0]
     assert session_info["message_type"] == "SESSION_INFO"
-    assert session_info["version"] == "0.1.10"
+    assert session_info["version"] == "0.1.11"
     assert session_info["coordinator_epoch"] == 1
     assert session_info["sender"]["principal_type"] == "service"
     assert session_info["sender"]["sender_instance_id"].startswith(f"service:coordinator-{sid}:epoch-")

@@ -15,7 +15,8 @@ version_history/
 ├── v0.1.7_review_driven_hardening/        ← v0.1.7 spec, update record, calibrated deep review
 ├── v0.1.8_coordination_semantics_hardening/ ← v0.1.8 spec, update record
 ├── v0.1.9_core_coherence_closure/         ← v0.1.9 spec snapshot, update record, and changeset
-└── v0.1.10_execution_governance_closure/  ← v0.1.10 spec snapshot, update record, and changeset
+├── v0.1.10_execution_governance_closure/  ← v0.1.10 spec snapshot, update record, and changeset
+└── v0.1.11_example_and_schema_alignment/  ← v0.1.11 spec snapshot, update record, and changeset
 ```
 
 The current source of truth is always **SPEC.md** in the project root.
@@ -259,6 +260,31 @@ Revision boundary created after the v0.1.9 coherence closure. This round keeps M
 | `SPEC_v0.1.10_2026-04-04.md` | Archived snapshot of the implemented v0.1.10 spec |
 | `MPAC_v0.1.10_Update_Record.md` | Update record mapping residual protocol gaps to the concrete v0.1.10 fixes |
 | `MPAC_v0.1.10_Spec_Changeset.md` | Rule-level changeset that was merged into the root spec for v0.1.10 |
+
+---
+
+## v0.1.11 — Example and Schema Alignment (2026-04-04)
+
+Revision boundary created after a systematic review of the v0.1.10 root spec. This round addresses documentation-level inconsistencies (example messages missing normative fields, payload table gaps, cross-reference errors), adds SHOULD-level normative clarifications for edge-case behaviors, and fixes one state machine table gap and one terminology inconsistency. No new message types or wire format changes; one row added to the Intent state transition table.
+
+**Key changes:**
+- Fix all Section 28 example messages: add `sender_instance_id` to sender objects, update `version` from `"0.1.0"` to `"0.1.11"`
+- Add `identity_issuer` (Optional) to `SESSION_INFO` payload table in Section 13.1 to match the credential exchange example in Section 23.1.4
+- Align `SESSION_CLOSE` summary example (Section 14.5) with the detailed structure defined in Section 9.6.2
+- Fix `COORDINATOR_STATUS` cross-reference: `(Section 14.3)` → `(Section 14.7.5)` for `heartbeat_interval_sec`
+- Add pre-commit disambiguation rule for `OP_BATCH_COMMIT`: coordinator checks `batch_id` existence to distinguish initial request from completion declaration
+- Add scope-expansion conflict re-evaluation guidance to `INTENT_UPDATE` (Section 15.4)
+- Clarify `GOODBYE` transfer disposition: coordinator SHOULD transition intents to `SUSPENDED`, enabling `INTENT_CLAIM`; add corresponding `ACTIVE → SUSPENDED` row to the Intent State Transition Table (Section 15.6.1)
+- Add Semantic Profile placeholder note (Section 20.3)
+- Unify "current conflict phase" → "current authority phase" terminology across Conflict State Transition Table and Section 18.4
+
+**Contents:**
+
+| File | Description |
+|------|-------------|
+| `SPEC_v0.1.11_2026-04-04.md` | Archived snapshot of the implemented v0.1.11 spec |
+| `MPAC_v0.1.11_Update_Record.md` | Update record mapping each documentation/normative gap to its v0.1.11 fix |
+| `MPAC_v0.1.11_Spec_Changeset.md` | Field- and rule-level changeset that was merged into the root spec for v0.1.11 |
 
 ---
 

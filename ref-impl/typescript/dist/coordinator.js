@@ -4,7 +4,7 @@ import { ComplianceProfile, ConflictCategory, ConflictState, MessageType, Operat
 import { scopeOverlap } from "./scope.js";
 import { ConflictStateMachine, IntentStateMachine, OperationStateMachine } from "./state-machines.js";
 import { LamportClock } from "./watermark.js";
-const PROTOCOL_VERSION = "0.1.10";
+const PROTOCOL_VERSION = "0.1.11";
 export class SessionCoordinator {
     sessionId;
     coordinatorId;
@@ -221,6 +221,7 @@ export class SessionCoordinator {
             granted_roles: requestedRoles,
             identity_verified: this.securityProfile === SecurityProfile.OPEN || Boolean(payload.credential),
             identity_method: payload.credential?.type,
+            identity_issuer: payload.credential?.issuer,
             compatibility_errors: [],
         }));
         return responses;

@@ -212,7 +212,7 @@ def test_snapshot_contains_all_state():
     # Verify structure
     assert snapshot["snapshot_version"] == 2
     assert snapshot["session_id"] == sid
-    assert snapshot["protocol_version"] == "0.1.10"
+    assert snapshot["protocol_version"] == "0.1.11"
     assert "captured_at" in snapshot
     assert "coordinator_epoch" in snapshot
     assert "lamport_clock" in snapshot

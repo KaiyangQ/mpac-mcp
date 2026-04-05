@@ -24,7 +24,7 @@ from .state_machines import (
 from .watermark import LamportClock
 
 
-PROTOCOL_VERSION = "0.1.10"
+PROTOCOL_VERSION = "0.1.11"
 
 
 def _now() -> datetime:
@@ -383,6 +383,7 @@ class SessionCoordinator:
                 "granted_roles": requested_roles,
                 "identity_verified": self.security_profile == "open" or bool(payload.get("credential")),
                 "identity_method": payload.get("credential", {}).get("type") if payload.get("credential") else None,
+                "identity_issuer": payload.get("credential", {}).get("issuer") if payload.get("credential") else None,
                 "compatibility_errors": [],
             },
         ))
@@ -1578,7 +1579,7 @@ class SessionCoordinator:
         return [message.to_dict()]
 
     def snapshot(self) -> Dict[str, Any]:
-        """Capture a v0.1.10-compatible coordinator snapshot."""
+        """Capture a v0.1.11-compatible coordinator snapshot."""
         return {
             "snapshot_version": 2,
             "session_id": self.session_id,

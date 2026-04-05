@@ -2,12 +2,12 @@
   "$id": "https://mpac-protocol.org/schema/envelope.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "MPAC Message Envelope",
-  "description": "Outer wrapper for all MPAC v0.1.10 messages.",
+  "description": "Outer wrapper for all MPAC v0.1.11 messages.",
   "type": "object",
   "required": ["protocol", "version", "message_type", "message_id", "session_id", "sender", "ts", "payload"],
   "properties": {
     "protocol": { "type": "string", "const": "MPAC" },
-    "version": { "type": "string", "description": "Protocol version, e.g. '0.1.10'" },
+    "version": { "type": "string", "description": "Protocol version, e.g. '0.1.11'" },
     "message_type": {
       "type": "string",
       "enum": [

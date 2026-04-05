@@ -18,6 +18,7 @@
     "granted_roles": { "type": "array", "items": { "type": "string" } },
     "identity_verified": { "type": "boolean" },
     "identity_method": { "type": "string" },
+    "identity_issuer": { "type": "string" },
     "compatibility_errors": { "type": "array", "items": { "type": "string" } }
   }
 }

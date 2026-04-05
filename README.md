@@ -4,7 +4,7 @@
 
 MPAC is an application-layer protocol that provides coordination semantics for AI agents serving **multiple independent principals**. It handles the gap that MCP (tool invocation) and A2A (single-principal delegation) don't cover: structured coordination across organizational and trust boundaries.
 
-**Current version: v0.1.10** — draft protocol. The root spec is ahead of the reference implementations; implementation coverage currently trails the newest closure fixes.
+**Current version: v0.1.11** — draft protocol. The root spec is ahead of the reference implementations; implementation coverage currently trails the newest closure fixes.
 
 → [Read the introduction](./blog/introducing-mpac.md) for a full overview of the problem, design, and demo walkthrough.
 
@@ -126,7 +126,7 @@ Do not commit `local_config.json` to a public repository.
 
 ## Current Coverage
 
-The repository now carries the full v0.1.10 message surface in schema plus both reference implementations, including the execution/governance closure work from v0.1.9-v0.1.10. The Python reference implementation is the most heavily exercised path today (75 tests plus a live Claude API demo), and the TypeScript source has been updated to the same protocol shape.
+The root spec, JSON Schema, and both reference implementations are fully aligned at v0.1.11. The Python reference implementation is the most heavily exercised path today (75 tests plus a live Claude API demo), and the TypeScript source has been updated to the same protocol shape (56 tests).
 
 | Dimension | Covered | Remaining gaps |
 |-----------|---------|----------------|
@@ -150,7 +150,7 @@ The repository now carries the full v0.1.10 message surface in schema plus both 
 - runtime replay rejection and Lamport monotonicity enforcement across reconnect / restart
 - split-brain fencing and live handover validation for `coordinator_epoch`
 - frozen-scope progressive degradation implementation
-- `MPAC_Developer_Reference.md` synchronization with the v0.1.10 root spec
+- Additional test coverage for v0.1.11 normative additions (scope expansion re-evaluation edge cases, batch pre-commit disambiguation, GOODBYE transfer path)
 
 **P2 — Protocol evolution and verification:**
 - v0.2.0 protocol advancement (scope expressiveness, post-commit rollback, cross-session coordination, compact envelope, scope-based subscription)
