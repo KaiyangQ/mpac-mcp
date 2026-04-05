@@ -138,7 +138,7 @@ The root spec, JSON Schema, and both reference implementations are fully aligned
 | Security | Credential exchange (5 types), sender incarnation tracking, snapshot anti-replay checkpoint persistence | Signature verification, runtime replay rejection, trust binding |
 | Session lifecycle | `SESSION_INFO` execution model declaration, SESSION_CLOSE, auto-close, summary, post-close rejection | Transcript export policy persistence |
 | Consistency & execution model | Post-commit and governance-only pre-commit authorization/completion flow, coordinator epoch on outbound messages | Multi-coordinator fencing during live handover |
-| Fault recovery | Coordinator status/heartbeat, v0.1.10 snapshot format, snapshot recovery + audit log replay, coordinator epoch bump on recovery | Split-brain detection, multi-coordinator election |
+| Fault recovery | Coordinator status/heartbeat, v0.1.12 snapshot format, snapshot recovery + audit log replay, coordinator epoch bump on recovery | Split-brain detection, multi-coordinator election |
 | Robustness | OP_SUPERSEDE chains, batch commit tracking, claim conflict / resolution conflict handling | Conformance harness in a Node-enabled TypeScript CI lane |
 
 ---

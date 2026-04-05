@@ -295,13 +295,14 @@ Schema conformance closure driven by an independent protocol audit. All 21 messa
 
 **Key changes:**
 - 8 new message payload schemas: `heartbeat`, `goodbye`, `intent_claim`, `intent_update`, `intent_withdraw`, `op_reject`, `conflict_ack`, `conflict_escalate`
-- Envelope `payload` field dispatched to per-message-type schema via `allOf` / `if/then`; coordinator-authored messages require `coordinator_epoch`
-- `COORDINATOR_STATUS`: `event` changed to enum with 5 values (added `authorization`); `next_coordinator_epoch` added with `if/then` for handover; `authorization` fields (`authorized_op_id`, `authorized_by`, `authorized_batch_id`) added with `if/then`; `snapshot` field removed (recovery is handled separately)
+- Envelope `payload` field dispatched to per-message-type schema via `allOf` / `if/then`; coordinator-only messages (`SESSION_INFO`, `SESSION_CLOSE`, `COORDINATOR_STATUS`, `INTENT_CLAIM_STATUS`) require `coordinator_epoch`
+- `COORDINATOR_STATUS`: `event` changed to enum with 5 values (added `authorization`); `next_coordinator_epoch` added with `if/then` for handover; `authorization` fields (`authorized_op_id`, `authorized_by`, `authorized_batch_id`) added with `if/then`; `snapshot` field removed (recovery is handled separately); both ref-impl `authorizeOperation` updated to include required `coordinator_id` and `session_health`
 - `OP_BATCH_COMMIT`: entry `required` tightened to include `state_ref_before` and `state_ref_after`, matching spec and `OP_COMMIT`
 - `INTENT_CLAIM_STATUS`: `if/then` constraints for `approved` → `new_intent_id`, `rejected`/`withdrawn` → `reason`
-- `outcome.schema.json`: `if/then` constraint requiring `rollback` when `rejected` is non-empty
+- `outcome.schema.json`: rollback requirement documented in description (runtime-state-dependent; cannot be fully expressed in JSON Schema)
 - Demo transcript version fixed from `0.1.10` to `0.1.12`
-- SPEC.md Section 13.1 COORDINATOR_STATUS payload table updated with `authorization` event and conditional fields
+- SPEC.md Section 13.1 payload table and Section 14.6 semantic enumeration both updated with `authorization` event
+- `MPAC_Developer_Reference.md` synced to v0.1.12: COORDINATOR_STATUS fields, authorization event, cross-references
 
 **Contents:**
 
