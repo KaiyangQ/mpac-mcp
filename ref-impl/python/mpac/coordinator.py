@@ -24,7 +24,7 @@ from .state_machines import (
 from .watermark import LamportClock
 
 
-PROTOCOL_VERSION = "0.1.11"
+PROTOCOL_VERSION = "0.1.12"
 
 
 def _now() -> datetime:
@@ -1135,8 +1135,14 @@ class SessionCoordinator:
 
         operation.authorized_at = _now()
         operation.authorized_by = self.coordinator_id
+        open_conflicts = sum(
+            1 for c in self.conflicts.values()
+            if c.state_machine.current_state not in (ConflictState.CLOSED, ConflictState.DISMISSED)
+        )
         payload: Dict[str, Any] = {
             "event": "authorization",
+            "coordinator_id": self.coordinator_id,
+            "session_health": "healthy" if open_conflicts == 0 else "degraded",
             "authorized_op_id": operation.op_id,
             "authorized_by": operation.authorized_by,
         }
@@ -1579,7 +1585,7 @@ class SessionCoordinator:
         return [message.to_dict()]
 
     def snapshot(self) -> Dict[str, Any]:
-        """Capture a v0.1.11-compatible coordinator snapshot."""
+        """Capture a v0.1.12-compatible coordinator snapshot."""
         return {
             "snapshot_version": 2,
             "session_id": self.session_id,

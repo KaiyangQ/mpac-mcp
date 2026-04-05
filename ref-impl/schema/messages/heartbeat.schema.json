@@ -1,0 +1,15 @@
+{
+  "$id": "https://mpac-protocol.org/schema/messages/heartbeat.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HEARTBEAT Payload",
+  "type": "object",
+  "required": ["status"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["idle", "working", "blocked", "awaiting_review", "offline"]
+    },
+    "active_intent_id": { "type": "string" },
+    "summary": { "type": "string" }
+  }
+}

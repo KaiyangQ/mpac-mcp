@@ -14,5 +14,32 @@
     },
     "reason": { "type": "string" },
     "approved_by": { "type": "string" }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "decision": { "const": "approved" } }
+      },
+      "then": {
+        "required": ["new_intent_id"],
+        "description": "When decision=approved, new_intent_id is required. approved_by is required in Governance Profile sessions (enforcement is implementation-level)."
+      }
+    },
+    {
+      "if": {
+        "properties": { "decision": { "const": "rejected" } }
+      },
+      "then": {
+        "required": ["reason"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "decision": { "const": "withdrawn" } }
+      },
+      "then": {
+        "required": ["reason"]
+      }
+    }
+  ]
 }

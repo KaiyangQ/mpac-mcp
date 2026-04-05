@@ -16,7 +16,8 @@ version_history/
 ├── v0.1.8_coordination_semantics_hardening/ ← v0.1.8 spec, update record
 ├── v0.1.9_core_coherence_closure/         ← v0.1.9 spec snapshot, update record, and changeset
 ├── v0.1.10_execution_governance_closure/  ← v0.1.10 spec snapshot, update record, and changeset
-└── v0.1.11_example_and_schema_alignment/  ← v0.1.11 spec snapshot, update record, and changeset
+├── v0.1.11_example_and_schema_alignment/  ← v0.1.11 spec snapshot, update record, and changeset
+└── v0.1.12_conformance_closure/           ← v0.1.12 spec snapshot and update record
 ```
 
 The current source of truth is always **SPEC.md** in the project root.
@@ -285,6 +286,29 @@ Revision boundary created after a systematic review of the v0.1.10 root spec. Th
 | `SPEC_v0.1.11_2026-04-04.md` | Archived snapshot of the implemented v0.1.11 spec |
 | `MPAC_v0.1.11_Update_Record.md` | Update record mapping each documentation/normative gap to its v0.1.11 fix |
 | `MPAC_v0.1.11_Spec_Changeset.md` | Field- and rule-level changeset that was merged into the root spec for v0.1.11 |
+
+---
+
+## v0.1.12 — Conformance Closure (2026-04-05)
+
+Schema conformance closure driven by an independent protocol audit. All 21 message types now have dedicated JSON Schema definitions, the envelope schema dispatches payload validation by `message_type` via `if/then`, and conditional constraints (handover, claim status, rollback) are machine-enforceable. The `authorization` coordinator event — already used by both reference implementations for pre-commit approval — is formally standardized. No new message types or protocol semantics beyond these closure fixes.
+
+**Key changes:**
+- 8 new message payload schemas: `heartbeat`, `goodbye`, `intent_claim`, `intent_update`, `intent_withdraw`, `op_reject`, `conflict_ack`, `conflict_escalate`
+- Envelope `payload` field dispatched to per-message-type schema via `allOf` / `if/then`; coordinator-authored messages require `coordinator_epoch`
+- `COORDINATOR_STATUS`: `event` changed to enum with 5 values (added `authorization`); `next_coordinator_epoch` added with `if/then` for handover; `authorization` fields (`authorized_op_id`, `authorized_by`, `authorized_batch_id`) added with `if/then`; `snapshot` field removed (recovery is handled separately)
+- `OP_BATCH_COMMIT`: entry `required` tightened to include `state_ref_before` and `state_ref_after`, matching spec and `OP_COMMIT`
+- `INTENT_CLAIM_STATUS`: `if/then` constraints for `approved` → `new_intent_id`, `rejected`/`withdrawn` → `reason`
+- `outcome.schema.json`: `if/then` constraint requiring `rollback` when `rejected` is non-empty
+- Demo transcript version fixed from `0.1.10` to `0.1.12`
+- SPEC.md Section 13.1 COORDINATOR_STATUS payload table updated with `authorization` event and conditional fields
+
+**Contents:**
+
+| File | Description |
+|------|-------------|
+| `SPEC_v0.1.12_2026-04-05.md` | Archived SPEC.md snapshot of the v0.1.12 spec |
+| `MPAC_v0.1.12_Update_Record.md` | Detailed update record: audit findings → resolution map |
 
 ---
 

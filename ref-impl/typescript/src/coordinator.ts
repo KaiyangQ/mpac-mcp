@@ -17,7 +17,7 @@ import { scopeOverlap } from "./scope.js";
 import { ConflictStateMachine, IntentStateMachine, OperationStateMachine } from "./state-machines.js";
 import { LamportClock } from "./watermark.js";
 
-const PROTOCOL_VERSION = "0.1.11";
+const PROTOCOL_VERSION = "0.1.12";
 
 interface Intent {
   intent_id: string;
@@ -930,8 +930,13 @@ export class SessionCoordinator {
     if (operation.authorized_at !== undefined) return [];
     operation.authorized_at = Date.now();
     operation.authorized_by = this.coordinatorId;
+    const openConflicts = [...this.conflicts.values()].filter(
+      (c) => c.stateMachine.currentState !== ConflictState.CLOSED && c.stateMachine.currentState !== ConflictState.DISMISSED
+    ).length;
     return [this.makeEnvelope(MessageType.COORDINATOR_STATUS, {
       event: "authorization",
+      coordinator_id: this.coordinatorId,
+      session_health: openConflicts === 0 ? "healthy" : "degraded",
       authorized_op_id: operation.op_id,
       authorized_batch_id: batchId,
       authorized_by: operation.authorized_by,

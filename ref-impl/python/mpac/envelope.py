@@ -12,7 +12,7 @@ from .models import Sender, Watermark
 class MessageEnvelope:
     """MPAC message envelope."""
     protocol: str = "MPAC"
-    version: str = "0.1.11"
+    version: str = "0.1.12"
     message_type: str = ""
     message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str = ""
@@ -78,7 +78,7 @@ class MessageEnvelope:
         """Factory method to create a message envelope."""
         return cls(
             protocol="MPAC",
-            version="0.1.11",
+            version="0.1.12",
             message_type=message_type,
             message_id=str(uuid.uuid4()),
             session_id=session_id,

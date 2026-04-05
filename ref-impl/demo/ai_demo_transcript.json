@@ -4,7 +4,7 @@
     "label": "Alice HELLO",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.10",
+      "version": "0.1.12",
       "message_type": "HELLO",
       "message_id": "d0bfc0e2-9b43-43cb-9714-5a11b3e1062d",
       "session_id": "live-ai-session-001",
@@ -37,7 +37,7 @@
     "label": "response",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.10",
+      "version": "0.1.12",
       "message_type": "SESSION_INFO",
       "message_id": "72a8d857-7cb8-42fb-8306-79d453ef52eb",
       "session_id": "live-ai-session-001",
@@ -49,7 +49,7 @@
       "ts": "2026-04-04T21:50:32.697738Z",
       "payload": {
         "session_id": "live-ai-session-001",
-        "protocol_version": "0.1.10",
+        "protocol_version": "0.1.12",
         "security_profile": "open",
         "compliance_profile": "core",
         "watermark_kind": "lamport_clock",
@@ -84,7 +84,7 @@
     "label": "Bob HELLO",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.10",
+      "version": "0.1.12",
       "message_type": "HELLO",
       "message_id": "d0e11b56-8a9d-4cfb-895b-977c3d344539",
       "session_id": "live-ai-session-001",
@@ -117,7 +117,7 @@
     "label": "response",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.10",
+      "version": "0.1.12",
       "message_type": "SESSION_INFO",
       "message_id": "370e9668-fa45-4cc5-8382-77ee37cf96d5",
       "session_id": "live-ai-session-001",
@@ -129,7 +129,7 @@
       "ts": "2026-04-04T21:50:32.697805Z",
       "payload": {
         "session_id": "live-ai-session-001",
-        "protocol_version": "0.1.10",
+        "protocol_version": "0.1.12",
         "security_profile": "open",
         "compliance_profile": "core",
         "watermark_kind": "lamport_clock",
@@ -164,7 +164,7 @@
     "label": "Alice intent",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.10",
+      "version": "0.1.12",
       "message_type": "INTENT_ANNOUNCE",
       "message_id": "a9a21865-be69-4016-80c7-809bbf71c55e",
       "session_id": "live-ai-session-001",
@@ -196,7 +196,7 @@
     "label": "Bob intent",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.10",
+      "version": "0.1.12",
       "message_type": "INTENT_ANNOUNCE",
       "message_id": "3821d10d-9351-4af6-9509-ea5661818108",
       "session_id": "live-ai-session-001",
@@ -227,7 +227,7 @@
     "label": "Alice commit",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.10",
+      "version": "0.1.12",
       "message_type": "OP_COMMIT",
       "message_id": "6ea3192a-73d4-482b-a703-3b83ef0cb2fb",
       "session_id": "live-ai-session-001",
@@ -256,7 +256,7 @@
     "label": "Bob commit",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.10",
+      "version": "0.1.12",
       "message_type": "OP_COMMIT",
       "message_id": "fe026664-3951-41db-a051-10a5444c1510",
       "session_id": "live-ai-session-001",
@@ -285,7 +285,7 @@
     "label": "Alice OP_SUPERSEDE",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.10",
+      "version": "0.1.12",
       "message_type": "OP_SUPERSEDE",
       "message_id": "99bb0c7f-aed3-4677-9d5b-91201f8bbedd",
       "session_id": "live-ai-session-001",
@@ -314,7 +314,7 @@
     "label": "coordinator_status",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.10",
+      "version": "0.1.12",
       "message_type": "COORDINATOR_STATUS",
       "message_id": "19d4ee93-689f-4c8f-b61f-372c75384290",
       "session_id": "live-ai-session-001",
@@ -344,7 +344,7 @@
     "label": "session_close",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.10",
+      "version": "0.1.12",
       "message_type": "SESSION_CLOSE",
       "message_id": "a5e25566-a405-4e69-ba53-a8000a50b204",
       "session_id": "live-ai-session-001",

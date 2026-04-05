@@ -4,7 +4,7 @@
 
 MPAC is an application-layer protocol that provides coordination semantics for AI agents serving **multiple independent principals**. It handles the gap that MCP (tool invocation) and A2A (single-principal delegation) don't cover: structured coordination across organizational and trust boundaries.
 
-**Current version: v0.1.11** — draft protocol. The root spec is ahead of the reference implementations; implementation coverage currently trails the newest closure fixes.
+**Current version: v0.1.12** — draft protocol. Conformance closure: all 21 message types have JSON Schema definitions, envelope dispatches payload by message_type, and conditional constraints are machine-enforceable.
 
 → [Read the introduction](./blog/introducing-mpac.md) for a full overview of the problem, design, and demo walkthrough.
 
@@ -36,8 +36,8 @@ blog/
   introducing-mpac.md            ← Introduction article for external audience
 ref-impl/
   schema/                        ← JSON Schema (wire format definitions, Draft 2020-12)
-    envelope.schema.json
-    messages/                    ← 11 message payload schemas
+    envelope.schema.json         ← oneOf dispatcher: validates payload per message_type
+    messages/                    ← 21 message payload schemas (complete coverage)
     objects/                     ← 4 shared object schemas (Watermark, Scope, Basis, Outcome)
   python/                        ← Python reference implementation
     mpac/                        ← 8 core modules
@@ -126,7 +126,7 @@ Do not commit `local_config.json` to a public repository.
 
 ## Current Coverage
 
-The root spec, JSON Schema, and both reference implementations are fully aligned at v0.1.11. The Python reference implementation is the most heavily exercised path today (75 tests plus a live Claude API demo), and the TypeScript source has been updated to the same protocol shape (56 tests).
+The root spec, JSON Schema, and both reference implementations are fully aligned at v0.1.12. All 21 message types now have dedicated payload schemas with `if/then` conditional constraints, and the envelope schema dispatches payload validation by `message_type`. The Python reference implementation is the most heavily exercised path today (75 tests plus a live Claude API demo), and the TypeScript source has been updated to the same protocol shape (56 tests).
 
 | Dimension | Covered | Remaining gaps |
 |-----------|---------|----------------|
@@ -150,7 +150,7 @@ The root spec, JSON Schema, and both reference implementations are fully aligned
 - runtime replay rejection and Lamport monotonicity enforcement across reconnect / restart
 - split-brain fencing and live handover validation for `coordinator_epoch`
 - frozen-scope progressive degradation implementation
-- Additional test coverage for v0.1.11 normative additions (scope expansion re-evaluation edge cases, batch pre-commit disambiguation, GOODBYE transfer path)
+- Additional test coverage for v0.1.12 normative additions (scope expansion re-evaluation edge cases, batch pre-commit disambiguation, GOODBYE transfer path)
 
 **P2 — Protocol evolution and verification:**
 - v0.2.0 protocol advancement (scope expressiveness, post-commit rollback, cross-session coordination, compact envelope, scope-based subscription)

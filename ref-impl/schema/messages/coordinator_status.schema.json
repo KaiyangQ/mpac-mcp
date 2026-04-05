@@ -7,20 +7,55 @@
   "properties": {
     "event": {
       "type": "string",
-      "description": "Standard events include heartbeat, recovered, handover, and assumed; implementations may also use implementation-defined coordinator events such as authorization."
+      "enum": ["heartbeat", "recovered", "handover", "assumed", "authorization"],
+      "description": "Standard coordinator events: heartbeat (liveness), recovered (post-fault restart), handover (planned transfer), assumed (unplanned takeover), authorization (pre-commit operation approval)."
     },
     "coordinator_id": { "type": "string" },
     "session_health": {
       "type": "string",
       "enum": ["healthy", "degraded", "recovering"]
     },
-    "active_participants": { "type": "integer" },
-    "open_conflicts": { "type": "integer" },
-    "snapshot_lamport_clock": { "type": "integer" },
-    "successor_coordinator_id": { "type": "string" },
-    "snapshot": {
-      "type": "object",
-      "description": "Optional state snapshot for recovery"
+    "active_participants": { "type": "integer", "minimum": 0 },
+    "open_conflicts": { "type": "integer", "minimum": 0 },
+    "snapshot_lamport_clock": { "type": "integer", "minimum": 0 },
+    "successor_coordinator_id": {
+      "type": "string",
+      "description": "Required when event=handover: principal ID of the successor coordinator."
+    },
+    "next_coordinator_epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Required when event=handover: epoch the successor coordinator will assume."
+    },
+    "authorized_op_id": {
+      "type": "string",
+      "description": "Required when event=authorization: operation ID being authorized."
+    },
+    "authorized_batch_id": {
+      "type": "string",
+      "description": "Present when event=authorization and the operation belongs to a batch."
+    },
+    "authorized_by": {
+      "type": "string",
+      "description": "Required when event=authorization: principal ID of the authorizing coordinator."
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "event": { "const": "handover" } }
+      },
+      "then": {
+        "required": ["successor_coordinator_id", "next_coordinator_epoch"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "authorization" } }
+      },
+      "then": {
+        "required": ["authorized_op_id", "authorized_by"]
+      }
+    }
+  ]
 }
