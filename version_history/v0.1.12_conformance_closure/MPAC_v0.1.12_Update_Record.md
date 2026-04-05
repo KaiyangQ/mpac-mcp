@@ -99,7 +99,64 @@ The `snapshot` field removed from the schema was never part of the COORDINATOR_S
 
 ---
 
+### Runtime Enforcement Hardening
+
+A second audit pass identified 6 normative spec requirements that were not enforced at runtime in either reference implementation:
+
+1. **HELLO-first gate:** Unregistered principals (except HELLO) now receive `AUTHORIZATION_FAILED`. GOODBYE is NOT exempt — an unregistered sender must not be able to trigger intent disposition via `active_intents`. Added at the top of `process_message` in both implementations.
+
+2. **Credential validation:** Non-`open` security profiles now reject HELLO messages without a valid credential (`CREDENTIAL_REJECTED`). Added at the top of `_handle_hello` / `handleHello`.
+
+3. **Resolution authority:** Pre-escalation conflicts can only be resolved by `owner` or `arbiter` roles. Post-escalation, only the `escalate_to` target or `arbiter` can resolve. Removed the `related_principal` / `relatedPrincipal` shortcut from `_is_authorized_resolver` / `isAuthorizedResolver`.
+
+4. **Frozen-scope enforcement:** Per Section 18.6.1–18.6.2, scopes freeze only after `resolution_timeout_sec` expires and no arbiter is available — not immediately on conflict creation. A `scope_frozen` flag was added to the Conflict data structure, set by `check_resolution_timeouts` / `checkResolutionTimeouts`. `INTENT_ANNOUNCE`, `OP_PROPOSE`, `OP_COMMIT` (post-commit), and `OP_BATCH_COMMIT` now return `SCOPE_FROZEN` when the target scope overlaps with a frozen conflict's intent scopes. Added `_is_scope_frozen` / `isScopeFrozen` helper and four check points.
+
+5. **Batch atomicity rollback:** `all_or_nothing` batches that fail validation now delete all already-registered operations from coordinator state before returning the batch reject. Previously, partially-created operations leaked into state.
+
+6. **Error codes:** `CAUSAL_GAP` and `INTENT_BACKOFF` added to Python `ErrorCode` enum and TypeScript `ErrorCode` enum. `authorization` added to `CoordinatorEvent` enum in both languages.
+
+**Existing test adjustments:** 9 pre-existing tests were adapted to the new enforcement rules — tests that committed/proposed operations while a conflict was active were reordered to commit before the conflict-creating announcement; tests that resolved conflicts with `contributor` role were updated to use `owner` role.
+
+### P1 Enforcement Corrections (Second Audit Pass)
+
+Three P1 issues were identified in the initial enforcement implementation and corrected within the same version:
+
+1. **GOODBYE unauthenticated state-mutation path:** The initial implementation exempted GOODBYE from the HELLO-first gate, allowing an unregistered sender to force-withdraw other principals' intents via `active_intents`. Fix: removed GOODBYE exemption from the gate. Additionally, an ownership guard was added to `handleGoodbye` — the sender can only withdraw/transfer intents where `intent.principal_id == sender_id`.
+
+2. **Frozen-scope triggers too early:** The initial implementation froze scopes on any non-terminal conflict, but Section 18.6.1–18.6.2 specifies that scopes freeze only after `resolution_timeout_sec` expires and no arbiter is available. Fix: added `scope_frozen: bool` field to the Conflict data structure (default `false`), set to `true` only by `check_resolution_timeouts` / `checkResolutionTimeouts` when no arbiter is found. The `_is_scope_frozen` / `isScopeFrozen` helper now checks the flag rather than testing for any active conflict.
+
+3. **OP_BATCH_COMMIT bypasses frozen-scope:** The initial enforcement pass added frozen-scope checks to `INTENT_ANNOUNCE`, `OP_PROPOSE`, and `OP_COMMIT` but missed `OP_BATCH_COMMIT`. Fix: added frozen-scope check at the top of `_handle_op_batch_commit` / `handleOpBatchCommit`, rejecting the entire batch if the intent scope overlaps a frozen conflict.
+
+### P1+P2 Enforcement Corrections (Third Audit Pass)
+
+Four additional issues identified and corrected:
+
+1. **OP_BATCH_COMMIT per-entry intent_id frozen-scope bypass:** The frozen-scope check only examined the top-level `intent_id`, but batch entries can carry their own `intent_id` that bypasses the check. Fix: both implementations now collect all unique intent_ids (top-level + per-entry) and check each against frozen scopes.
+
+2. **scope_frozen not persisted in snapshot:** The snapshot serialization omitted `scope_frozen`, so coordinator recovery reset frozen conflicts to `false`. Fix: added `scope_frozen` to snapshot serialization in both implementations; recovery already read the field (defaulting to `false`), so no recovery-side change was needed in TypeScript; Python recovery now reads `scope_frozen` from snapshot data.
+
+3. **INTENT_ANNOUNCE partial overlap too strict:** Section 18.6.2 specifies that `INTENT_ANNOUNCE` messages fully contained within frozen scope MUST be rejected, but partially overlapping scopes SHOULD be accepted with a warning. The implementation rejected any overlap. Fix: added `scope_contains` / `scopeContains` utility functions (check if all items in test scope are within container scope), `_check_frozen_scope_for_intent` / `checkFrozenScopeForIntent` methods that differentiate full containment from partial overlap, and `_build_frozen_union_scope` / `buildFrozenUnionScope` helpers that compute the union of two conflicting intents' scopes. Partially overlapping intents are now registered but receive a `PROTOCOL_ERROR(SCOPE_FROZEN)` warning with "Warning:" prefix.
+
+4. **HELLO-first gate error code:** Section 14.1 specifies `INVALID_REFERENCE` for messages from unregistered participants, but both implementations returned `AUTHORIZATION_FAILED`. The adversarial tests had locked in the incorrect code. Fix: changed error code to `INVALID_REFERENCE` in both implementations and updated all test assertions.
+
+### P1 Target-Based Frozen-Scope Correction (Fourth Audit Pass)
+
+The third audit pass revealed a fundamental design flaw in the frozen-scope enforcement: all checks were intent-based (looking up the parent intent's scope), but `intent_id` is optional in the OP_PROPOSE, OP_COMMIT, and OP_BATCH_COMMIT schemas. Omitting `intent_id` entirely caused the frozen-scope guard to be skipped.
+
+Fix: all frozen-scope checks for operations are now **target-based** — they construct a `file_set` scope from the operation's `target` field and check it directly against frozen conflict scopes. This aligns with the spec's Section 18.6.2 language: "OP_PROPOSE and OP_COMMIT messages targeting **resources within the frozen scope**".
+
+1. **Python `_handle_op_propose`**: Changed from intent-based to target-based check. Previously only ran when `intent_id` was present; now always checks `target`.
+2. **Python `_handle_op_commit`** (post-commit path): Same change — target-based instead of intent-based.
+3. **Both `_handle_op_batch_commit` / `handleOpBatchCommit`**: Changed from collecting intent_ids to iterating each entry's `target` field. A batch with no `intent_id` at any level is now correctly blocked if any entry targets a frozen resource.
+4. TypeScript single-op handlers (`handleOpPropose`, `handleOpCommit`) already used target-based checks and required no changes.
+
+---
+
 ## Test Results
 
-- Python: 75/75 tests passed
-- TypeScript: 56/56 tests passed
+- Python: 109/109 tests passed (75 existing + 34 new adversarial enforcement tests)
+- TypeScript: 88/88 tests passed (56 existing + 32 new adversarial enforcement tests)
+
+New adversarial test files:
+- `ref-impl/python/tests/test_v0112_enforcement.py` — 34 tests across 6 enforcement categories + target-based frozen-scope
+- `ref-impl/typescript/tests/v0112-enforcement.test.ts` — 32 tests across 6 enforcement categories + target-based frozen-scope

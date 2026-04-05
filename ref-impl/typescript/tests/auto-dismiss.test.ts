@@ -120,20 +120,39 @@ describe("Conflict Auto-Dismissal (Section 17.9)", () => {
   });
 
   it("does NOT dismiss if a committed op exists", () => {
-    const { sessionId, coordinator, alice, conflictId } =
-      makeConflictingSession();
-
-    // Alice commits an operation
-    const commitEnv = alice.commitOp(
+    // Custom setup: commit op BEFORE bob creates the conflict (frozen-scope enforcement)
+    const sessionId = "test-dismiss-committed";
+    const coordinator = new SessionCoordinator(
       sessionId,
-      "op-alice-1",
-      "intent-alice",
-      "src/auth.py",
-      "patch",
-      "sha:a",
-      "sha:b"
+      SecurityProfile.OPEN,
+      ComplianceProfile.CORE,
+      0
     );
+    const alice = new Participant("agent:alice", "agent", "Alice", [Role.CONTRIBUTOR]);
+    const bob = new Participant("agent:bob", "agent", "Bob", [Role.CONTRIBUTOR]);
+    coordinator.processMessage(alice.hello(sessionId));
+    coordinator.processMessage(bob.hello(sessionId));
+
+    const intentA = alice.announceIntent(sessionId, "intent-alice", "Fix auth", {
+      kind: ScopeKind.FILE_SET,
+      resources: ["src/auth.py", "src/middleware.py"],
+    });
+    (intentA.payload as any).ttl_sec = 120;
+    coordinator.processMessage(intentA);
+
+    // Commit BEFORE conflict exists
+    const commitEnv = alice.commitOp(sessionId, "op-alice-1", "intent-alice", "src/auth.py", "patch", "sha:a", "sha:b");
     coordinator.processMessage(commitEnv);
+
+    // Bob announces → creates conflict
+    const intentB = bob.announceIntent(sessionId, "intent-bob", "Refactor auth", {
+      kind: ScopeKind.FILE_SET,
+      resources: ["src/auth.py", "src/models.py"],
+    });
+    (intentB.payload as any).ttl_sec = 120;
+    const responses = coordinator.processMessage(intentB);
+    expect(responses.length).toBe(1);
+    const conflictId = (responses[0].payload as any).conflict_id;
 
     // Manually add the op to conflict's related_ops
     const conflict = coordinator.getConflict(conflictId)!;
@@ -143,31 +162,47 @@ describe("Conflict Auto-Dismissal (Section 17.9)", () => {
     const intentAlice = coordinator.getIntent("intent-alice")!;
     coordinator.checkExpiry(intentAlice.received_at + 121_000);
 
-    // Both intents terminal
-    expect(
-      coordinator.getIntent("intent-alice")!.stateMachine.currentState
-    ).toBe(IntentState.EXPIRED);
-    expect(
-      coordinator.getIntent("intent-bob")!.stateMachine.currentState
-    ).toBe(IntentState.EXPIRED);
+    expect(coordinator.getIntent("intent-alice")!.stateMachine.currentState).toBe(IntentState.EXPIRED);
+    expect(coordinator.getIntent("intent-bob")!.stateMachine.currentState).toBe(IntentState.EXPIRED);
 
     // But conflict NOT dismissed (committed op)
     expect(conflict.stateMachine.isTerminal()).toBe(false);
   });
 
   it("dismisses when all related ops are rejected", () => {
-    const { sessionId, coordinator, alice, conflictId } =
-      makeConflictingSession();
-
-    // Alice proposes an operation
-    const proposeEnv = alice.proposeOp(
+    // Custom setup: propose op BEFORE bob creates the conflict
+    const sessionId = "test-dismiss-rejected";
+    const coordinator = new SessionCoordinator(
       sessionId,
-      "op-alice-2",
-      "intent-alice",
-      "src/auth.py",
-      "patch"
+      SecurityProfile.OPEN,
+      ComplianceProfile.CORE,
+      0
     );
+    const alice = new Participant("agent:alice", "agent", "Alice", [Role.CONTRIBUTOR]);
+    const bob = new Participant("agent:bob", "agent", "Bob", [Role.CONTRIBUTOR]);
+    coordinator.processMessage(alice.hello(sessionId));
+    coordinator.processMessage(bob.hello(sessionId));
+
+    const intentA = alice.announceIntent(sessionId, "intent-alice", "Fix auth", {
+      kind: ScopeKind.FILE_SET,
+      resources: ["src/auth.py", "src/middleware.py"],
+    });
+    (intentA.payload as any).ttl_sec = 120;
+    coordinator.processMessage(intentA);
+
+    // Propose BEFORE conflict exists
+    const proposeEnv = alice.proposeOp(sessionId, "op-alice-2", "intent-alice", "src/auth.py", "patch");
     coordinator.processMessage(proposeEnv);
+
+    // Bob announces → creates conflict
+    const intentB = bob.announceIntent(sessionId, "intent-bob", "Refactor auth", {
+      kind: ScopeKind.FILE_SET,
+      resources: ["src/auth.py", "src/models.py"],
+    });
+    (intentB.payload as any).ttl_sec = 120;
+    const responses = coordinator.processMessage(intentB);
+    expect(responses.length).toBe(1);
+    const conflictId = (responses[0].payload as any).conflict_id;
 
     // Track op in conflict
     const conflict = coordinator.getConflict(conflictId)!;
@@ -175,12 +210,9 @@ describe("Conflict Auto-Dismissal (Section 17.9)", () => {
 
     // Both intents expire → op auto-rejected → conflict auto-dismissed
     const intentAlice = coordinator.getIntent("intent-alice")!;
-    const responses = coordinator.checkExpiry(intentAlice.received_at + 121_000);
+    coordinator.checkExpiry(intentAlice.received_at + 121_000);
 
-    expect(
-      coordinator.getOperation("op-alice-2")!.stateMachine.currentState
-    ).toBe(OperationState.REJECTED);
-
+    expect(coordinator.getOperation("op-alice-2")!.stateMachine.currentState).toBe(OperationState.REJECTED);
     expect(conflict.stateMachine.currentState).toBe(ConflictState.DISMISSED);
   });
 

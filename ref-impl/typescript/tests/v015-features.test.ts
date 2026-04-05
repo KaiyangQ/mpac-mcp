@@ -11,8 +11,8 @@ function makeSession(unavailabilityTimeoutSec = 10) {
   const coord = new SessionCoordinator(
     sid, SecurityProfile.OPEN, ComplianceProfile.CORE, 0, unavailabilityTimeoutSec
   );
-  const alice = new Participant("agent:alice", "agent", "Alice", [Role.CONTRIBUTOR]);
-  const bob = new Participant("agent:bob", "agent", "Bob", [Role.CONTRIBUTOR]);
+  const alice = new Participant("agent:alice", "agent", "Alice", [Role.OWNER]);
+  const bob = new Participant("agent:bob", "agent", "Bob", [Role.OWNER]);
   coord.processMessage(alice.hello(sid));
   coord.processMessage(bob.hello(sid));
   return { sid, coord, alice, bob };
@@ -137,10 +137,12 @@ describe("v0.1.5 Features", () => {
       const { sid, coord, alice, bob } = makeSession();
       // Build up session state
       coord.processMessage(alice.announceIntent(sid, "i-1", "Fix", { kind: ScopeKind.FILE_SET, resources: ["src/a.py"] }));
-      coord.processMessage(bob.announceIntent(sid, "i-2", "Refactor", { kind: ScopeKind.FILE_SET, resources: ["src/a.py"] }));
 
+      // Propose and commit BEFORE bob creates overlapping intent (frozen-scope enforcement)
       coord.processMessage(alice.proposeOp(sid, "op-1", "i-1", "src/a.py", "patch"));
       coord.processMessage(alice.commitOp(sid, "op-1", "i-1", "src/a.py", "patch"));
+
+      coord.processMessage(bob.announceIntent(sid, "i-2", "Refactor", { kind: ScopeKind.FILE_SET, resources: ["src/a.py"] }));
 
       // Get snapshot
       const snap = coord.snapshot();

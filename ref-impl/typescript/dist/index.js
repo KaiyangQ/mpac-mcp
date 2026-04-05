@@ -5,7 +5,7 @@ export { createEnvelope, envelopeToJSON, envelopeFromJSON } from "./envelope.js"
 // Re-export watermark
 export { LamportClock } from "./watermark.js";
 // Re-export scope utilities
-export { scopeOverlap, isValidScope } from "./scope.js";
+export { scopeOverlap, scopeContains, isValidScope } from "./scope.js";
 // Re-export state machines
 export { IntentStateMachine, OperationStateMachine, ConflictStateMachine, } from "./state-machines.js";
 // Re-export coordinator and participant

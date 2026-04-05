@@ -20,14 +20,14 @@ def test_conflict_detection():
         principal_id="agent-a",
         principal_type="agent",
         display_name="Agent A",
-        roles=["participant"],
+        roles=["owner"],
     )
 
     participant_b = Participant(
         principal_id="agent-b",
         principal_type="agent",
         display_name="Agent B",
-        roles=["participant"],
+        roles=["contributor"],
     )
 
     # Step 1: Both join session

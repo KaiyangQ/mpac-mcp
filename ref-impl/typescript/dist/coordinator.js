@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { createEnvelope } from "./envelope.js";
-import { ComplianceProfile, ConflictCategory, ConflictState, MessageType, OperationState, SecurityProfile, Severity, IntentState, } from "./models.js";
-import { scopeOverlap } from "./scope.js";
+import { ComplianceProfile, ConflictCategory, ConflictState, MessageType, OperationState, ScopeKind, SecurityProfile, Severity, IntentState, } from "./models.js";
+import { scopeOverlap, scopeContains } from "./scope.js";
 import { ConflictStateMachine, IntentStateMachine, OperationStateMachine } from "./state-machines.js";
 import { LamportClock } from "./watermark.js";
 const PROTOCOL_VERSION = "0.1.12";
@@ -67,6 +67,11 @@ export class SessionCoordinator {
         }
         if (this.sessionClosed && envelope.message_type !== MessageType.GOODBYE) {
             return [this.makeProtocolError("SESSION_CLOSED", envelope.message_id, `Session ${this.sessionId} has been closed`)];
+        }
+        // HELLO-first gate: only HELLO is allowed from unregistered senders (Section 14.1)
+        const senderRegistered = this.participants.has(envelope.sender.principal_id);
+        if (!senderRegistered && envelope.message_type !== MessageType.HELLO) {
+            return [this.makeProtocolError("INVALID_REFERENCE", envelope.message_id, `Principal ${envelope.sender.principal_id} must send HELLO before any other message`)];
         }
         let responses = [];
         switch (envelope.message_type) {
@@ -176,7 +181,9 @@ export class SessionCoordinator {
                 }));
             }
             else {
-                responses.push(this.makeProtocolError("RESOLUTION_TIMEOUT", conflict.conflict_id, `No arbiter available for conflict ${conflict.conflict_id}`));
+                // No arbiter available — enter frozen scope state (Section 18.6.1 + 18.6.2)
+                conflict.scope_frozen = true;
+                responses.push(this.makeProtocolError("RESOLUTION_TIMEOUT", conflict.conflict_id, `No arbiter available for conflict ${conflict.conflict_id}; scope is now frozen`));
             }
         }
         return responses;
@@ -184,6 +191,13 @@ export class SessionCoordinator {
     handleHello(envelope) {
         const payload = envelope.payload;
         const requestedRoles = (payload.roles ?? ["participant"]);
+        // Credential validation for Authenticated/Verified profiles
+        if (this.securityProfile !== "open") {
+            const credential = payload.credential;
+            if (!credential || !credential.type || !credential.value) {
+                return [this.makeProtocolError("CREDENTIAL_REJECTED", envelope.message_id, `Security profile '${this.securityProfile}' requires a valid credential in HELLO`)];
+            }
+        }
         const principal = {
             principal_id: envelope.sender.principal_id,
             principal_type: envelope.sender.principal_type,
@@ -260,6 +274,9 @@ export class SessionCoordinator {
             const intent = this.intents.get(intentId);
             if (!intent)
                 continue;
+            // Ownership guard: only the intent owner can affect their own intents
+            if (intent.principal_id !== principalId)
+                continue;
             try {
                 if (disposition === "transfer") {
                     if (intent.stateMachine.currentState === IntentState.ACTIVE)
@@ -289,6 +306,19 @@ export class SessionCoordinator {
     }
     handleIntentAnnounce(envelope) {
         const payload = envelope.payload;
+        // Frozen-scope enforcement for INTENT_ANNOUNCE (Section 18.6.2):
+        // - Fully contained in frozen scope → MUST reject
+        // - Partially overlapping → SHOULD accept with warning
+        let frozenAction = null;
+        let frozenConflict;
+        if (payload.scope) {
+            const check = this.checkFrozenScopeForIntent(payload.scope);
+            frozenAction = check.action;
+            frozenConflict = check.conflict;
+            if (frozenAction === "reject") {
+                return [this.makeProtocolError("SCOPE_FROZEN", envelope.message_id, `Scope fully contained in frozen conflict ${frozenConflict.conflict_id}; new intents blocked until conflict is resolved`)];
+            }
+        }
         const ttlSec = payload.ttl_sec ?? (payload.expiry_ms !== undefined ? Number(payload.expiry_ms) / 1000 : undefined);
         const stateMachine = new IntentStateMachine();
         stateMachine.transition("ACTIVE");
@@ -305,7 +335,12 @@ export class SessionCoordinator {
             last_message_id: envelope.message_id,
         };
         this.intents.set(intent.intent_id, intent);
-        return this.detectScopeOverlaps(intent);
+        const responses = this.detectScopeOverlaps(intent);
+        // Partial overlap warning (Section 18.6.2: SHOULD accept but MUST warn)
+        if (frozenAction === "warn" && frozenConflict) {
+            responses.push(this.makeProtocolError("SCOPE_FROZEN", envelope.message_id, `Warning: intent scope partially overlaps frozen conflict ${frozenConflict.conflict_id}; overlapping portion is frozen`));
+        }
+        return responses;
     }
     handleIntentUpdate(envelope) {
         const payload = envelope.payload;
@@ -375,7 +410,16 @@ export class SessionCoordinator {
         return [];
     }
     handleOpPropose(envelope) {
-        const operation = this.registerOperationFromPayload(envelope.payload, envelope.sender.principal_id, OperationState.PROPOSED);
+        const payload = envelope.payload;
+        // Frozen-scope enforcement: reject OP_PROPOSE if target overlaps an active conflict
+        if (payload.target) {
+            const targetScope = { kind: "file_set", resources: [payload.target] };
+            const frozen = this.isScopeFrozen(targetScope);
+            if (frozen) {
+                return [this.makeProtocolError("SCOPE_FROZEN", envelope.message_id, `Target '${payload.target}' overlaps active conflict ${frozen.conflict_id}; scope is frozen`)];
+            }
+        }
+        const operation = this.registerOperationFromPayload(payload, envelope.sender.principal_id, OperationState.PROPOSED);
         const responses = this.validateOperationAgainstIntent(operation);
         if (this.executionModel === "pre_commit" && operation.stateMachine.currentState === OperationState.PROPOSED) {
             responses.push(...this.authorizeOperation(operation));
@@ -410,6 +454,14 @@ export class SessionCoordinator {
             }
             return [];
         }
+        // Post-commit: frozen-scope enforcement before committing
+        if (payload.target) {
+            const targetScope = { kind: "file_set", resources: [payload.target] };
+            const frozen = this.isScopeFrozen(targetScope);
+            if (frozen) {
+                return [this.makeProtocolError("SCOPE_FROZEN", envelope.message_id, `Target '${payload.target}' overlaps active conflict ${frozen.conflict_id}; scope is frozen`)];
+            }
+        }
         this.commitOperationEntry(payload, envelope.sender.principal_id);
         return [];
     }
@@ -421,6 +473,18 @@ export class SessionCoordinator {
         const intentId = payload.intent_id;
         if (operations.length === 0) {
             return [this.makeProtocolError("MALFORMED_MESSAGE", envelope.message_id, `Batch ${batchId} must contain at least one operation entry`)];
+        }
+        // Frozen-scope check: target-based (Section 18.6.2)
+        // Check every entry's target against frozen scopes — intent_id is optional
+        for (const entry of operations) {
+            const entryTarget = entry.target;
+            if (entryTarget) {
+                const targetScope = { kind: ScopeKind.FILE_SET, resources: [entryTarget] };
+                const frozen = this.isScopeFrozen(targetScope);
+                if (frozen) {
+                    return [this.makeProtocolError("SCOPE_FROZEN", envelope.message_id, `Target '${entryTarget}' overlaps with frozen conflict ${frozen.conflict_id}; batch blocked`)];
+                }
+            }
         }
         if (this.executionModel === "pre_commit") {
             const existing = operations.map((entry) => this.operations.get(entry.op_id));
@@ -460,6 +524,10 @@ export class SessionCoordinator {
                 }
             }
             if (atomicity === "all_or_nothing" && rejectedOps.length > 0) {
+                // Rollback: remove already-registered operations from coordinator state
+                for (const op of created) {
+                    this.operations.delete(op.op_id);
+                }
                 return [this.makeBatchReject(batchId, rejectedOps, "batch_validation_failed")];
             }
             const responses = [];
@@ -533,6 +601,7 @@ export class SessionCoordinator {
                 related_intents: [payload.intent_a, payload.intent_b].filter(Boolean),
                 related_ops: [],
                 created_at: Date.now(),
+                scope_frozen: false,
             });
         }
         return [];
@@ -828,6 +897,82 @@ export class SessionCoordinator {
             }
         }
     }
+    /**
+     * Check whether a scope overlaps with a conflict whose scope has been frozen.
+     *
+     * Per Section 18.6.2, scopes enter frozen state only after resolution_timeout_sec
+     * expires (via checkResolutionTimeouts), NOT immediately on conflict creation.
+     */
+    isScopeFrozen(scope) {
+        for (const conflict of this.conflicts.values()) {
+            if (conflict.stateMachine.isTerminal())
+                continue;
+            if (!conflict.scope_frozen)
+                continue;
+            const intentA = this.intents.get(conflict.intent_a);
+            const intentB = this.intents.get(conflict.intent_b);
+            if ((intentA && scopeOverlap(scope, intentA.scope)) || (intentB && scopeOverlap(scope, intentB.scope))) {
+                return conflict;
+            }
+        }
+        return undefined;
+    }
+    /**
+     * For INTENT_ANNOUNCE: distinguish full containment (MUST reject) from partial overlap (SHOULD accept with warning).
+     * Per Section 18.6.2.
+     */
+    checkFrozenScopeForIntent(scope) {
+        for (const conflict of this.conflicts.values()) {
+            if (conflict.stateMachine.isTerminal())
+                continue;
+            if (!conflict.scope_frozen)
+                continue;
+            const intentA = this.intents.get(conflict.intent_a);
+            const intentB = this.intents.get(conflict.intent_b);
+            const overlapsA = intentA ? scopeOverlap(scope, intentA.scope) : false;
+            const overlapsB = intentB ? scopeOverlap(scope, intentB.scope) : false;
+            if (!overlapsA && !overlapsB)
+                continue;
+            // Build union scope of frozen conflict's intents
+            const unionScope = this.buildFrozenUnionScope(intentA, intentB);
+            if (unionScope && scopeContains(unionScope, scope)) {
+                return { action: "reject", conflict };
+            }
+            else {
+                return { action: "warn", conflict };
+            }
+        }
+        return { action: null };
+    }
+    buildFrozenUnionScope(intentA, intentB) {
+        const scopes = [];
+        if (intentA)
+            scopes.push(intentA.scope);
+        if (intentB)
+            scopes.push(intentB.scope);
+        if (scopes.length === 0)
+            return undefined;
+        if (scopes.length === 1)
+            return scopes[0];
+        const [a, b] = scopes;
+        if (a.kind !== b.kind)
+            return a; // Conservative fallback
+        switch (a.kind) {
+            case ScopeKind.FILE_SET: {
+                const resources = [...new Set([...(a.resources ?? []), ...(b.resources ?? [])])];
+                return { kind: ScopeKind.FILE_SET, resources };
+            }
+            case ScopeKind.ENTITY_SET: {
+                const entities = [...new Set([...(a.entities ?? []), ...(b.entities ?? [])])];
+                return { kind: ScopeKind.ENTITY_SET, entities };
+            }
+            case ScopeKind.TASK_SET: {
+                const task_ids = [...new Set([...(a.task_ids ?? []), ...(b.task_ids ?? [])])];
+                return { kind: ScopeKind.TASK_SET, task_ids };
+            }
+        }
+        return a;
+    }
     detectScopeOverlaps(intent, skipExistingConflicts = false) {
         const responses = [];
         for (const other of this.intents.values()) {
@@ -860,6 +1005,7 @@ export class SessionCoordinator {
                 related_intents: [intent.intent_id, other.intent_id],
                 related_ops: [],
                 created_at: Date.now(),
+                scope_frozen: false,
             });
             responses.push(this.makeEnvelope(MessageType.CONFLICT_REPORT, {
                 conflict_id: conflictId,
@@ -1012,11 +1158,12 @@ export class SessionCoordinator {
             return true;
         const participant = this.participants.get(principalId);
         const roles = new Set((participant?.principal.roles ?? []).map(String));
-        const relatedPrincipal = principalId === conflict.principal_a || principalId === conflict.principal_b;
         if (conflict.stateMachine.currentState === ConflictState.ESCALATED) {
             return principalId === conflict.escalated_to || roles.has("arbiter");
         }
-        return relatedPrincipal || roles.has("owner") || roles.has("arbiter");
+        // Pre-escalation: only owner or arbiter roles may resolve; being a related
+        // principal (contributor) is not sufficient per SPEC Section 18.4 / 23.1.3
+        return roles.has("owner") || roles.has("arbiter");
     }
     recoverFromSnapshot(snapshotData) {
         this.lamportClock = new LamportClock(snapshotData.lamport_clock ?? 0);
@@ -1147,6 +1294,7 @@ export class SessionCoordinator {
                 escalated_at: conflictData.escalated_at ? new Date(conflictData.escalated_at).getTime() : undefined,
                 resolution_id: conflictData.resolution_id,
                 resolved_by: conflictData.resolved_by,
+                scope_frozen: conflictData.scope_frozen ?? false,
             });
         }
         this.claims.clear();
@@ -1300,6 +1448,7 @@ export class SessionCoordinator {
                 escalated_at: conflict.escalated_at ? new Date(conflict.escalated_at).toISOString() : null,
                 resolution_id: conflict.resolution_id,
                 resolved_by: conflict.resolved_by,
+                scope_frozen: conflict.scope_frozen,
             })),
             pending_claims: [...this.claims.values()].map((claim) => ({
                 claim_id: claim.claim_id,

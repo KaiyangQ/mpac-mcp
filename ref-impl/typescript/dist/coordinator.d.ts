@@ -43,6 +43,7 @@ interface Conflict {
     escalated_at?: number;
     resolution_id?: string;
     resolved_by?: string;
+    scope_frozen: boolean;
 }
 interface ParticipantInfo {
     principal: Principal;
@@ -112,6 +113,19 @@ export declare class SessionCoordinator {
     private validateOperationAgainstIntent;
     private authorizeOperation;
     private trackOperationConflicts;
+    /**
+     * Check whether a scope overlaps with a conflict whose scope has been frozen.
+     *
+     * Per Section 18.6.2, scopes enter frozen state only after resolution_timeout_sec
+     * expires (via checkResolutionTimeouts), NOT immediately on conflict creation.
+     */
+    private isScopeFrozen;
+    /**
+     * For INTENT_ANNOUNCE: distinguish full containment (MUST reject) from partial overlap (SHOULD accept with warning).
+     * Per Section 18.6.2.
+     */
+    private checkFrozenScopeForIntent;
+    private buildFrozenUnionScope;
     private detectScopeOverlaps;
     private handleOwnerRejoin;
     private findArbiter;

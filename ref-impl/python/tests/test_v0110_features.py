@@ -123,8 +123,8 @@ def test_resolution_conflict_rejects_second_valid_resolution():
     """Only the first valid resolution for a conflict should be accepted."""
     sid = "test-v0110-resolution-conflict"
     coord = SessionCoordinator(sid)
-    alice = Participant("agent:alice", "agent", "Alice", ["contributor"])
-    bob = Participant("agent:bob", "agent", "Bob", ["contributor"])
+    alice = Participant("agent:alice", "agent", "Alice", ["owner"])
+    bob = Participant("agent:bob", "agent", "Bob", ["owner"])
 
     coord.process_message(alice.hello(sid))
     coord.process_message(bob.hello(sid))

@@ -12,7 +12,7 @@ def _make_conflict_session():
     coord = SessionCoordinator(sid, resolution_timeout_sec=60)
 
     alice = Participant("agent:alice", "agent", "Alice", ["contributor"])
-    bob = Participant("agent:bob", "agent", "Bob", ["contributor"])
+    bob = Participant("agent:bob", "agent", "Bob", ["owner"])
     arbiter = Participant("human:arbiter", "human", "Arbiter", ["arbiter"])
 
     coord.process_message(alice.hello(sid))

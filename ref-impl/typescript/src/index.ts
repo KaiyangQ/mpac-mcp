@@ -8,7 +8,7 @@ export { MessageEnvelope, createEnvelope, envelopeToJSON, envelopeFromJSON } fro
 export { LamportClock } from "./watermark.js";
 
 // Re-export scope utilities
-export { scopeOverlap, isValidScope } from "./scope.js";
+export { scopeOverlap, scopeContains, isValidScope } from "./scope.js";
 
 // Re-export state machines
 export {

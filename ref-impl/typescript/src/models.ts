@@ -81,6 +81,7 @@ export enum CoordinatorEvent {
   RECOVERED = "recovered",
   HANDOVER = "handover",
   ASSUMED = "assumed",
+  AUTHORIZATION = "authorization",
 }
 
 export enum SessionHealth {
@@ -149,6 +150,8 @@ export enum ErrorCode {
   STATE_DIVERGENCE = "STATE_DIVERGENCE",
   SESSION_CLOSED = "SESSION_CLOSED",
   CREDENTIAL_REJECTED = "CREDENTIAL_REJECTED",
+  CAUSAL_GAP = "CAUSAL_GAP",
+  INTENT_BACKOFF = "INTENT_BACKOFF",
 }
 
 export interface Principal {

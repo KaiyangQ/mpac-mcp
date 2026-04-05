@@ -303,6 +303,26 @@ Schema conformance closure driven by an independent protocol audit. All 21 messa
 - Demo transcript version fixed from `0.1.10` to `0.1.12`
 - SPEC.md Section 13.1 payload table and Section 14.6 semantic enumeration both updated with `authorization` event
 - `MPAC_Developer_Reference.md` synced to v0.1.12: COORDINATOR_STATUS fields, authorization event, cross-references
+- **Runtime enforcement hardening** (both Python and TypeScript reference implementations):
+  - HELLO-first gate: unregistered senders rejected with `AUTHORIZATION_FAILED`
+  - Credential validation: non-open profiles reject HELLO without valid credential (`CREDENTIAL_REJECTED`)
+  - Resolution authority: only owner/arbiter pre-escalation; only escalate_to target or arbiter post-escalation
+  - Frozen-scope enforcement: scopes freeze only after `resolution_timeout_sec` expires with no arbiter (per Section 18.6.2); `INTENT_ANNOUNCE`, `OP_PROPOSE`, `OP_COMMIT`, `OP_BATCH_COMMIT` blocked when scope overlaps frozen conflict (`SCOPE_FROZEN`)
+  - Batch atomicity rollback: `all_or_nothing` batches clean up registered operations on validation failure
+  - Error codes: `CAUSAL_GAP` and `INTENT_BACKOFF` added to ErrorCode enum; `authorization` added to CoordinatorEvent enum
+- **P1 enforcement corrections** (second audit pass):
+  - GOODBYE removed from HELLO-first gate exemption — unregistered senders cannot force-withdraw other principals' intents via `active_intents` payload
+  - GOODBYE ownership guard added: sender can only withdraw/transfer their own intents
+  - Frozen-scope timing corrected: `scope_frozen` flag on Conflict, set only by `checkResolutionTimeouts` when no arbiter available (not on conflict creation)
+  - `OP_BATCH_COMMIT` frozen-scope check added (was missing from initial enforcement pass)
+- **P1+P2 enforcement corrections** (third audit pass):
+  - `scope_frozen` persisted in snapshot: both serialization and recovery now include the flag
+  - `INTENT_ANNOUNCE` partial overlap: fully contained in frozen scope → reject; partially overlapping → accept with warning (Section 18.6.2)
+  - HELLO-first gate error code corrected from `AUTHORIZATION_FAILED` to `INVALID_REFERENCE` per Section 14.1
+- **P1 frozen-scope target-based correction** (fourth audit pass):
+  - All frozen-scope checks changed from intent-based to **target-based**: `OP_PROPOSE`, `OP_COMMIT`, `OP_BATCH_COMMIT` now check each operation's `target` field directly against frozen scopes, not the parent intent's scope. This closes the bypass where `intent_id` (optional per schema) could be omitted to skip the check.
+  - Python `_handle_op_propose` and `_handle_op_commit` aligned with TypeScript (which already used target-based checks for single ops)
+- 66 new adversarial tests (Python 34, TypeScript 32) covering all 6 enforcement rules + target-based frozen-scope
 
 **Contents:**
 

@@ -194,9 +194,9 @@ describe("Fault Recovery", () => {
     joinAndAnnounce(coord, alice, "intent-a", ["src/main.py"]);
     const snap = coord.snapshot();
 
-    // More activity after snapshot
-    joinAndAnnounce(coord, bob, "intent-b", ["src/main.py"]);
+    // Commit BEFORE bob creates conflict (frozen-scope enforcement)
     commitOp(coord, alice, "op-1", "intent-a", "src/main.py");
+    joinAndAnnounce(coord, bob, "intent-b", ["src/main.py"]);
 
     const msgsAfterSnap = coord.getAuditLog().slice(2);
 

@@ -15,7 +15,7 @@ from .models import (
     Scope,
     Sender,
 )
-from .scope import scope_overlap
+from .scope import scope_overlap, scope_contains
 from .state_machines import (
     ConflictStateMachine,
     IntentStateMachine,
@@ -100,6 +100,7 @@ class Conflict:
     escalated_at: Optional[datetime] = None
     resolution_id: Optional[str] = None
     resolved_by: Optional[str] = None
+    scope_frozen: bool = False
 
 
 @dataclass
@@ -206,6 +207,14 @@ class SessionCoordinator:
                 f"Session {self.session_id} has been closed",
             ).to_dict()]
 
+        # HELLO-first gate: only HELLO is allowed from unregistered senders (Section 14.1)
+        if pid not in self.participants and envelope.message_type != MessageType.HELLO.value:
+            return [self._make_protocol_error(
+                "INVALID_REFERENCE",
+                envelope.message_id,
+                f"Principal {pid} must send HELLO before any other message",
+            ).to_dict()]
+
         handlers = {
             MessageType.HELLO.value: self._handle_hello,
             MessageType.HEARTBEAT.value: self._handle_heartbeat,
@@ -297,10 +306,12 @@ class SessionCoordinator:
                     },
                 ))
             else:
+                # No arbiter available — enter frozen scope state (Section 18.6.1 + 18.6.2)
+                conflict.scope_frozen = True
                 responses.append(self._make_protocol_error(
                     "RESOLUTION_TIMEOUT",
                     conflict.conflict_id,
-                    f"No arbiter available for conflict {conflict.conflict_id}",
+                    f"No arbiter available for conflict {conflict.conflict_id}; scope is now frozen",
                 ))
 
         return [response.to_dict() for response in responses]
@@ -343,6 +354,16 @@ class SessionCoordinator:
         """Register a participant and return session parameters."""
         payload = envelope.payload
         requested_roles = payload.get("roles", ["participant"])
+
+        # Credential validation for Authenticated/Verified profiles
+        if self.security_profile != "open":
+            credential = payload.get("credential")
+            if not credential or not credential.get("type") or not credential.get("value"):
+                return [self._make_protocol_error(
+                    "CREDENTIAL_REJECTED",
+                    envelope.message_id,
+                    f"Security profile '{self.security_profile}' requires a valid credential in HELLO",
+                )]
 
         principal = Principal(
             principal_id=envelope.sender.principal_id,
@@ -429,6 +450,9 @@ class SessionCoordinator:
             intent = self.intents.get(intent_id)
             if intent is None:
                 continue
+            # Ownership guard: only the intent owner can affect their own intents
+            if intent.principal_id != pid:
+                continue
             try:
                 if disposition == "transfer":
                     if intent.state_machine.current_state == IntentState.ACTIVE:
@@ -454,6 +478,79 @@ class SessionCoordinator:
         return responses
 
     # ================================================================
+    #  Frozen-scope helper
+    # ================================================================
+
+    def _is_scope_frozen(self, scope: Scope) -> Optional[Conflict]:
+        """Check whether a scope overlaps with a conflict whose scope has been frozen.
+
+        Per Section 18.6.2, scopes enter frozen state only after resolution_timeout_sec
+        expires (via check_resolution_timeouts), NOT immediately on conflict creation.
+        """
+        for conflict in self.conflicts.values():
+            if conflict.state_machine.is_terminal():
+                continue
+            if not conflict.scope_frozen:
+                continue
+            intent_a = self.intents.get(conflict.intent_a)
+            intent_b = self.intents.get(conflict.intent_b)
+            if (intent_a and scope_overlap(scope, intent_a.scope)) or \
+               (intent_b and scope_overlap(scope, intent_b.scope)):
+                return conflict
+        return None
+
+    def _check_frozen_scope_for_intent(self, scope: Scope) -> tuple:
+        """For INTENT_ANNOUNCE: distinguish full containment (MUST reject) from partial overlap (SHOULD accept with warning).
+
+        Per Section 18.6.2:
+        - Fully contained in frozen scope → ("reject", conflict)
+        - Partially overlapping → ("warn", conflict)
+        - No overlap → (None, None)
+        """
+        for conflict in self.conflicts.values():
+            if conflict.state_machine.is_terminal():
+                continue
+            if not conflict.scope_frozen:
+                continue
+            intent_a = self.intents.get(conflict.intent_a)
+            intent_b = self.intents.get(conflict.intent_b)
+
+            overlaps_a = intent_a and scope_overlap(scope, intent_a.scope)
+            overlaps_b = intent_b and scope_overlap(scope, intent_b.scope)
+
+            if not overlaps_a and not overlaps_b:
+                continue
+
+            # Build union scope of the frozen conflict's intents
+            union_scope = self._build_frozen_union_scope(intent_a, intent_b)
+            if union_scope and scope_contains(union_scope, scope):
+                return ("reject", conflict)
+            else:
+                return ("warn", conflict)
+        return (None, None)
+
+    def _build_frozen_union_scope(self, intent_a, intent_b):
+        """Build a union scope from two intents' scopes."""
+        scopes = [i.scope for i in [intent_a, intent_b] if i is not None]
+        if not scopes:
+            return None
+        if len(scopes) == 1:
+            return scopes[0]
+        a, b = scopes
+        if a.kind != b.kind:
+            return a  # Conservative fallback
+        if a.kind == "file_set":
+            resources = list(set((a.resources or []) + (b.resources or [])))
+            return Scope(kind="file_set", resources=resources)
+        elif a.kind == "entity_set":
+            entities = list(set((a.entities or []) + (b.entities or [])))
+            return Scope(kind="entity_set", entities=entities)
+        elif a.kind == "task_set":
+            task_ids = list(set((a.task_ids or []) + (b.task_ids or [])))
+            return Scope(kind="task_set", task_ids=task_ids)
+        return a
+
+    # ================================================================
     #  Intent layer handlers
     # ================================================================
 
@@ -461,6 +558,18 @@ class SessionCoordinator:
         """Register a new active intent."""
         scope_data = envelope.payload.get("scope")
         scope = Scope.from_dict(scope_data) if isinstance(scope_data, dict) else scope_data
+
+        # Frozen-scope check for INTENT_ANNOUNCE (Section 18.6.2):
+        # - Fully contained in frozen scope → MUST reject
+        # - Partially overlapping → SHOULD accept with warning
+        frozen_action, frozen_conflict = self._check_frozen_scope_for_intent(scope)
+        if frozen_action == "reject":
+            return [self._make_protocol_error(
+                "SCOPE_FROZEN",
+                envelope.message_id,
+                f"Scope fully contained in frozen conflict {frozen_conflict.conflict_id}; new intents blocked until conflict is resolved",
+            )]
+
         ttl_sec = envelope.payload.get("ttl_sec")
         if ttl_sec is None and envelope.payload.get("expiry_ms") is not None:
             ttl_sec = float(envelope.payload["expiry_ms"]) / 1000.0
@@ -481,7 +590,16 @@ class SessionCoordinator:
             last_message_id=envelope.message_id,
         )
         self.intents[intent.intent_id] = intent
-        return self._detect_scope_overlaps(intent)
+        responses = self._detect_scope_overlaps(intent)
+
+        # Partial overlap warning (Section 18.6.2: SHOULD accept but MUST warn)
+        if frozen_action == "warn":
+            responses.append(self._make_protocol_error(
+                "SCOPE_FROZEN",
+                envelope.message_id,
+                f"Warning: intent scope partially overlaps frozen conflict {frozen_conflict.conflict_id}; overlapping portion is frozen",
+            ))
+        return responses
 
     def _handle_intent_update(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
         """Update objective, scope, or TTL for an active intent."""
@@ -576,6 +694,18 @@ class SessionCoordinator:
 
     def _handle_op_propose(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
         """Register a proposed operation."""
+        # Frozen-scope check: target-based (Section 18.6.2)
+        target = envelope.payload.get("target")
+        if target:
+            target_scope = Scope(kind="file_set", resources=[target])
+            frozen_conflict = self._is_scope_frozen(target_scope)
+            if frozen_conflict:
+                return [self._make_protocol_error(
+                    "SCOPE_FROZEN",
+                    envelope.message_id,
+                    f"Target '{target}' overlaps with frozen conflict {frozen_conflict.conflict_id}; proposals blocked",
+                )]
+
         op = self._register_operation_from_payload(
             payload=envelope.payload,
             principal_id=envelope.sender.principal_id,
@@ -626,6 +756,18 @@ class SessionCoordinator:
                 operation.state_machine.transition("COMMITTED")
             return []
 
+        # Frozen-scope check for post-commit: target-based (Section 18.6.2)
+        commit_target = payload.get("target")
+        if commit_target:
+            target_scope = Scope(kind="file_set", resources=[commit_target])
+            frozen_conflict = self._is_scope_frozen(target_scope)
+            if frozen_conflict:
+                return [self._make_protocol_error(
+                    "SCOPE_FROZEN",
+                    envelope.message_id,
+                    f"Target '{commit_target}' overlaps with frozen conflict {frozen_conflict.conflict_id}; commits blocked",
+                )]
+
         self._commit_operation_entry(payload, envelope.sender.principal_id)
         return []
 
@@ -634,7 +776,22 @@ class SessionCoordinator:
         payload = envelope.payload
         batch_id = payload.get("batch_id")
         atomicity = payload.get("atomicity", "all_or_nothing")
+
+        # Frozen-scope check: target-based (Section 18.6.2)
+        # Check every entry's target against frozen scopes — intent_id is optional
+        batch_intent_id = payload.get("intent_id")
         operations = payload.get("operations", [])
+        for entry in operations:
+            entry_target = entry.get("target")
+            if entry_target:
+                target_scope = Scope(kind="file_set", resources=[entry_target])
+                frozen_conflict = self._is_scope_frozen(target_scope)
+                if frozen_conflict:
+                    return [self._make_protocol_error(
+                        "SCOPE_FROZEN",
+                        envelope.message_id,
+                        f"Target '{entry_target}' overlaps with frozen conflict {frozen_conflict.conflict_id}; batch blocked",
+                    )]
         intent_id = payload.get("intent_id")
 
         if not operations:
@@ -687,6 +844,9 @@ class SessionCoordinator:
                         rejections.append(op.op_id)
 
             if atomicity == "all_or_nothing" and rejections:
+                # Rollback: remove already-registered operations from state
+                for op in created:
+                    self.operations.pop(op.op_id, None)
                 return [self._make_batch_reject(batch_id, rejections, "batch_validation_failed")]
 
             responses: List[MessageEnvelope] = []
@@ -1340,12 +1500,13 @@ class SessionCoordinator:
 
         info = self.participants.get(principal_id)
         roles = set(info.principal.roles if info else [])
-        related_principal = principal_id in {conflict.principal_a, conflict.principal_b}
 
         if conflict.state_machine.current_state == ConflictState.ESCALATED:
             return principal_id == conflict.escalated_to or "arbiter" in roles
 
-        return related_principal or "owner" in roles or "arbiter" in roles
+        # Pre-escalation: only owner or arbiter roles may resolve; being a related
+        # principal (contributor) is not sufficient per SPEC Section 18.4 / 23.1.3
+        return "owner" in roles or "arbiter" in roles
 
     # ================================================================
     #  Fault recovery
@@ -1481,6 +1642,7 @@ class SessionCoordinator:
                 escalated_at=_parse_dt(conflict_data.get("escalated_at")),
                 resolution_id=conflict_data.get("resolution_id"),
                 resolved_by=conflict_data.get("resolved_by"),
+                scope_frozen=conflict_data.get("scope_frozen", False),
             )
 
         self.claims.clear()
@@ -1660,6 +1822,7 @@ class SessionCoordinator:
                     "escalated_at": _iso(conflict.escalated_at) if conflict.escalated_at else None,
                     "resolution_id": conflict.resolution_id,
                     "resolved_by": conflict.resolved_by,
+                    "scope_frozen": conflict.scope_frozen,
                 }
                 for conflict in self.conflicts.values()
             ],

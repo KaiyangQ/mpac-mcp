@@ -41,10 +41,10 @@ ref-impl/
     objects/                     ← 4 shared object schemas (Watermark, Scope, Basis, Outcome)
   python/                        ← Python reference implementation
     mpac/                        ← 8 core modules
-    tests/                       ← 9 test files (70 test cases)
+    tests/                       ← 10 test files (109 test cases)
   typescript/                    ← TypeScript reference implementation
     src/                         ← 8 source files
-    tests/                       ← 9 test files (56 test cases)
+    tests/                       ← 10 test files (88 test cases)
   demo/
     run_interop.sh               ← Cross-language interoperability test
     run_ai_agents.py             ← AI agent demo (2 Claude agents coordinating via MPAC)
@@ -126,20 +126,20 @@ Do not commit `local_config.json` to a public repository.
 
 ## Current Coverage
 
-The root spec, JSON Schema, and both reference implementations are fully aligned at v0.1.12. All 21 message types now have dedicated payload schemas with `if/then` conditional constraints, and the envelope schema dispatches payload validation by `message_type`. The Python reference implementation is the most heavily exercised path today (75 tests plus a live Claude API demo), and the TypeScript source has been updated to the same protocol shape (56 tests).
+The root spec, JSON Schema, and both reference implementations are fully aligned at v0.1.12. All 21 message types now have dedicated payload schemas with `if/then` conditional constraints, and the envelope schema dispatches payload validation by `message_type`. Both implementations now enforce 6 runtime rules (HELLO-first gate, credential validation, resolution authority, frozen-scope blocking, batch atomicity rollback, complete error codes). The Python implementation has 109 tests (including 34 adversarial enforcement tests) plus a live Claude API demo; the TypeScript implementation has 88 tests (including 32 adversarial enforcement tests).
 
 | Dimension | Covered | Remaining gaps |
 |-----------|---------|----------------|
 | Message types | **21 of 21** including `OP_BATCH_COMMIT` and `INTENT_CLAIM_STATUS` | — |
 | State machines | Full lifecycle: Expiry Cascade, Auto-Dismiss, FROZEN/SUSPENDED, resume/unfreeze, SUPERSEDED, TRANSFERRED | Frozen-scope progressive degradation |
 | Liveness | Heartbeat tracking, unavailability detection, intent suspension, proposal abandonment, reconnection restoration, claim withdrawal on owner return | Role-based liveness policy enforcement |
-| Governance | ACK → ESCALATE → phase-scoped RESOLUTION, duplicate-resolution rejection, claim approval attribution | Frozen scope enforcement |
+| Governance | ACK → ESCALATE → phase-scoped RESOLUTION, duplicate-resolution rejection, claim approval attribution, **resolution authority enforcement** (owner/arbiter pre-escalation, escalate_to/arbiter post-escalation) | — |
 | Intent lifecycle | Announce, Update (objective/scope/TTL), Withdraw, Claim, `INTENT_CLAIM_STATUS`, `TRANSFERRED` alignment | Richer scope narrowing validation on claims |
-| Security | Credential exchange (5 types), sender incarnation tracking, snapshot anti-replay checkpoint persistence | Signature verification, runtime replay rejection, trust binding |
+| Security | Credential exchange (5 types), **credential validation on HELLO** (authenticated/verified profiles), **HELLO-first gate**, sender incarnation tracking, snapshot anti-replay checkpoint persistence | Signature verification, runtime replay rejection, trust binding |
 | Session lifecycle | `SESSION_INFO` execution model declaration, SESSION_CLOSE, auto-close, summary, post-close rejection | Transcript export policy persistence |
 | Consistency & execution model | Post-commit and governance-only pre-commit authorization/completion flow, coordinator epoch on outbound messages | Multi-coordinator fencing during live handover |
 | Fault recovery | Coordinator status/heartbeat, v0.1.12 snapshot format, snapshot recovery + audit log replay, coordinator epoch bump on recovery | Split-brain detection, multi-coordinator election |
-| Robustness | OP_SUPERSEDE chains, batch commit tracking, claim conflict / resolution conflict handling | Conformance harness in a Node-enabled TypeScript CI lane |
+| Robustness | OP_SUPERSEDE chains, batch commit tracking, **batch atomicity rollback** (all_or_nothing cleanup), **frozen-scope enforcement**, claim conflict / resolution conflict handling, **CAUSAL_GAP / INTENT_BACKOFF error codes** | Conformance harness in a Node-enabled TypeScript CI lane |
 
 ---
 

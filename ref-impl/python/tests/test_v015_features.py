@@ -10,7 +10,7 @@ def _make_session(unavailability_timeout_sec=10):
     """Create a test session with two participants."""
     sid = "test-v015"
     coord = SessionCoordinator(sid, unavailability_timeout_sec=unavailability_timeout_sec)
-    alice = Participant("agent:alice", "agent", "Alice", ["contributor"])
+    alice = Participant("agent:alice", "agent", "Alice", ["owner"])
     bob = Participant("agent:bob", "agent", "Bob", ["contributor"])
     coord.process_message(alice.hello(sid))
     coord.process_message(bob.hello(sid))
@@ -476,13 +476,15 @@ def test_close_session_multiple_operations():
     """Close session with multiple operations in various states."""
     sid, coord, alice, bob = _make_session()
 
-    scope = Scope(kind="file_set", resources=["src/auth.py"])
-    coord.process_message(alice.announce_intent(sid, "intent-a", "Fix", scope))
-    coord.process_message(bob.announce_intent(sid, "intent-b", "Refactor", scope))
+    # Use non-overlapping scopes to avoid frozen-scope blocking ops
+    scope_a = Scope(kind="file_set", resources=["src/auth.py"])
+    scope_b = Scope(kind="file_set", resources=["src/routes.py"])
+    coord.process_message(alice.announce_intent(sid, "intent-a", "Fix", scope_a))
+    coord.process_message(bob.announce_intent(sid, "intent-b", "Refactor", scope_b))
 
     # Create operations in different states
     coord.process_message(alice.propose_op(sid, "op-1", "intent-a", "src/auth.py", "patch"))
-    coord.process_message(bob.propose_op(sid, "op-2", "intent-b", "src/auth.py", "edit"))
+    coord.process_message(bob.propose_op(sid, "op-2", "intent-b", "src/routes.py", "edit"))
     coord.process_message(alice.commit_op(sid, "op-1", "intent-a", "src/auth.py", "patch"))
 
     # Verify states before close

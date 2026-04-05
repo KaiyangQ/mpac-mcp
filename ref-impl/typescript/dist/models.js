@@ -82,6 +82,7 @@ export var CoordinatorEvent;
     CoordinatorEvent["RECOVERED"] = "recovered";
     CoordinatorEvent["HANDOVER"] = "handover";
     CoordinatorEvent["ASSUMED"] = "assumed";
+    CoordinatorEvent["AUTHORIZATION"] = "authorization";
 })(CoordinatorEvent || (CoordinatorEvent = {}));
 export var SessionHealth;
 (function (SessionHealth) {
@@ -150,5 +151,7 @@ export var ErrorCode;
     ErrorCode["STATE_DIVERGENCE"] = "STATE_DIVERGENCE";
     ErrorCode["SESSION_CLOSED"] = "SESSION_CLOSED";
     ErrorCode["CREDENTIAL_REJECTED"] = "CREDENTIAL_REJECTED";
+    ErrorCode["CAUSAL_GAP"] = "CAUSAL_GAP";
+    ErrorCode["INTENT_BACKOFF"] = "INTENT_BACKOFF";
 })(ErrorCode || (ErrorCode = {}));
 //# sourceMappingURL=models.js.map

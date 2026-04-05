@@ -69,3 +69,26 @@ def scope_overlap(a: Scope, b: Scope) -> bool:
     else:
         # Unknown scope kind: conservative True
         return True
+
+
+def scope_contains(container: Scope, test: Scope) -> bool:
+    """Check if *test* scope is fully contained within *container* scope.
+
+    Returns True when every item in *test* also appears in *container*.
+    For different scope kinds: conservative True (assume contained).
+    """
+    if container.kind != test.kind:
+        return True  # Conservative
+
+    if container.kind == "file_set":
+        c_items = {normalize_path(r) for r in (container.resources or [])}
+        t_items = {normalize_path(r) for r in (test.resources or [])}
+        return t_items.issubset(c_items)
+
+    elif container.kind == "entity_set":
+        return set(test.entities or []).issubset(set(container.entities or []))
+
+    elif container.kind == "task_set":
+        return set(test.task_ids or []).issubset(set(container.task_ids or []))
+
+    return True  # Unknown kind: conservative

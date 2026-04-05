@@ -119,14 +119,19 @@ class TestOpSupersede:
         coord = make_coordinator()
         alice = make_participant("Alice")
         bob = make_participant("Bob")
+
+        # Alice joins and announces, commits op BEFORE bob creates conflict
         join_and_announce(coord, alice, "intent-a", ["src/main.py"])
+        commit_op(coord, alice, "op-1", "intent-a", "src/main.py")
+
+        # Now bob joins and announces overlapping scope → creates conflict
         join_and_announce(coord, bob, "intent-b", ["src/main.py"])
 
         # There should be a conflict
         assert len(coord.conflicts) == 1
         conflict = list(coord.conflicts.values())[0]
 
-        commit_op(coord, alice, "op-1", "intent-a", "src/main.py")
+        # Supersede is not blocked by frozen-scope (it operates on existing committed ops)
         msg = alice.supersede_op(SESSION, "op-2", "op-1", "src/main.py",
                                  intent_id="intent-a")
         coord.process_message(msg)
@@ -261,13 +266,13 @@ class TestFaultRecovery:
         join_and_announce(coord, alice, "intent-a", ["src/main.py"])
         snap = coord.snapshot()
 
-        # Phase 2: more activity after snapshot
-        join_and_announce(coord, bob, "intent-b", ["src/main.py"])
+        # Phase 2: commit BEFORE bob creates conflict (frozen-scope enforcement)
         commit_op(coord, alice, "op-1", "intent-a", "src/main.py")
+        join_and_announce(coord, bob, "intent-b", ["src/main.py"])
 
         # The audit log has ALL messages, but we need only the ones after snapshot
-        # For simplicity, collect messages processed after snap
-        msgs_after_snap = coord.audit_log[2:]  # first 2 are alice's hello + intent
+        # first 2 are alice's hello + intent
+        msgs_after_snap = coord.audit_log[2:]
 
         # Recover from snapshot + replay
         coord2 = make_coordinator()

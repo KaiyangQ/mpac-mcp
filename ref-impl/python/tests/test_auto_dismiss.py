@@ -97,14 +97,35 @@ def test_auto_dismiss_one_withdrawn_one_expired():
 
 def test_no_dismiss_if_committed_op_exists():
     """Conflict is NOT auto-dismissed if a related operation is COMMITTED."""
-    session_id, coordinator, alice, bob, conflict_id = _make_conflicting_session()
+    # Build a custom session where alice commits BEFORE bob creates the conflict
+    session_id = "test-dismiss-committed"
+    coordinator = SessionCoordinator(session_id, intent_expiry_grace_sec=0)
 
-    # Alice commits an operation under her intent
+    alice = Participant("agent:alice", "agent", "Alice", ["contributor"])
+    bob = Participant("agent:bob", "agent", "Bob", ["contributor"])
+
+    coordinator.process_message(alice.hello(session_id))
+    coordinator.process_message(bob.hello(session_id))
+
+    scope_a = Scope(kind="file_set", resources=["src/auth.py", "src/middleware.py"])
+    intent_a = alice.announce_intent(session_id, "intent-alice", "Fix auth", scope_a)
+    intent_a["payload"]["ttl_sec"] = 120
+    coordinator.process_message(intent_a)
+
+    # Alice commits BEFORE bob creates overlapping intent (no frozen scope yet)
     commit_msg = alice.commit_op(
         session_id, "op-alice-1", "intent-alice", "src/auth.py", "patch",
         state_ref_before="sha:a", state_ref_after="sha:b",
     )
     coordinator.process_message(commit_msg)
+
+    # Now bob announces overlapping intent → creates conflict
+    scope_b = Scope(kind="file_set", resources=["src/auth.py", "src/models.py"])
+    intent_b = bob.announce_intent(session_id, "intent-bob", "Refactor auth", scope_b)
+    intent_b["payload"]["ttl_sec"] = 120
+    responses = coordinator.process_message(intent_b)
+    assert len(responses) == 1
+    conflict_id = responses[0]["payload"]["conflict_id"]
 
     # Manually track the op in the conflict
     conflict = coordinator.conflicts[conflict_id]
@@ -124,11 +145,32 @@ def test_no_dismiss_if_committed_op_exists():
 
 def test_dismiss_with_rejected_ops():
     """Conflict IS auto-dismissed when all related ops are REJECTED (terminal)."""
-    session_id, coordinator, alice, bob, conflict_id = _make_conflicting_session()
+    # Build a custom session: propose op BEFORE conflict, so frozen-scope doesn't block
+    session_id = "test-dismiss-rejected"
+    coordinator = SessionCoordinator(session_id, intent_expiry_grace_sec=0)
 
-    # Alice proposes an operation, then it gets rejected via cascade
+    alice = Participant("agent:alice", "agent", "Alice", ["contributor"])
+    bob = Participant("agent:bob", "agent", "Bob", ["contributor"])
+
+    coordinator.process_message(alice.hello(session_id))
+    coordinator.process_message(bob.hello(session_id))
+
+    scope_a = Scope(kind="file_set", resources=["src/auth.py", "src/middleware.py"])
+    intent_a = alice.announce_intent(session_id, "intent-alice", "Fix auth", scope_a)
+    intent_a["payload"]["ttl_sec"] = 120
+    coordinator.process_message(intent_a)
+
+    # Alice proposes BEFORE bob creates conflict
     op_msg = alice.propose_op(session_id, "op-alice-2", "intent-alice", "src/auth.py", "patch")
     coordinator.process_message(op_msg)
+
+    # Now bob creates overlapping intent → conflict
+    scope_b = Scope(kind="file_set", resources=["src/auth.py", "src/models.py"])
+    intent_b = bob.announce_intent(session_id, "intent-bob", "Refactor auth", scope_b)
+    intent_b["payload"]["ttl_sec"] = 120
+    responses = coordinator.process_message(intent_b)
+    assert len(responses) == 1
+    conflict_id = responses[0]["payload"]["conflict_id"]
 
     # Track op in conflict
     conflict = coordinator.conflicts[conflict_id]

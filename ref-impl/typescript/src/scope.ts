@@ -85,6 +85,31 @@ export function scopeOverlap(a: Scope, b: Scope): boolean {
 }
 
 /**
+ * Check if *test* scope is fully contained within *container* scope.
+ * Returns true when every item in test also appears in container.
+ * For different scope kinds: conservative true (assume contained).
+ */
+export function scopeContains(container: Scope, test: Scope): boolean {
+  if (container.kind !== test.kind) return true; // Conservative
+
+  switch (container.kind) {
+    case ScopeKind.FILE_SET: {
+      const cSet = new Set((container.resources ?? []).map(normalizePath));
+      return (test.resources ?? []).every((r) => cSet.has(normalizePath(r)));
+    }
+    case ScopeKind.ENTITY_SET: {
+      const cSet = new Set(container.entities ?? []);
+      return (test.entities ?? []).every((e) => cSet.has(e));
+    }
+    case ScopeKind.TASK_SET: {
+      const cSet = new Set(container.task_ids ?? []);
+      return (test.task_ids ?? []).every((t) => cSet.has(t));
+    }
+  }
+  return true; // Unknown kind: conservative
+}
+
+/**
  * Check if scope is valid (has at least one non-empty set)
  */
 export function isValidScope(scope: Scope): boolean {

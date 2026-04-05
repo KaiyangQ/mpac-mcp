@@ -12,7 +12,7 @@ function makeConflictSession() {
     sid, SecurityProfile.OPEN, ComplianceProfile.CORE, 0, 90, 60
   );
   const alice = new Participant("agent:alice", "agent", "Alice", [Role.CONTRIBUTOR]);
-  const bob = new Participant("agent:bob", "agent", "Bob", [Role.CONTRIBUTOR]);
+  const bob = new Participant("agent:bob", "agent", "Bob", [Role.OWNER]);
   const arbiter = new Participant("human:arbiter", "human", "Arbiter", ["arbiter" as Role]);
   coord.processMessage(alice.hello(sid));
   coord.processMessage(bob.hello(sid));

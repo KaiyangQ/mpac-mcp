@@ -160,6 +160,8 @@ class ErrorCode(Enum):
     STATE_DIVERGENCE = "STATE_DIVERGENCE"
     SESSION_CLOSED = "SESSION_CLOSED"
     CREDENTIAL_REJECTED = "CREDENTIAL_REJECTED"
+    CAUSAL_GAP = "CAUSAL_GAP"
+    INTENT_BACKOFF = "INTENT_BACKOFF"
 
 
 class CredentialType(Enum):
@@ -177,6 +179,7 @@ class CoordinatorEvent(Enum):
     RECOVERED = "recovered"
     HANDOVER = "handover"
     ASSUMED = "assumed"
+    AUTHORIZATION = "authorization"
 
 
 class SessionHealth(Enum):

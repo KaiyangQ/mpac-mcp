@@ -72,7 +72,8 @@ export declare enum CoordinatorEvent {
     HEARTBEAT = "heartbeat",
     RECOVERED = "recovered",
     HANDOVER = "handover",
-    ASSUMED = "assumed"
+    ASSUMED = "assumed",
+    AUTHORIZATION = "authorization"
 }
 export declare enum SessionHealth {
     HEALTHY = "healthy",
@@ -133,7 +134,9 @@ export declare enum ErrorCode {
     COORDINATOR_CONFLICT = "COORDINATOR_CONFLICT",
     STATE_DIVERGENCE = "STATE_DIVERGENCE",
     SESSION_CLOSED = "SESSION_CLOSED",
-    CREDENTIAL_REJECTED = "CREDENTIAL_REJECTED"
+    CREDENTIAL_REJECTED = "CREDENTIAL_REJECTED",
+    CAUSAL_GAP = "CAUSAL_GAP",
+    INTENT_BACKOFF = "INTENT_BACKOFF"
 }
 export interface Principal {
     principal_id: string;
