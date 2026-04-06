@@ -4,3 +4,14 @@ __pycache__/
 *.egg-info/
 local_config.json
 node_modules/
+
+# Runtime artifacts from interop test
+ref-impl/demo/interop_messages/
+
+# Runtime artifacts from distributed demo
+ref-impl/demo/distributed/e2e_transcript.json
+ref-impl/demo/distributed/ws_demo_transcript.json
+ref-impl/demo/distributed/test_project/workdir/
+
+# Claude Code session config
+.claude/
