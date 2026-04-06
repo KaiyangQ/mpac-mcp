@@ -49,6 +49,12 @@ ref-impl/
     run_interop.sh               ← Cross-language interoperability test
     run_ai_agents.py             ← AI agent demo (2 Claude agents coordinating via MPAC)
     ai_demo_transcript.json      ← Full protocol transcript from the AI demo
+    distributed/                 ← Distributed validation (WebSocket + real code modification)
+      ws_coordinator.py          ← WebSocket coordinator server
+      ws_agent.py                ← WebSocket AI agent client
+      run_distributed.py         ← Network-based distributed demo
+      run_e2e.py                 ← End-to-end test: real code fixes + optimistic concurrency
+      test_project/src/          ← 5 Python files with intentional bugs for agents to fix
 version_history/                 ← Protocol evolution: archived versions, changelogs, reviews
 daily_reports/                   ← Development logs
 ```
@@ -101,6 +107,24 @@ python run_ai_agents.py
 
 The full transcript from a successful run is available at [ai_demo_transcript.json](./ref-impl/demo/ai_demo_transcript.json).
 
+### Distributed End-to-End Validation
+
+The real-world validation suite tests MPAC over WebSocket transport with concurrent Claude agents that actually modify code files. Two agents independently read a test project with intentional security bugs, generate fixes via Claude API, and commit changes through the full MPAC lifecycle — including conflict detection, coordinator auto-resolution, and optimistic concurrency control with rebase on stale commits:
+
+```bash
+# Requires: pip install websockets httpx anthropic
+cd ref-impl/demo/distributed
+python run_e2e.py
+```
+
+This demonstrates:
+- **WebSocket transport binding** — MPAC messages serialized, transmitted, and deserialized over real network connections
+- **Concurrent LLM decision-making** — parallel Claude API calls for intent decisions, conflict positions, and code generation
+- **Real file coordination** — agents read, fix, and commit actual Python source files with SHA-256 state_ref tracking
+- **Optimistic concurrency control** — stale commits rejected with `STALE_STATE_REF`; agents rebase on the latest committed version and retry
+
+See the [Distributed Validation Report](./version_history/v0.1.12_conformance_closure/MPAC_v0.1.12_Distributed_Validation.md) for detailed findings and architecture.
+
 ---
 
 ## API Key Configuration
@@ -126,7 +150,7 @@ Do not commit `local_config.json` to a public repository.
 
 ## Current Coverage
 
-The root spec, JSON Schema, and both reference implementations are fully aligned at v0.1.12. All 21 message types now have dedicated payload schemas with `if/then` conditional constraints, and the envelope schema dispatches payload validation by `message_type`. Both implementations now enforce 6 runtime rules (HELLO-first gate, credential validation, resolution authority, frozen-scope blocking, batch atomicity rollback, complete error codes). The Python implementation has 109 tests (including 34 adversarial enforcement tests) plus a live Claude API demo; the TypeScript implementation has 88 tests (including 32 adversarial enforcement tests).
+The root spec, JSON Schema, and both reference implementations are fully aligned at v0.1.12. All 21 message types now have dedicated payload schemas with `if/then` conditional constraints, and the envelope schema dispatches payload validation by `message_type`. Both implementations now enforce 6 runtime rules (HELLO-first gate, credential validation, resolution authority, frozen-scope blocking, batch atomicity rollback, complete error codes). The Python implementation has 109 tests (including 34 adversarial enforcement tests) plus a live Claude API demo; the TypeScript implementation has 88 tests (including 32 adversarial enforcement tests). A distributed validation suite verifies the protocol over WebSocket transport with concurrent Claude agents that read, fix, and commit real source files — including optimistic concurrency control with rebase on stale commits.
 
 | Dimension | Covered | Remaining gaps |
 |-----------|---------|----------------|
@@ -137,7 +161,8 @@ The root spec, JSON Schema, and both reference implementations are fully aligned
 | Intent lifecycle | Announce, Update (objective/scope/TTL), Withdraw, Claim, `INTENT_CLAIM_STATUS`, `TRANSFERRED` alignment | Richer scope narrowing validation on claims |
 | Security | Credential exchange (5 types), **credential validation on HELLO** (authenticated/verified profiles), **HELLO-first gate**, **role policy evaluation** (Section 23.1.5, no-policy rejection), **replay protection** (duplicate message_id + timestamp window rejection), sender incarnation tracking, snapshot anti-replay checkpoint persistence | Signature verification, trust binding |
 | Session lifecycle | `SESSION_INFO` execution model declaration, SESSION_CLOSE (spec-aligned schema + detailed summary per Section 9.6.2), auto-close, post-close rejection | Transcript export policy persistence |
-| Consistency & execution model | Post-commit and governance-only pre-commit authorization/completion flow, coordinator epoch on outbound messages | Multi-coordinator fencing during live handover |
+| Consistency & execution model | Post-commit and governance-only pre-commit authorization/completion flow, coordinator epoch on outbound messages, **optimistic concurrency control** (state_ref_before validation, STALE_STATE_REF rejection, rebase pattern) | Multi-coordinator fencing during live handover |
+| Transport & concurrency | **WebSocket transport binding** (JSON-over-WebSocket, message-type routing), **concurrent Claude agent coordination** (parallel LLM calls), **real file modification** with SHA-256 state_ref tracking, coordinator auto-resolve for pure-agent scenarios | Additional transport bindings (gRPC, HTTP/2), multi-node coordinator |
 | Fault recovery | Coordinator status/heartbeat, v0.1.12 snapshot format, snapshot recovery + audit log replay, coordinator epoch bump on recovery | Split-brain detection, multi-coordinator election |
 | Robustness | OP_SUPERSEDE chains, batch commit tracking, **batch atomicity rollback** (all_or_nothing cleanup), **frozen-scope enforcement**, claim conflict / resolution conflict handling, **CAUSAL_GAP / INTENT_BACKOFF error codes** | Conformance harness in a Node-enabled TypeScript CI lane |
 

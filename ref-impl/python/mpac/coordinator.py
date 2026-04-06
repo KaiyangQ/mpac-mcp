@@ -192,6 +192,9 @@ class SessionCoordinator:
             "auto_close_grace_sec": 60,
             "session_ttl_sec": 0,
         }
+        # Optimistic concurrency control: track latest state_ref per target
+        # Maps target (e.g. file path) -> latest known state_ref_after
+        self.target_state_refs: Dict[str, str] = {}
 
     # ================================================================
     #  Main message processing
@@ -253,7 +256,8 @@ class SessionCoordinator:
             ).to_dict()]
 
         # HELLO-first gate: only HELLO is allowed from unregistered senders (Section 14.1)
-        if pid not in self.participants and envelope.message_type != MessageType.HELLO.value:
+        # The coordinator itself is always allowed (it is a service principal, not a participant).
+        if pid not in self.participants and pid != self.coordinator_id and envelope.message_type != MessageType.HELLO.value:
             return [self._make_protocol_error(
                 "INVALID_REFERENCE",
                 envelope.message_id,
@@ -827,6 +831,20 @@ class SessionCoordinator:
                     f"Target '{commit_target}' overlaps with frozen conflict {frozen_conflict.conflict_id}; commits blocked",
                 )]
 
+        # Optimistic concurrency control: reject if state_ref_before is stale
+        if commit_target:
+            state_ref_before = payload.get("state_ref_before")
+            known_ref = self.target_state_refs.get(commit_target)
+            if known_ref is not None and state_ref_before is not None:
+                if state_ref_before != known_ref:
+                    return [self._make_protocol_error(
+                        "STALE_STATE_REF",
+                        envelope.message_id,
+                        f"Target '{commit_target}' state_ref_before ({state_ref_before[:16]}...) "
+                        f"does not match latest known state ({known_ref[:16]}...); "
+                        f"another agent has committed a newer version — rebase required",
+                    )]
+
         self._commit_operation_entry(payload, envelope.sender.principal_id)
         return []
 
@@ -923,6 +941,22 @@ class SessionCoordinator:
             if intent_id is not None and effective_entry.get("intent_id") != intent_id:
                 rejections.append(entry["op_id"])
                 continue
+
+            # Optimistic concurrency control for batch entries
+            entry_target = entry.get("target")
+            if entry_target:
+                state_ref_before = entry.get("state_ref_before")
+                known_ref = self.target_state_refs.get(entry_target)
+                if known_ref is not None and state_ref_before is not None:
+                    if state_ref_before != known_ref:
+                        rejections.append(entry["op_id"])
+                        responses.append(self._make_protocol_error(
+                            "STALE_STATE_REF",
+                            envelope.message_id,
+                            f"Target '{entry_target}' state_ref_before is stale; rebase required",
+                        ))
+                        continue
+
             temp_op = self._build_operation(
                 effective_entry,
                 envelope.sender.principal_id,
@@ -1081,6 +1115,35 @@ class SessionCoordinator:
         conflict.resolution_id = payload.get("resolution_id", str(uuid.uuid4()))
         conflict.resolved_by = envelope.sender.principal_id
         return []
+
+    def resolve_as_coordinator(
+        self,
+        conflict_id: str,
+        decision: str = "approved",
+        rationale: str = "",
+    ) -> List[Dict[str, Any]]:
+        """Resolve a conflict using the coordinator's own authority.
+
+        The coordinator (as a service principal) always passes the
+        ``_is_authorized_resolver`` check.  This method builds a
+        RESOLUTION envelope with the coordinator as sender, then
+        processes it through the normal ``_handle_resolution`` path
+        so all state-machine transitions and side-effects happen
+        consistently.
+
+        Returns the list of response envelopes (empty on success,
+        PROTOCOL_ERROR on failure).
+        """
+        resolution_envelope = self._make_envelope(
+            MessageType.RESOLUTION.value,
+            {
+                "conflict_id": conflict_id,
+                "decision": decision,
+                "rationale": rationale,
+                "resolution_id": str(uuid.uuid4()),
+            },
+        )
+        return self.process_message(resolution_envelope.to_dict())
 
     # ================================================================
     #  Lifecycle cascades
@@ -1323,6 +1386,13 @@ class SessionCoordinator:
             if operation.state_machine.current_state == OperationState.PROPOSED:
                 operation.state_machine.transition("COMMITTED")
         self._track_operation_conflicts(operation.intent_id, op_id)
+
+        # Update optimistic concurrency tracking
+        target = payload.get("target")
+        state_ref_after = payload.get("state_ref_after")
+        if target and state_ref_after:
+            self.target_state_refs[target] = state_ref_after
+
         return operation
 
     def _validate_operation_against_intent(

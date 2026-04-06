@@ -337,12 +337,22 @@ Schema conformance closure driven by an independent protocol audit. All 21 messa
 - **P2 RFC 3339 format strictness** (eighth audit pass):
   - Timestamps that are runtime-parseable but not valid RFC 3339 (e.g. space instead of `T` separator) are now rejected by an explicit regex check before parsing, matching the `format: "date-time"` requirement in `envelope.schema.json`
 
+- **Distributed validation** (real-world deployment testing):
+  - WebSocket transport binding: coordinator server + agent clients, message routing by type (unicast/multicast/broadcast)
+  - Concurrent Claude agent decision-making: parallel LLM calls for intent decisions, conflict positions, and code generation
+  - Real code modification: agents read, fix (via Claude), and commit actual Python source files with SHA-256 state_ref tracking
+  - Optimistic concurrency control: `state_ref_before` validation in `_handle_op_commit` and `_handle_op_batch_commit`; stale commits rejected with `STALE_STATE_REF`; agents rebase on latest committed version and retry
+  - Coordinator auto-resolve: `resolve_as_coordinator()` method for pure-agent scenarios where no human arbiter is available
+  - HELLO-first gate coordinator exemption: coordinator's self-sent messages bypass the registration check
+  - All 109 unit tests pass with zero regressions after changes
+
 **Contents:**
 
 | File | Description |
 |------|-------------|
 | `SPEC_v0.1.12_2026-04-05.md` | Archived SPEC.md snapshot of the v0.1.12 spec |
 | `MPAC_v0.1.12_Update_Record.md` | Detailed update record: audit findings → resolution map |
+| `MPAC_v0.1.12_Distributed_Validation.md` | Distributed validation report: WebSocket transport, concurrent Claude agents, real code modification, optimistic concurrency control |
 
 ---
 
