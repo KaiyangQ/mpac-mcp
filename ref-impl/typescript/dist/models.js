@@ -151,6 +151,7 @@ export var ErrorCode;
     ErrorCode["STATE_DIVERGENCE"] = "STATE_DIVERGENCE";
     ErrorCode["SESSION_CLOSED"] = "SESSION_CLOSED";
     ErrorCode["CREDENTIAL_REJECTED"] = "CREDENTIAL_REJECTED";
+    ErrorCode["REPLAY_DETECTED"] = "REPLAY_DETECTED";
     ErrorCode["CAUSAL_GAP"] = "CAUSAL_GAP";
     ErrorCode["INTENT_BACKOFF"] = "INTENT_BACKOFF";
 })(ErrorCode || (ErrorCode = {}));

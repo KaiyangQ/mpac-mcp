@@ -1,14 +1,15 @@
 {
   "protocol": "MPAC",
-  "version": "0.1.4",
+  "version": "0.1.12",
   "message_type": "INTENT_ANNOUNCE",
-  "message_id": "916fad7e-9997-48a2-8721-629c9d6a5b90",
+  "message_id": "7798b80c-bd9c-4902-a648-fab27e3072ff",
   "session_id": "interop-test-session-001",
   "sender": {
     "principal_id": "agent:bob",
-    "principal_type": "agent"
+    "principal_type": "agent",
+    "sender_instance_id": "agent:bob:693d5912-a4c9-485b-9443-360dede85470"
   },
-  "ts": "2026-04-03T23:17:20.851476Z",
+  "ts": "2026-04-05T23:51:58.872122Z",
   "payload": {
     "intent_id": "intent-bob-001",
     "objective": "Update database schema",

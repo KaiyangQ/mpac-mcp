@@ -934,6 +934,10 @@ Intent 恢复 ACTIVE ──────→ 关联 FROZEN 操作 → PROPOSED
 | `authenticated` | MUST（OAuth/mTLS/API Key） | SHOULD（MAC 或数字签名） | MUST | 跨团队协作 |
 | `verified` | MUST（X.509 证书链） | MUST（数字签名） | MUST（防篡改日志） | 跨组织高风险场景 |
 
+**Authenticated / Verified 执行要求（Section 23.1.2–23.1.5）：**
+- **角色策略评估**：Coordinator 必须根据 `role_policy` 评估 HELLO 中的 `requested_roles`，仅授予通过策略检查的角色。`SESSION_INFO.granted_roles` 反映实际授予角色，不是请求角色。Open profile 无策略时原样授予；Authenticated/Verified 无策略时，因策略为 MUST 要求，返回 `AUTHORIZATION_FAILED` 拒绝加入（不再回退为 `["participant"]`）。`max_count` 约束计数时排除正在加入的 principal 自身（避免 rejoin 被误拒）。
+- **Replay 保护**：Coordinator 必须拒绝重复 `message_id`（返回 `REPLAY_DETECTED`）。此外应检查消息时间戳漂移：偏离超过 `replay_window`（RECOMMENDED: 5 minutes）也应拒绝。保护状态必须跨 coordinator recovery 延续（通过 snapshot 中的 `anti_replay` checkpoint）。
+
 ### 6.4 Compliance Profile
 
 | 值 | 必须支持的消息类型 | 额外要求 |
@@ -988,6 +992,7 @@ Intent 恢复 ACTIVE ──────→ 关联 FROZEN 操作 → PROPOSED
 | `STATE_DIVERGENCE` | 状态分歧（恢复后发现） | snapshot + audit log 回放后状态不一致 |
 | `SESSION_CLOSED` | Session 已关闭 | SESSION_CLOSE 之后收到业务消息 |
 | `CREDENTIAL_REJECTED` | 凭证验证失败 | HELLO 中的 credential 不被接受 |
+| `REPLAY_DETECTED` | 重复消息被拒绝 | Authenticated/Verified profile 下检测到重复 `message_id`（Section 23.1.2） |
 | `RESOLUTION_CONFLICT` | 同一冲突的重复裁决 | 已解决的 conflict 收到第二条 RESOLUTION（Section 18.4） |
 | `CAUSAL_GAP` | 因果缺口信号 | 参与者通过 watermark 检测到遗漏消息（Section 12.8） |
 | `INTENT_BACKOFF` | Intent 退避冷却中 | 冲突驱动拒绝后过早重新 announce 相同 scope（Section 15.3.1） |
@@ -1204,6 +1209,7 @@ Session 在 SESSION_INFO 中 MUST 声明 `execution_model`：
 - [ ] `SESSION_INFO` 响应中可选填写 `identity_issuer`
 
 **安全 / 合规：**
-- [ ] Authenticated profile: 重放检测、角色验证、身份绑定、凭证交换
-- [ ] Authenticated / Verified profile: anti-replay checkpoint 持久化，恢复后继续执行同一 replay-protection 策略
+- [ ] Authenticated profile: 凭证交换（Section 23.1.4）、身份绑定
+- [ ] Authenticated / Verified profile: **角色策略评估** — HELLO 中的 `requested_roles` 必须经 `role_policy` 检查，`SESSION_INFO.granted_roles` 反映实际授予角色（Section 23.1.5）。无 `role_policy` 时返回 `AUTHORIZATION_FAILED` 拒绝加入。`max_count` 计数排除正在加入的 principal 自身。
+- [ ] Authenticated / Verified profile: **Replay 保护** — 拒绝重复 `message_id`（返回 `REPLAY_DETECTED`），同时检查消息时间戳漂移（RECOMMENDED: 5 minutes 窗口）。anti-replay checkpoint 持久化到 snapshot，恢复后继续执行同一策略（Section 23.1.2）
 - [ ] Verified profile: coordinator 签署所有消息、防篡改日志、独立审计

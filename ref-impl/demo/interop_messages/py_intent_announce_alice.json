@@ -1,14 +1,15 @@
 {
   "protocol": "MPAC",
-  "version": "0.1.4",
+  "version": "0.1.12",
   "message_type": "INTENT_ANNOUNCE",
-  "message_id": "4e68919f-b6e8-4ec5-bf64-337ad16241f6",
+  "message_id": "440ba54c-ba85-424e-af1e-3ff074758fcb",
   "session_id": "interop-test-session-001",
   "sender": {
     "principal_id": "agent:alice",
-    "principal_type": "agent"
+    "principal_type": "agent",
+    "sender_instance_id": "agent:alice:b5b53a6a-7909-4d23-9d68-40b376eaf17d"
   },
-  "ts": "2026-04-03T23:17:20.851467Z",
+  "ts": "2026-04-05T23:51:58.872109Z",
   "payload": {
     "intent_id": "intent-alice-001",
     "objective": "Refactor auth module",

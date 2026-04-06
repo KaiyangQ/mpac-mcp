@@ -152,6 +152,63 @@ Fix: all frozen-scope checks for operations are now **target-based** — they co
 
 ---
 
+### P1 Security/Consistency Closure (Fifth Audit Pass)
+
+Three issues identified in an independent review, two at P1 severity (security), one at P2 (spec/schema/impl alignment):
+
+1. **Role policy evaluation not enforced (P1):** The spec (Section 23.1.5) requires the coordinator to evaluate requested roles against a role policy and grant only authorized roles. Both implementations were copying `requested_roles` directly into `granted_roles` without any policy check, allowing any participant in Authenticated/Verified profiles to self-assert `arbiter` and bypass governance authority.
+
+   **Fix:** Added `role_policy` constructor parameter to both implementations. Added `_evaluate_role_policy` (Python) / `evaluateRolePolicy` (TypeScript) methods that enforce identity-to-role mapping, `max_count` constraints, and `allowed_principal_types` constraints per Section 23.1.5. In Open profile without a policy, participants still receive requested roles (spec-compliant). In Authenticated/Verified without a policy, only `["participant"]` is granted. `SESSION_INFO.granted_roles` now reflects the actually granted roles, not the requested ones.
+
+2. **Replay protection not enforced (P1):** The spec (Section 23.1.2) requires Authenticated/Verified profiles to reject messages with duplicate `message_id` values. Both implementations tracked `recent_message_ids` and `sender_frontier` (including in snapshots) but never checked incoming messages against them.
+
+   **Fix:** Added `_seen_message_ids: set` (Python) / `seenMessageIds: Set<string>` (TypeScript) to coordinator state. `process_message` now checks incoming `message_id` against the set before any processing. Duplicates in non-open profiles are rejected with `PROTOCOL_ERROR(REPLAY_DETECTED)`. The set is restored from `anti_replay.recent_message_ids` on snapshot recovery, preserving replay protection continuity across restarts per Section 23.1.2. Additionally, `REPLAY_DETECTED` was added to the SPEC.md error code registry (Section 22.1) and to both implementations' `ErrorCode` enums.
+
+3. **SESSION_CLOSE spec/schema/impl misalignment (P2):** Three drift issues:
+   - **Schema `reason` enum** included `error`, `admin_close`, `transfer` which are not in the spec (Section 14.5: `completed | timeout | policy | coordinator_shutdown | manual`). Fixed.
+   - **Schema `final_lamport_clock`** was not in `required`. The spec marks it Required (R). Fixed.
+   - **Schema `active_intents_disposition`** allowed `transfer`; spec only allows `withdraw_all | expire_all`. Fixed.
+   - **Implementation `summary`** only reported totals (`total_intents`, `total_operations`, etc.) without the breakdown in the Section 14.5 example (`completed_intents`, `expired_intents`, `withdrawn_intents`, `committed_operations`, `rejected_operations`, `abandoned_operations`, `resolved_conflicts`). Both implementations now compute and report the full breakdown.
+   - **Schema `summary` object** updated to include all breakdown fields matching the spec example.
+
+### P1+P2 Replay & Role Policy Hardening (Sixth Audit Pass)
+
+Four issues identified in a review of the fifth audit pass fixes:
+
+1. **Timestamp window check missing (P1):** The spec (Section 23.1.2) requires rejecting "messages with duplicate `message_id` values **or timestamps outside an acceptable window** (RECOMMENDED: 5 minutes)". The fifth pass only implemented duplicate `message_id` rejection; the timestamp window check was entirely missing. A HELLO with `ts: 2000-01-01T00:00:00Z` in authenticated mode was accepted.
+
+   **Fix:** Added timestamp window validation to `process_message` in both implementations. Messages with `ts` more than 5 minutes in the past or future (configurable via `replay_window_sec`, default 300) are rejected with `PROTOCOL_ERROR(REPLAY_DETECTED)` in Authenticated/Verified profiles. The window is evaluated against the coordinator's wall clock.
+
+2. **`REPLAY_DETECTED` missing from `protocol_error.schema.json` (P1):** The error code was added to SPEC.md Section 22.1 and both `ErrorCode` enums, but `protocol_error.schema.json`'s `error_code` enum was not updated, meaning the new error response would fail schema validation.
+
+   **Fix:** Added `REPLAY_DETECTED` to the `error_code` enum in `protocol_error.schema.json`.
+
+3. **`role_policy.max_count` counts self on rejoin (P2):** When a participant re-sends HELLO (e.g., after coordinator recovery per Section 14.1), the old entry is still in the `participants` map. `evaluateRolePolicy` counted it, causing the reconnecting participant to exceed `max_count` for their own role and be downgraded to the default role.
+
+   **Fix:** Both implementations now exclude the connecting principal's own `principal_id` from the `max_count` tally. If the principal already exists in `participants`, they are not counted against the cap for roles they are requesting.
+
+4. **Authenticated/Verified without `role_policy` silently accepted (P2→P1):** The spec (Section 23.1.5, line 2458) states "In the Authenticated and Verified profiles, a role policy MUST be defined and the coordinator MUST enforce it." The fifth pass implementation fell back to `["participant"]` instead of rejecting. This effectively allowed sessions to run in Authenticated/Verified mode without any role governance.
+
+   **Fix:** Both implementations now reject HELLO with `PROTOCOL_ERROR(AUTHORIZATION_FAILED)` when the security profile is Authenticated or Verified and no `role_policy` is configured on the coordinator. The error description explains that a role policy is required.
+
+### P2 Invalid Timestamp Bypass (Seventh Audit Pass)
+
+One edge case found in review of the sixth audit pass:
+
+1. **Unparseable `ts` silently bypasses replay-window check (P2):** Both implementations wrapped the timestamp parse in try/catch and silently continued (`pass` / `catch(_)`) on failure. An attacker sending `ts: "not-a-timestamp"` in Authenticated/Verified mode would bypass the replay-window branch entirely while still being accepted. The envelope schema (`envelope.schema.json` line 33) mandates RFC 3339 `date-time` format.
+
+   **Fix:** Both implementations now reject messages with unparseable timestamps in Authenticated/Verified profiles, returning `PROTOCOL_ERROR(REPLAY_DETECTED)` with a description indicating RFC 3339 is required. Python replaces the `except: pass` with a `REPLAY_DETECTED` error return; TypeScript replaces the try/catch with an explicit `isNaN(msgTs)` guard before the drift check.
+
+### P2 Non-RFC-3339 Timestamp Accepted (Eighth Audit Pass)
+
+One format-strictness edge case found in review of the seventh audit pass:
+
+1. **Runtime-parseable but non-RFC-3339 `ts` bypasses format check (P2):** Python `datetime.fromisoformat()` and JavaScript `new Date()` accept formats beyond RFC 3339 (e.g. `"2026-04-06 03:52:00+00:00"` with a space instead of `T`). The envelope schema mandates `format: "date-time"` (RFC 3339). Since the seventh pass only checked for parse failures, any string that the runtime happened to accept would pass through, violating the wire schema contract.
+
+   **Fix:** Both implementations now validate `ts` against an explicit RFC 3339 regex (`^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+\-]\d{2}:\d{2})$`) before attempting to parse. Messages failing the regex in Authenticated/Verified profiles are rejected with `PROTOCOL_ERROR(REPLAY_DETECTED)`. The `isNaN` / `except` fallback is retained as a second safety net.
+
+---
+
 ## Test Results
 
 - Python: 109/109 tests passed (75 existing + 34 new adversarial enforcement tests)

@@ -144,7 +144,8 @@ class TestCredentialValidation:
 
     def test_authenticated_profile_accepts_valid_credential(self):
         """Authenticated profile accepts HELLO with valid credential."""
-        coord = SessionCoordinator("test-cred-ok", security_profile="authenticated")
+        coord = SessionCoordinator("test-cred-ok", security_profile="authenticated",
+                                    role_policy={"default_role": "contributor"})
         alice = Participant("agent:alice", "agent", "Alice", ["contributor"])
 
         msg = alice.hello("test-cred-ok")

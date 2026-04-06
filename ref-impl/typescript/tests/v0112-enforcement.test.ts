@@ -161,7 +161,10 @@ describe("Credential validation", () => {
   it("accepts HELLO with valid credential in authenticated profile", () => {
     const coord = new SessionCoordinator(
       "test-cred-ok",
-      SecurityProfile.AUTHENTICATED
+      SecurityProfile.AUTHENTICATED,
+      ComplianceProfile.CORE,
+      30, 90, 300, "post_commit", "sha256", 0,
+      { default_role: "contributor" },
     );
     const alice = new Participant("agent:alice", "agent", "Alice", [Role.CONTRIBUTOR]);
 

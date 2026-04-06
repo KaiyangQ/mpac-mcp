@@ -1,14 +1,15 @@
 {
   "protocol": "MPAC",
-  "version": "0.1.4",
+  "version": "0.1.12",
   "message_type": "INTENT_ANNOUNCE",
-  "message_id": "9507c30a-2701-41c3-aa43-dba20210a178",
+  "message_id": "c6649478-a6bf-4b46-beb0-4b94a0eb37da",
   "session_id": "interop-test-session-001",
   "sender": {
     "principal_id": "agent:bob-ts",
-    "principal_type": "agent"
+    "principal_type": "agent",
+    "sender_instance_id": "agent:bob-ts:9374cab1-72f3-4679-b71b-c9fb57001931"
   },
-  "ts": "2026-04-03T23:17:20.895Z",
+  "ts": "2026-04-05T23:51:58.913Z",
   "payload": {
     "intent_id": "intent-bob-ts-002",
     "objective": "Fix auth bug",

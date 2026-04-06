@@ -1,14 +1,15 @@
 {
   "protocol": "MPAC",
-  "version": "0.1.4",
+  "version": "0.1.12",
   "message_type": "HELLO",
-  "message_id": "6ba4e6b8-b7e2-4633-8f5b-60c5d4e919d9",
+  "message_id": "a3e6f845-5db9-462f-a4b8-a969cb9bff1d",
   "session_id": "interop-test-session-001",
   "sender": {
     "principal_id": "agent:bob-ts",
-    "principal_type": "agent"
+    "principal_type": "agent",
+    "sender_instance_id": "agent:bob-ts:9374cab1-72f3-4679-b71b-c9fb57001931"
   },
-  "ts": "2026-04-03T23:17:20.895Z",
+  "ts": "2026-04-05T23:51:58.913Z",
   "payload": {
     "display_name": "Bob TS",
     "roles": [

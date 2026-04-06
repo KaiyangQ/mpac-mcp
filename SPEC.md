@@ -2289,6 +2289,7 @@ Recommended `error_code` values:
 - `STATE_DIVERGENCE`: a participant's reported state diverges from the coordinator's recovered snapshot (Section 8.1.1.3)
 - `SESSION_CLOSED`: a message was received for a session that has been closed (Section 9.6)
 - `CREDENTIAL_REJECTED`: the credential presented in `HELLO` failed verification (Section 23.1.4)
+- `REPLAY_DETECTED`: a message with a duplicate `message_id` was rejected by replay protection (Section 23.1.2). Only emitted in Authenticated and Verified security profiles
 - `RESOLUTION_CONFLICT`: a `RESOLUTION` was received for a conflict that has already been resolved by another participant (Section 18.4)
 - `CAUSAL_GAP`: a participant has detected a gap in its causal state and is signaling that it may have missed intermediate messages (Section 12.8)
 - `INTENT_BACKOFF`: an `INTENT_ANNOUNCE` was rejected because the participant is within the backoff period after a conflict-driven rejection for the same or overlapping scope (Section 15.3.1)

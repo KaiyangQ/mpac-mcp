@@ -107,6 +107,7 @@ export class SessionCoordinator {
   private auditLog: MessageEnvelope[] = [];
   private lamportClock: LamportClock;
   private recentMessageIds: string[] = [];
+  private seenMessageIds: Set<string> = new Set();
   private senderFrontier: Record<string, { last_ts: string; last_lamport?: number }> = {};
   private intentExpiryGraceSec: number;
   private heartbeatIntervalSec: number;
@@ -115,6 +116,8 @@ export class SessionCoordinator {
   private intentClaimGraceMs: number;
   private sessionClosed: boolean;
   private sessionStartedAt: number;
+  private rolePolicy: any;
+  private replayWindowSec: number;
 
   constructor(
     sessionId: string,
@@ -126,6 +129,8 @@ export class SessionCoordinator {
     executionModel: "pre_commit" | "post_commit" = "post_commit",
     stateRefFormat = "sha256",
     intentClaimGraceSec = 0,
+    rolePolicy: any = undefined,
+    replayWindowSec = 300,
   ) {
     if (executionModel === "pre_commit" && complianceProfile !== ComplianceProfile.GOVERNANCE) {
       throw new Error("pre_commit sessions require Governance Profile compliance");
@@ -147,10 +152,35 @@ export class SessionCoordinator {
     this.lamportClock = new LamportClock();
     this.sessionClosed = false;
     this.sessionStartedAt = Date.now();
+    this.rolePolicy = rolePolicy;
+    this.replayWindowSec = replayWindowSec;
   }
 
   processMessage(envelope: MessageEnvelope): MessageEnvelope[] {
     this.auditLog.push(envelope);
+
+    // Replay protection (Section 23.1.2): reject duplicate message_id
+    // AND timestamp window check in Authenticated/Verified profiles
+    if (this.securityProfile !== SecurityProfile.OPEN && this.securityProfile !== "open") {
+      if (this.seenMessageIds.has(envelope.message_id)) {
+        return [this.makeProtocolError("REPLAY_DETECTED", envelope.message_id, `Duplicate message_id '${envelope.message_id}' rejected by replay protection`)];
+      }
+      // RFC 3339 date-time: YYYY-MM-DDThh:mm:ss[.frac](Z | ±HH:MM)
+      const rfc3339Re = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+\-]\d{2}:\d{2})$/;
+      if (!rfc3339Re.test(envelope.ts ?? "")) {
+        return [this.makeProtocolError("REPLAY_DETECTED", envelope.message_id, `Timestamp '${envelope.ts}' is not valid RFC 3339 date-time`)];
+      }
+      const msgTs = new Date(envelope.ts).getTime();
+      if (isNaN(msgTs)) {
+        return [this.makeProtocolError("REPLAY_DETECTED", envelope.message_id, `Unparseable timestamp '${envelope.ts}'; RFC 3339 date-time required`)];
+      }
+      const drift = Math.abs(Date.now() - msgTs) / 1000;
+      if (drift > this.replayWindowSec) {
+        return [this.makeProtocolError("REPLAY_DETECTED", envelope.message_id, `Message timestamp drift ${drift.toFixed(1)}s exceeds replay window of ${this.replayWindowSec}s`)];
+      }
+    }
+    this.seenMessageIds.add(envelope.message_id);
+
     this.rememberMessageId(envelope.message_id);
     this.recordSenderFrontier(envelope);
 
@@ -304,11 +334,21 @@ export class SessionCoordinator {
       }
     }
 
+    // Role policy evaluation (Section 23.1.5)
+    const grantedRoles = this.evaluateRolePolicy(
+      envelope.sender.principal_id, envelope.sender.principal_type, requestedRoles,
+    );
+
+    // If no roles were granted, reject the HELLO
+    if (grantedRoles.length === 0) {
+      return [this.makeProtocolError("AUTHORIZATION_FAILED", envelope.message_id, "No roles could be granted for this principal; check role policy configuration")];
+    }
+
     const principal: Principal = {
       principal_id: envelope.sender.principal_id,
       principal_type: envelope.sender.principal_type,
       display_name: payload.display_name,
-      roles: requestedRoles,
+      roles: grantedRoles,
       capabilities: payload.capabilities ?? [],
       joined_at: new Date().toISOString(),
     };
@@ -339,7 +379,7 @@ export class SessionCoordinator {
         resolution_timeout_sec: this.resolutionTimeoutMs / 1000,
       },
       participant_count: this.participants.size,
-      granted_roles: requestedRoles,
+      granted_roles: grantedRoles,
       identity_verified: this.securityProfile === SecurityProfile.OPEN || Boolean(payload.credential),
       identity_method: payload.credential?.type,
       identity_issuer: payload.credential?.issuer,
@@ -1275,6 +1315,45 @@ export class SessionCoordinator {
     return responses;
   }
 
+  private evaluateRolePolicy(principalId: string, principalType: string, requestedRoles: string[]): string[] {
+    if (!this.rolePolicy) {
+      if (this.securityProfile === SecurityProfile.OPEN || this.securityProfile === "open") {
+        return requestedRoles;
+      }
+      // Authenticated/Verified without a role policy is a configuration error
+      // (Section 23.1.5: "a role policy MUST be defined")
+      // Return empty to signal rejection; caller handles the error
+      return [];
+    }
+
+    const defaultRole: string = this.rolePolicy.default_role ?? "participant";
+    const assignments: Record<string, string[]> = this.rolePolicy.role_assignments ?? {};
+    const constraints: Record<string, any> = this.rolePolicy.role_constraints ?? {};
+
+    const allowed = new Set<string>(assignments[principalId] ?? [defaultRole]);
+    const granted: string[] = [];
+
+    for (const role of requestedRoles) {
+      if (!allowed.has(role)) continue;
+      const constraint = constraints[role];
+      if (constraint) {
+        const allowedTypes: string[] | undefined = constraint.allowed_principal_types;
+        if (allowedTypes && !allowedTypes.includes(principalType)) continue;
+        const maxCount: number | undefined = constraint.max_count;
+        if (maxCount !== undefined) {
+          let currentCount = 0;
+          for (const p of this.participants.values()) {
+            if (p.principal.principal_id !== principalId && p.principal.roles?.includes(role)) currentCount++;
+          }
+          if (currentCount >= maxCount) continue;
+        }
+      }
+      granted.push(role);
+    }
+
+    return granted.length > 0 ? granted : [defaultRole];
+  }
+
   private isAuthorizedResolver(conflict: Conflict, principalId: string): boolean {
     if (principalId === this.coordinatorId) return true;
     const participant = this.participants.get(principalId);
@@ -1293,6 +1372,7 @@ export class SessionCoordinator {
     this.coordinatorEpoch = Number(snapshotData.coordinator_epoch ?? 1) + 1;
     this.coordinatorInstanceId = `${this.coordinatorId}:epoch-${this.coordinatorEpoch}`;
     this.recentMessageIds = [...(snapshotData.anti_replay?.recent_message_ids ?? [])];
+    this.seenMessageIds = new Set(this.recentMessageIds);
     this.senderFrontier = { ...(snapshotData.anti_replay?.sender_frontier ?? {}) };
 
     this.participants.clear();
@@ -1557,10 +1637,43 @@ export class SessionCoordinator {
   }
 
   private buildSessionSummary(): any {
+    // Intent breakdown (Section 9.6.2)
+    let completedIntents = 0, expiredIntents = 0, withdrawnIntents = 0;
+    for (const intent of this.intents.values()) {
+      const st = intent.stateMachine.currentState;
+      if (st === IntentState.EXPIRED) expiredIntents++;
+      else if (st === IntentState.WITHDRAWN) withdrawnIntents++;
+      else if (st === IntentState.SUPERSEDED || st === IntentState.TRANSFERRED) completedIntents++;
+    }
+
+    // Operation breakdown
+    let committedOps = 0, rejectedOps = 0, abandonedOps = 0;
+    for (const op of this.operations.values()) {
+      const st = op.stateMachine.currentState;
+      if (st === OperationState.COMMITTED) committedOps++;
+      else if (st === OperationState.REJECTED) rejectedOps++;
+      else if (st === OperationState.ABANDONED) abandonedOps++;
+    }
+
+    // Conflict breakdown
+    let resolvedConflicts = 0;
+    for (const c of this.conflicts.values()) {
+      if (c.stateMachine.currentState === ConflictState.RESOLVED || c.stateMachine.currentState === ConflictState.CLOSED) {
+        resolvedConflicts++;
+      }
+    }
+
     return {
       total_intents: this.intents.size,
+      completed_intents: completedIntents,
+      expired_intents: expiredIntents,
+      withdrawn_intents: withdrawnIntents,
       total_operations: this.operations.size,
+      committed_operations: committedOps,
+      rejected_operations: rejectedOps,
+      abandoned_operations: abandonedOps,
       total_conflicts: this.conflicts.size,
+      resolved_conflicts: resolvedConflicts,
       total_participants: this.participants.size,
       duration_sec: Math.floor((Date.now() - this.sessionStartedAt) / 1000),
     };

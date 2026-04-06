@@ -70,6 +70,7 @@ export declare class SessionCoordinator {
     private auditLog;
     private lamportClock;
     private recentMessageIds;
+    private seenMessageIds;
     private senderFrontier;
     private intentExpiryGraceSec;
     private heartbeatIntervalSec;
@@ -78,7 +79,9 @@ export declare class SessionCoordinator {
     private intentClaimGraceMs;
     private sessionClosed;
     private sessionStartedAt;
-    constructor(sessionId: string, securityProfile?: SecurityProfile | string, complianceProfile?: ComplianceProfile | string, intentExpiryGraceSec?: number, unavailabilityTimeoutSec?: number, resolutionTimeoutSec?: number, executionModel?: "pre_commit" | "post_commit", stateRefFormat?: string, intentClaimGraceSec?: number);
+    private rolePolicy;
+    private replayWindowSec;
+    constructor(sessionId: string, securityProfile?: SecurityProfile | string, complianceProfile?: ComplianceProfile | string, intentExpiryGraceSec?: number, unavailabilityTimeoutSec?: number, resolutionTimeoutSec?: number, executionModel?: "pre_commit" | "post_commit", stateRefFormat?: string, intentClaimGraceSec?: number, rolePolicy?: any, replayWindowSec?: number);
     processMessage(envelope: MessageEnvelope): MessageEnvelope[];
     checkExpiry(nowMs?: number): MessageEnvelope[];
     checkLiveness(nowMs?: number): MessageEnvelope[];
@@ -134,6 +137,7 @@ export declare class SessionCoordinator {
     private rejectClaim;
     private withdrawClaim;
     private checkPendingClaims;
+    private evaluateRolePolicy;
     private isAuthorizedResolver;
     recoverFromSnapshot(snapshotData: any): void;
     replayAuditLog(messages: MessageEnvelope[]): MessageEnvelope[];

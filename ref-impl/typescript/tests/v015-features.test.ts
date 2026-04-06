@@ -193,7 +193,8 @@ describe("v0.1.5 Features", () => {
   describe("Credential in Hello (Section 6.2)", () => {
     it("credential in hello", () => {
       const sid = "test-cred";
-      const coord = new SessionCoordinator(sid, SecurityProfile.AUTHENTICATED, ComplianceProfile.CORE);
+      const coord = new SessionCoordinator(sid, SecurityProfile.AUTHENTICATED, ComplianceProfile.CORE,
+        30, 90, 300, "post_commit", "sha256", 0, { default_role: "contributor" });
 
       const credential = {
         type: "bearer_token",
@@ -216,7 +217,8 @@ describe("v0.1.5 Features", () => {
 
     it("credential in hello payload", () => {
       const sid = "test-cred-payload";
-      const coord = new SessionCoordinator(sid, SecurityProfile.AUTHENTICATED, ComplianceProfile.CORE);
+      const coord = new SessionCoordinator(sid, SecurityProfile.AUTHENTICATED, ComplianceProfile.CORE,
+        30, 90, 300, "post_commit", "sha256", 0, { default_role: "contributor" });
 
       const credential = {
         type: "mtls_fingerprint",

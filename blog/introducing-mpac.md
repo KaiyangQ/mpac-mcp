@@ -106,12 +106,14 @@ MPAC has evolved through twelve revision rounds, each driven by independent audi
 
 - **HELLO-first gate** — unregistered senders are rejected immediately; only HELLO is exempt.
 - **Credential validation** — non-open security profiles reject HELLO without valid credentials.
+- **Role policy evaluation** — the coordinator evaluates requested roles against the session's role policy (Section 23.1.5) and only grants authorized roles. Self-asserted `arbiter` in Authenticated/Verified profiles is no longer silently accepted.
+- **Replay protection** — duplicate `message_id` values are rejected with `REPLAY_DETECTED` in Authenticated/Verified profiles. Timestamp drift beyond the replay window (RECOMMENDED: 5 minutes) is also rejected. Protection state survives coordinator recovery via snapshot checkpointing.
 - **Resolution authority** — only owners/arbiters can resolve conflicts pre-escalation; only the escalation target or arbiter can resolve post-escalation.
 - **Frozen-scope enforcement** — operations targeting resources within a frozen conflict scope are blocked. The check is target-based, not intent-based, so it cannot be bypassed by omitting optional fields.
 - **Batch atomicity** — `all_or_nothing` batches that fail validation clean up all already-registered operations before returning the rejection.
 - **Snapshot persistence** — frozen state survives coordinator recovery. A coordinator restart doesn't silently unfreeze contested scopes.
 
-**Adversarial testing.** 66 new tests (34 Python + 32 TypeScript) specifically target enforcement bypass attempts: unregistered senders, missing credentials, unauthorized resolvers, frozen-scope evasion via omitted `intent_id`, snapshot recovery state loss, and partial-overlap edge cases. These tests were written in response to real findings from four rounds of independent audit.
+**Adversarial testing.** 66 new tests (34 Python + 32 TypeScript) specifically target enforcement bypass attempts: unregistered senders, missing credentials, unauthorized resolvers, frozen-scope evasion via omitted `intent_id`, snapshot recovery state loss, and partial-overlap edge cases. These tests were written in response to real findings from five rounds of independent audit.
 
 ## What MPAC Does *Not* Do
 
@@ -133,11 +135,11 @@ What exists today:
 - **JSON Schema** ([ref-impl/schema/](../ref-impl/schema/)) — machine-readable wire format definitions for envelope and all 21 message payload schemas, with `if/then` conditional constraints for coordinator-only messages, handover fields, claim status decisions, and authorization events.
 - **Reference implementations** in [Python](../ref-impl/python/) (109 tests) and [TypeScript](../ref-impl/typescript/) (88 tests) — full protocol coverage including session lifecycle, intent management, operation execution (pre-commit and post-commit models), conflict detection and resolution, coordinator fault recovery with snapshot persistence, atomic batch operations, frozen-scope enforcement, and credential validation.
 - **AI agent demo** ([ref-impl/demo/](../ref-impl/demo/)) — two Claude agents coordinating through the full protocol lifecycle, exercising session join, intent declaration, conflict detection, negotiation, commit, coordinator status, state snapshot, and session close.
-- **Audit-driven evolution** — every version change is archived with rationale. The protocol has been through twelve revision rounds including a five-dimension audit (v0.1.3), a gap analysis (v0.1.4→v0.1.5), a SOSP/OSDI-level deep review (v0.1.6→v0.1.7), schema conformance closure (v0.1.12), and four rounds of adversarial runtime enforcement audit.
+- **Audit-driven evolution** — every version change is archived with rationale. The protocol has been through twelve revision rounds including a five-dimension audit (v0.1.3), a gap analysis (v0.1.4→v0.1.5), a SOSP/OSDI-level deep review (v0.1.6→v0.1.7), schema conformance closure (v0.1.12), four rounds of adversarial runtime enforcement audit, a security/consistency closure pass, and a conformance hardening pass (timestamp window, schema enum alignment, max_count self-exclusion, no-policy rejection).
 
 What's still ahead:
 
-- **Replay rejection enforcement** — Lamport monotonicity and sender-frontier checks are specified but not yet enforced at runtime.
+- **Lamport monotonicity enforcement** — sender-frontier data is tracked and persisted in snapshots, but incoming messages are not yet rejected for Lamport regression within the same sender incarnation.
 - **Frozen scope progressive degradation** — the three-phase degradation sequence (normal → escalate+priority bypass → first-committer-wins) is specified in Section 18.6.2.1 but not yet implemented.
 - **Multi-coordinator fencing** — split-brain prevention via epoch comparison is specified but not yet exercised under concurrent coordinator scenarios.
 - **Formal verification** — the state machine interactions have normative transition tables but haven't been formally verified (e.g., TLA+).

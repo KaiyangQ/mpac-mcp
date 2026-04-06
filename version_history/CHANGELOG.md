@@ -323,6 +323,19 @@ Schema conformance closure driven by an independent protocol audit. All 21 messa
   - All frozen-scope checks changed from intent-based to **target-based**: `OP_PROPOSE`, `OP_COMMIT`, `OP_BATCH_COMMIT` now check each operation's `target` field directly against frozen scopes, not the parent intent's scope. This closes the bypass where `intent_id` (optional per schema) could be omitted to skip the check.
   - Python `_handle_op_propose` and `_handle_op_commit` aligned with TypeScript (which already used target-based checks for single ops)
 - 66 new adversarial tests (Python 34, TypeScript 32) covering all 6 enforcement rules + target-based frozen-scope
+- **P1 security/consistency closure** (fifth audit pass):
+  - Role policy evaluation enforced: coordinator evaluates HELLO `requested_roles` against `role_policy` per Section 23.1.5; Authenticated/Verified profiles no longer accept self-asserted roles. `SESSION_INFO.granted_roles` reflects actually granted roles.
+  - Replay protection enforced: duplicate `message_id` rejected with `REPLAY_DETECTED` in Authenticated/Verified profiles; protection state restored from snapshot on recovery (Section 23.1.2). `REPLAY_DETECTED` added to SPEC.md error code registry and both ErrorCode enums.
+  - SESSION_CLOSE schema aligned with spec: `reason` enum corrected to 5 values (removed `error`/`admin_close`/`transfer`); `final_lamport_clock` made required; `active_intents_disposition` corrected to 2 values (removed `transfer`). Implementation summary expanded to include per-state breakdowns per Section 9.6.2.
+- **P1+P2 enforcement corrections** (sixth audit pass):
+  - Replay timestamp window check: both Python and TypeScript `processMessage` now verify message timestamp drift against `replay_window_sec` (default 300s / RECOMMENDED: 5 minutes); excessive drift rejected with `REPLAY_DETECTED`
+  - `REPLAY_DETECTED` added to `protocol_error.schema.json` error code enum (was missing despite being in SPEC.md and both ErrorCode enums)
+  - No-policy rejection: Authenticated/Verified profiles without a `role_policy` now return `AUTHORIZATION_FAILED` instead of silently granting `["participant"]`; `handleHello` checks for empty granted roles and rejects
+  - `max_count` self-exclusion: `evaluateRolePolicy` excludes the joining principal from the role count, preventing rejoin from being blocked by the principal's own prior registration
+- **P2 invalid timestamp bypass** (seventh audit pass):
+  - Unparseable `ts` (e.g. `"not-a-timestamp"`) in Authenticated/Verified profiles no longer silently bypasses the replay-window check; rejected with `REPLAY_DETECTED` requiring RFC 3339 date-time format
+- **P2 RFC 3339 format strictness** (eighth audit pass):
+  - Timestamps that are runtime-parseable but not valid RFC 3339 (e.g. space instead of `T` separator) are now rejected by an explicit regex check before parsing, matching the `format: "date-time"` requirement in `envelope.schema.json`
 
 **Contents:**
 

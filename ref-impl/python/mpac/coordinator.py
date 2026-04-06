@@ -2,7 +2,13 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
+import re
 import uuid
+
+# RFC 3339 date-time: YYYY-MM-DDThh:mm:ss[.frac](Z | ±HH:MM)
+_RFC3339_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+\-]\d{2}:\d{2})$"
+)
 
 from .envelope import MessageEnvelope
 from .models import (
@@ -145,6 +151,8 @@ class SessionCoordinator:
         execution_model: str = "post_commit",
         state_ref_format: str = "sha256",
         intent_claim_grace_sec: float = 0.0,
+        role_policy: Optional[Dict[str, Any]] = None,
+        replay_window_sec: float = 300.0,
     ):
         if execution_model == "pre_commit" and compliance_profile != ComplianceProfile.GOVERNANCE.value:
             raise ValueError("pre_commit sessions require Governance Profile compliance")
@@ -170,12 +178,15 @@ class SessionCoordinator:
         self.audit_log: List[Dict[str, Any]] = []
         self.lamport_clock = LamportClock()
         self.recent_message_ids: List[str] = []
+        self._seen_message_ids: set = set()
         self.sender_frontier: Dict[str, Dict[str, Any]] = {}
         self.coordinator_epoch = 1
         self.coordinator_id = f"service:coordinator-{session_id}"
         self.coordinator_instance_id = f"{self.coordinator_id}:epoch-{self.coordinator_epoch}"
         self.session_closed = False
         self.session_started_at = _now()
+        self.role_policy: Optional[Dict[str, Any]] = role_policy
+        self.replay_window_sec = replay_window_sec
         self.lifecycle_policy = {
             "auto_close": False,
             "auto_close_grace_sec": 60,
@@ -190,6 +201,40 @@ class SessionCoordinator:
         """Process an incoming message and emit zero or more responses."""
         envelope = MessageEnvelope.from_dict(envelope_dict)
         self.audit_log.append(envelope.to_dict())
+
+        # Replay protection (Section 23.1.2): reject duplicate message_id
+        # or timestamps outside acceptable window in Authenticated/Verified profiles
+        if self.security_profile != "open":
+            if envelope.message_id in self._seen_message_ids:
+                return [self._make_protocol_error(
+                    "REPLAY_DETECTED",
+                    envelope.message_id,
+                    f"Duplicate message_id '{envelope.message_id}' rejected by replay protection",
+                ).to_dict()]
+            # Timestamp format + window check (RECOMMENDED: 5 minutes)
+            if not _RFC3339_RE.match(envelope.ts or ""):
+                return [self._make_protocol_error(
+                    "REPLAY_DETECTED",
+                    envelope.message_id,
+                    f"Timestamp '{envelope.ts}' is not valid RFC 3339 date-time",
+                ).to_dict()]
+            try:
+                msg_ts = datetime.fromisoformat(envelope.ts.replace("Z", "+00:00"))
+                drift = abs((_now() - msg_ts).total_seconds())
+                if drift > self.replay_window_sec:
+                    return [self._make_protocol_error(
+                        "REPLAY_DETECTED",
+                        envelope.message_id,
+                        f"Timestamp '{envelope.ts}' is {int(drift)}s outside the acceptable window ({self.replay_window_sec}s)",
+                    ).to_dict()]
+            except (ValueError, TypeError):
+                return [self._make_protocol_error(
+                    "REPLAY_DETECTED",
+                    envelope.message_id,
+                    f"Unparseable timestamp '{envelope.ts}'; RFC 3339 date-time required",
+                ).to_dict()]
+        self._seen_message_ids.add(envelope.message_id)
+
         self._remember_message_id(envelope.message_id)
         self._record_sender_frontier(envelope)
 
@@ -365,11 +410,25 @@ class SessionCoordinator:
                     f"Security profile '{self.security_profile}' requires a valid credential in HELLO",
                 )]
 
+        # Role policy evaluation (Section 23.1.5)
+        granted_roles = self._evaluate_role_policy(
+            envelope.sender.principal_id, envelope.sender.principal_type, requested_roles,
+        )
+
+        # If no roles were granted, reject the HELLO (e.g. no role policy in
+        # Authenticated/Verified profile, or all requested roles denied)
+        if not granted_roles:
+            return [self._make_protocol_error(
+                "AUTHORIZATION_FAILED",
+                envelope.message_id,
+                "No roles could be granted for this principal; check role policy configuration",
+            )]
+
         principal = Principal(
             principal_id=envelope.sender.principal_id,
             principal_type=envelope.sender.principal_type,
             display_name=payload.get("display_name", ""),
-            roles=requested_roles,
+            roles=granted_roles,
             capabilities=payload.get("capabilities", []),
         )
         self.participants[principal.principal_id] = ParticipantInfo(
@@ -401,7 +460,7 @@ class SessionCoordinator:
                     "resolution_timeout_sec": self.resolution_timeout_sec,
                 },
                 "participant_count": len(self.participants),
-                "granted_roles": requested_roles,
+                "granted_roles": granted_roles,
                 "identity_verified": self.security_profile == "open" or bool(payload.get("credential")),
                 "identity_method": payload.get("credential", {}).get("type") if payload.get("credential") else None,
                 "identity_issuer": payload.get("credential", {}).get("issuer") if payload.get("credential") else None,
@@ -1493,6 +1552,51 @@ class SessionCoordinator:
             )
         ]
 
+    def _evaluate_role_policy(
+        self, principal_id: str, principal_type: str, requested_roles: List[str],
+    ) -> List[str]:
+        """Evaluate requested roles against the session's role policy (Section 23.1.5).
+
+        In Open profile without a role policy, participants receive the roles they request.
+        In Authenticated/Verified profiles, a role policy MUST be defined and the coordinator
+        MUST enforce it.  If no policy is configured, the default_role fallback applies.
+        """
+        if self.role_policy is None:
+            if self.security_profile == "open":
+                return requested_roles
+            # Authenticated/Verified without a role policy is a configuration error
+            # (Section 23.1.5: "a role policy MUST be defined")
+            # Return empty to signal rejection; caller handles the error
+            return []
+
+        default_role = self.role_policy.get("default_role", "participant")
+        assignments = self.role_policy.get("role_assignments", {})
+        constraints = self.role_policy.get("role_constraints", {})
+
+        # Determine which roles this principal is authorized for
+        allowed = set(assignments.get(principal_id, [default_role]))
+
+        granted: List[str] = []
+        for role in requested_roles:
+            if role not in allowed:
+                continue
+            constraint = constraints.get(role)
+            if constraint:
+                allowed_types = constraint.get("allowed_principal_types")
+                if allowed_types and principal_type not in allowed_types:
+                    continue
+                max_count = constraint.get("max_count")
+                if max_count is not None:
+                    current_count = sum(
+                        1 for p in self.participants.values()
+                        if p.principal.principal_id != principal_id and role in p.principal.roles
+                    )
+                    if current_count >= max_count:
+                        continue
+            granted.append(role)
+
+        return granted if granted else [default_role]
+
     def _is_authorized_resolver(self, conflict: Conflict, principal_id: str) -> bool:
         """Check whether a resolver is valid for the conflict's current authority phase."""
         if principal_id == self.coordinator_id:
@@ -1521,6 +1625,7 @@ class SessionCoordinator:
 
         anti_replay = snapshot_data.get("anti_replay", {})
         self.recent_message_ids = list(anti_replay.get("recent_message_ids", []))
+        self._seen_message_ids = set(self.recent_message_ids)
         self.sender_frontier = dict(anti_replay.get("sender_frontier", {}))
 
         self.participants.clear()
@@ -1846,12 +1951,50 @@ class SessionCoordinator:
         }
 
     def _build_session_summary(self) -> Dict[str, Any]:
-        """Summarize the session lifecycle for SESSION_CLOSE."""
+        """Summarize the session lifecycle for SESSION_CLOSE (Section 9.6.2)."""
         duration_sec = int((_now() - self.session_started_at).total_seconds())
+
+        # Intent breakdown
+        completed = expired = withdrawn = 0
+        for intent in self.intents.values():
+            st = intent.state_machine.current_state
+            if st == IntentState.EXPIRED:
+                expired += 1
+            elif st == IntentState.WITHDRAWN:
+                withdrawn += 1
+            elif st in (IntentState.SUPERSEDED, IntentState.TRANSFERRED):
+                completed += 1
+            elif st == IntentState.ACTIVE and intent.state_machine.is_terminal():
+                completed += 1
+
+        # Operation breakdown
+        committed = rejected = abandoned = 0
+        for op in self.operations.values():
+            st = op.state_machine.current_state
+            if st == OperationState.COMMITTED:
+                committed += 1
+            elif st == OperationState.REJECTED:
+                rejected += 1
+            elif st == OperationState.ABANDONED:
+                abandoned += 1
+
+        # Conflict breakdown
+        resolved = sum(
+            1 for c in self.conflicts.values()
+            if c.state_machine.current_state in (ConflictState.RESOLVED, ConflictState.CLOSED)
+        )
+
         return {
             "total_intents": len(self.intents),
+            "completed_intents": completed,
+            "expired_intents": expired,
+            "withdrawn_intents": withdrawn,
             "total_operations": len(self.operations),
+            "committed_operations": committed,
+            "rejected_operations": rejected,
+            "abandoned_operations": abandoned,
             "total_conflicts": len(self.conflicts),
+            "resolved_conflicts": resolved,
             "total_participants": len(self.participants),
             "duration_sec": duration_sec,
         }

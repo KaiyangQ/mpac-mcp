@@ -1,14 +1,15 @@
 {
   "protocol": "MPAC",
-  "version": "0.1.4",
+  "version": "0.1.12",
   "message_type": "HELLO",
-  "message_id": "ec9ea392-5c92-4248-85b2-2811cd0c536d",
+  "message_id": "c792b431-dba8-4ef7-8275-63da6fb7ab67",
   "session_id": "interop-test-session-001",
   "sender": {
     "principal_id": "agent:alice-ts",
-    "principal_type": "agent"
+    "principal_type": "agent",
+    "sender_instance_id": "agent:alice-ts:c17f3ba9-d52e-4ca7-a89e-bff59b547ef6"
   },
-  "ts": "2026-04-03T23:17:20.895Z",
+  "ts": "2026-04-05T23:51:58.913Z",
   "payload": {
     "display_name": "Alice TS",
     "roles": [
