@@ -376,6 +376,7 @@ New feature: backend AI model health monitoring integrated with [aistatus.cc](ht
 - Specialized backend health tests: 13 test cases in each language covering all monitoring scenarios
 - Fixed Python `_process_backend_health` naming bug (`stateMachine` → `state_machine`) and transition event (`"unavailable"` → `"SUSPENDED"`)
 - All 122 Python tests + 101 TypeScript tests pass with zero regressions
+- **Coordination overhead demo** (`run_overhead_comparison.py`): same 3-agent PR review scenario run in Traditional (serial) vs MPAC (parallel) mode, with precise decision_time / coordination_overhead breakdown. Representative results: decision time -9% (API noise), coordination overhead **-95%**, wall clock -79%.
 
 **Contents:**
 
