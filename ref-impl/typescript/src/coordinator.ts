@@ -457,7 +457,7 @@ export class SessionCoordinator {
           if (intent.principal_id === pid && !intent.stateMachine.isTerminal()) {
             if (intent.stateMachine.currentState !== "SUSPENDED") {
               try {
-                intent.stateMachine.transition("unavailable");
+                intent.stateMachine.transition("SUSPENDED");
                 responses.push(this.makeEnvelope(MessageType.INTENT_UPDATE, {
                   intent_id: intent.intent_id,
                   objective: `[SUSPENDED: backend ${providerStatus}] ${intent.objective}`,

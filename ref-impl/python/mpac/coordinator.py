@@ -548,10 +548,10 @@ class SessionCoordinator:
             # suspend_and_claim: suspend agent's active intents
             if action == "suspend_and_claim":
                 for intent in self.intents.values():
-                    if intent.principal_id == pid and not intent.stateMachine.isTerminal():
-                        if intent.stateMachine.currentState.value != "SUSPENDED":
+                    if intent.principal_id == pid and not intent.state_machine.is_terminal():
+                        if intent.state_machine.current_state != IntentState.SUSPENDED:
                             try:
-                                intent.stateMachine.transition("unavailable")
+                                intent.state_machine.transition("SUSPENDED")
                                 responses.append(self._make_envelope(
                                     "INTENT_UPDATE",
                                     {

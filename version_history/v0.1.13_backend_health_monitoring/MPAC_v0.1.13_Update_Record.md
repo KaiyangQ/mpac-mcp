@@ -108,7 +108,29 @@ All changes are additive — no existing behavior is modified.
 
 ---
 
+### P3 Implementation Hardening (Second Pass)
+
+4 items completed to harden backend health monitoring coverage:
+
+1. **Python `_process_backend_health` naming bug (P2):** The `suspend_and_claim` branch used TypeScript-style attribute names (`stateMachine`, `isTerminal()`, `currentState`) instead of Python-style (`state_machine`, `is_terminal()`, `current_state`). This would have caused `AttributeError` at runtime when a provider went down.
+
+   **Fix:** Corrected to `intent.state_machine.is_terminal()`, `intent.state_machine.current_state != IntentState.SUSPENDED`, and `intent.state_machine.transition("unavailable")`.
+
+2. **Participant helper extension (P3):** `Participant.hello()` and `Participant.heartbeat()` in both Python and TypeScript did not support the new `backend` and `backend_health` parameters, making it impossible to write clean tests using the Participant helper class.
+
+   **Fix:** Added optional `backend` parameter to `hello()` and optional `backend_health` parameter to `heartbeat()` in both `ref-impl/python/mpac/participant.py` and `ref-impl/typescript/src/participant.ts`.
+
+3. **Demo transcript enhancement (P3):** The backend health transcript (`ref-impl/demo/distributed/backend_health_transcript.json`) only covered the basic degraded → down → switch flow (steps 1-12), missing the INTENT_CLAIM transfer, BACKEND_SWITCH_DENIED rejection, and provider recovery scenarios.
+
+   **Fix:** Added steps 13-18 covering: Bob claims Alice's suspended intent via INTENT_CLAIM, coordinator approves with INTENT_CLAIM_STATUS, Alice attempts switch to disallowed provider (deepseek) and gets BACKEND_SWITCH_DENIED, Anthropic recovers and Alice switches back successfully.
+
+4. **Specialized backend health tests (P3):** No dedicated test coverage for the backend health monitoring feature. All existing tests only covered pre-v0.1.13 behavior.
+
+   **Fix:** Created `test_v0113_backend_health.py` (Python) and `v0113-backend-health.test.ts` (TypeScript) with 12 test cases each covering: HELLO backend declaration, heartbeat backend_health reporting, degraded/down alert emission, suspend_and_claim behavior, model switch validation, allowed_providers whitelist enforcement, auto_switch=forbidden rejection, SESSION_INFO liveness_policy inclusion, no-alert on status repeat, and provider recovery flow.
+
+---
+
 ## Test Results
 
-- Python: 109/109 tests passed (all existing tests pass with zero regressions)
-- TypeScript: 88/88 tests passed (all existing tests pass with zero regressions)
+- Python: 122/122 tests passed (109 existing + 13 new backend health tests)
+- TypeScript: 101/101 tests passed (88 existing + 13 new backend health tests)

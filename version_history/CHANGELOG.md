@@ -371,7 +371,11 @@ New feature: backend AI model health monitoring integrated with [aistatus.cc](ht
 - Protocol vs. implementation boundary: protocol manages signaling and governance rules; model selection, switch timing, and fallback strategy are implementation decisions
 - `provider_status` enum and `alternatives` structure directly mirror the aistatus.cc `/api/check` response format
 - Both reference implementations (Python + TypeScript) updated: `ParticipantInfo` tracks backend state, `handleHeartbeat` processes backend_health, coordinator emits `backend_alert` events and enforces switch policy
-- All 109 Python tests + 88 TypeScript tests pass with zero regressions
+- Participant helper classes extended: `hello()` accepts `backend` param, `heartbeat()` accepts `backend_health` param (Python + TypeScript)
+- Demo transcript enhanced: 18-step backend health scenario covering degraded → down → switch → INTENT_CLAIM transfer → BACKEND_SWITCH_DENIED → provider recovery
+- Specialized backend health tests: 13 test cases in each language covering all monitoring scenarios
+- Fixed Python `_process_backend_health` naming bug (`stateMachine` → `state_machine`) and transition event (`"unavailable"` → `"SUSPENDED"`)
+- All 122 Python tests + 101 TypeScript tests pass with zero regressions
 
 **Contents:**
 

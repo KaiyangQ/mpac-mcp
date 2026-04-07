@@ -17,8 +17,11 @@ export declare class Participant {
     });
     private sender;
     private make;
-    hello(sessionId: string): MessageEnvelope;
-    heartbeat(sessionId: string, status?: string, activeIntentId?: string, summary?: string): MessageEnvelope;
+    hello(sessionId: string, backend?: {
+        model_id: string;
+        provider: string;
+    }): MessageEnvelope;
+    heartbeat(sessionId: string, status?: string, activeIntentId?: string, summary?: string, backendHealth?: Record<string, unknown>): MessageEnvelope;
     goodbye(sessionId: string, reason?: string, activeIntents?: string[], intentDisposition?: string): MessageEnvelope;
     announceIntent(sessionId: string, intentId: string, objective: string, scope: Scope, ttlSec?: number): MessageEnvelope;
     updateIntent(sessionId: string, intentId: string, opts?: {

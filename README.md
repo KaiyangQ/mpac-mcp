@@ -41,10 +41,10 @@ ref-impl/
     objects/                     ← 4 shared object schemas (Watermark, Scope, Basis, Outcome)
   python/                        ← Python reference implementation
     mpac/                        ← 8 core modules
-    tests/                       ← 10 test files (109 test cases)
+    tests/                       ← 11 test files (122 test cases)
   typescript/                    ← TypeScript reference implementation
     src/                         ← 8 source files
-    tests/                       ← 10 test files (88 test cases)
+    tests/                       ← 11 test files (101 test cases)
   demo/
     run_interop.sh               ← Cross-language interoperability test
     run_ai_agents.py             ← AI agent demo (2 Claude agents coordinating via MPAC)

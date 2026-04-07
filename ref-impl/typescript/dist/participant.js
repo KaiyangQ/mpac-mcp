@@ -31,7 +31,7 @@ export class Participant {
     make(messageType, sessionId, payload) {
         return createEnvelope(messageType, sessionId, this.sender(), payload, this.lamportClock.createWatermark());
     }
-    hello(sessionId) {
+    hello(sessionId, backend) {
         const payload = {
             display_name: this.displayName,
             roles: this.roles,
@@ -39,14 +39,18 @@ export class Participant {
         };
         if (this.credential)
             payload.credential = this.credential;
+        if (backend)
+            payload.backend = backend;
         return this.make(MessageType.HELLO, sessionId, payload);
     }
-    heartbeat(sessionId, status = "idle", activeIntentId, summary) {
+    heartbeat(sessionId, status = "idle", activeIntentId, summary, backendHealth) {
         const payload = { status };
         if (activeIntentId)
             payload.active_intent_id = activeIntentId;
         if (summary)
             payload.summary = summary;
+        if (backendHealth)
+            payload.backend_health = backendHealth;
         return this.make(MessageType.HEARTBEAT, sessionId, payload);
     }
     goodbye(sessionId, reason = "user_exit", activeIntents, intentDisposition = "withdraw") {

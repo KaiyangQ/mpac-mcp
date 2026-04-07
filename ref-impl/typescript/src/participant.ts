@@ -43,20 +43,22 @@ export class Participant {
     return createEnvelope(messageType, sessionId, this.sender(), payload, this.lamportClock.createWatermark());
   }
 
-  hello(sessionId: string): MessageEnvelope {
+  hello(sessionId: string, backend?: { model_id: string; provider: string }): MessageEnvelope {
     const payload: Record<string, unknown> = {
       display_name: this.displayName,
       roles: this.roles,
       capabilities: this.capabilities,
     };
     if (this.credential) payload.credential = this.credential;
+    if (backend) payload.backend = backend;
     return this.make(MessageType.HELLO, sessionId, payload);
   }
 
-  heartbeat(sessionId: string, status = "idle", activeIntentId?: string, summary?: string): MessageEnvelope {
+  heartbeat(sessionId: string, status = "idle", activeIntentId?: string, summary?: string, backendHealth?: Record<string, unknown>): MessageEnvelope {
     const payload: Record<string, unknown> = { status };
     if (activeIntentId) payload.active_intent_id = activeIntentId;
     if (summary) payload.summary = summary;
+    if (backendHealth) payload.backend_health = backendHealth;
     return this.make(MessageType.HEARTBEAT, sessionId, payload);
   }
 

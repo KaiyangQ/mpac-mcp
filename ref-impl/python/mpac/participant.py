@@ -50,8 +50,18 @@ class Participant:
     #  Session layer
     # ================================================================
 
-    def hello(self, session_id: str) -> Dict[str, Any]:
-        """Send HELLO to join session."""
+    def hello(
+        self,
+        session_id: str,
+        backend: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Send HELLO to join session.
+
+        Args:
+            session_id: Target session.
+            backend: Optional backend declaration, e.g.
+                     {"model_id": "anthropic/claude-sonnet-4.6", "provider": "anthropic"}
+        """
         payload = {
             "display_name": self.display_name,
             "roles": self.roles,
@@ -59,6 +69,8 @@ class Participant:
         }
         if self.credential:
             payload["credential"] = self.credential
+        if backend:
+            payload["backend"] = backend
         return self._make(MessageType.HELLO.value, session_id, payload)
 
     def heartbeat(
@@ -67,13 +79,27 @@ class Participant:
         status: str = "idle",
         active_intent_id: Optional[str] = None,
         summary: Optional[str] = None,
+        backend_health: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Send HEARTBEAT (Section 14.4)."""
+        """Send HEARTBEAT (Section 14.4).
+
+        Args:
+            session_id: Target session.
+            status: Agent status (idle/working/blocked).
+            active_intent_id: Currently active intent.
+            summary: Human-readable status summary.
+            backend_health: Optional backend health report, e.g.
+                {"model_id": "anthropic/claude-sonnet-4.6",
+                 "provider_status": "operational",
+                 "checked_at": "2026-04-07T10:00:00Z"}
+        """
         payload: Dict[str, Any] = {"status": status}
         if active_intent_id:
             payload["active_intent_id"] = active_intent_id
         if summary:
             payload["summary"] = summary
+        if backend_health:
+            payload["backend_health"] = backend_health
         return self._make(MessageType.HEARTBEAT.value, session_id, payload)
 
     def goodbye(
