@@ -18,7 +18,7 @@ import { scopeOverlap, scopeContains } from "./scope.js";
 import { ConflictStateMachine, IntentStateMachine, OperationStateMachine } from "./state-machines.js";
 import { LamportClock } from "./watermark.js";
 
-const PROTOCOL_VERSION = "0.1.12";
+const PROTOCOL_VERSION = "0.1.13";
 
 interface Intent {
   intent_id: string;
@@ -86,6 +86,9 @@ interface ParticipantInfo {
   last_seen: number;
   status: string;
   is_available: boolean;
+  backend_model_id?: string;
+  backend_provider?: string;
+  backend_provider_status: string;
 }
 
 export class SessionCoordinator {
@@ -118,6 +121,7 @@ export class SessionCoordinator {
   private sessionStartedAt: number;
   private rolePolicy: any;
   private replayWindowSec: number;
+  private backendHealthPolicy: any;
 
   constructor(
     sessionId: string,
@@ -131,6 +135,7 @@ export class SessionCoordinator {
     intentClaimGraceSec = 0,
     rolePolicy: any = undefined,
     replayWindowSec = 300,
+    backendHealthPolicy: any = undefined,
   ) {
     if (executionModel === "pre_commit" && complianceProfile !== ComplianceProfile.GOVERNANCE) {
       throw new Error("pre_commit sessions require Governance Profile compliance");
@@ -154,6 +159,7 @@ export class SessionCoordinator {
     this.sessionStartedAt = Date.now();
     this.rolePolicy = rolePolicy;
     this.replayWindowSec = replayWindowSec;
+    this.backendHealthPolicy = backendHealthPolicy;
   }
 
   processMessage(envelope: MessageEnvelope): MessageEnvelope[] {
@@ -352,11 +358,15 @@ export class SessionCoordinator {
       capabilities: payload.capabilities ?? [],
       joined_at: new Date().toISOString(),
     };
+    const backend = payload.backend as { model_id?: string; provider?: string } | undefined;
     this.participants.set(principal.principal_id, {
       principal,
       last_seen: Date.now(),
       status: "idle",
       is_available: true,
+      backend_model_id: backend?.model_id,
+      backend_provider: backend?.provider,
+      backend_provider_status: backend ? "operational" : "unknown",
     });
 
     const responses = this.handleOwnerRejoin(principal.principal_id);
@@ -372,12 +382,7 @@ export class SessionCoordinator {
         require_acknowledgment: true,
         intent_expiry_grace_sec: this.intentExpiryGraceSec,
       },
-      liveness_policy: {
-        heartbeat_interval_sec: this.heartbeatIntervalSec,
-        unavailability_timeout_sec: this.unavailabilityTimeoutMs / 1000,
-        intent_claim_grace_period_sec: this.intentClaimGraceMs / 1000,
-        resolution_timeout_sec: this.resolutionTimeoutMs / 1000,
-      },
+      liveness_policy: this.buildLivenessPolicy(),
       participant_count: this.participants.size,
       granted_roles: grantedRoles,
       identity_verified: this.securityProfile === SecurityProfile.OPEN || Boolean(payload.credential),
@@ -390,16 +395,137 @@ export class SessionCoordinator {
 
   private handleHeartbeat(envelope: MessageEnvelope): MessageEnvelope[] {
     const payload = envelope.payload as Record<string, any>;
-    const info = this.participants.get(envelope.sender.principal_id);
+    const pid = envelope.sender.principal_id;
+    const info = this.participants.get(pid);
     const responses: MessageEnvelope[] = [];
     if (!info) return responses;
     info.last_seen = Date.now();
     info.status = payload.status ?? "idle";
     if (!info.is_available) {
       info.is_available = true;
-      responses.push(...this.handleOwnerRejoin(envelope.sender.principal_id));
+      responses.push(...this.handleOwnerRejoin(pid));
     }
+
+    // Backend health monitoring (Section 14.3.1)
+    const backendHealth = payload.backend_health;
+    if (backendHealth) {
+      responses.push(...this.processBackendHealth(pid, info, backendHealth));
+    }
+
     return responses;
+  }
+
+  private processBackendHealth(pid: string, info: ParticipantInfo, backendHealth: Record<string, any>): MessageEnvelope[] {
+    const responses: MessageEnvelope[] = [];
+    const providerStatus = backendHealth.provider_status ?? "unknown";
+    const oldStatus = info.backend_provider_status;
+
+    // Update tracked backend info
+    info.backend_model_id = backendHealth.model_id ?? info.backend_model_id;
+    info.backend_provider_status = providerStatus;
+
+    // Check for model switch
+    const switchedFrom = backendHealth.switched_from;
+    if (switchedFrom) {
+      const switchError = this.validateBackendSwitch(pid, backendHealth);
+      if (switchError) return [switchError];
+      const modelId = backendHealth.model_id ?? "";
+      if (modelId.includes("/")) {
+        info.backend_provider = modelId.split("/")[0];
+      }
+    }
+
+    // Determine action based on backend_health_policy
+    const policy = this.backendHealthPolicy;
+    if (!policy || !policy.enabled) return responses;
+
+    let action: string | undefined;
+    if (providerStatus === "down") {
+      action = policy.on_down ?? "suspend_and_claim";
+    } else if (providerStatus === "degraded") {
+      action = policy.on_degraded ?? "warn";
+    }
+
+    if (action && action !== "ignore" && providerStatus !== oldStatus) {
+      // Emit backend_alert
+      const alert = this.makeCoordinatorStatusBackendAlert(pid, backendHealth);
+      responses.push(alert);
+
+      // suspend_and_claim: suspend agent's active intents
+      if (action === "suspend_and_claim") {
+        for (const intent of this.intents.values()) {
+          if (intent.principal_id === pid && !intent.stateMachine.isTerminal()) {
+            if (intent.stateMachine.currentState !== "SUSPENDED") {
+              try {
+                intent.stateMachine.transition("unavailable");
+                responses.push(this.makeEnvelope(MessageType.INTENT_UPDATE, {
+                  intent_id: intent.intent_id,
+                  objective: `[SUSPENDED: backend ${providerStatus}] ${intent.objective}`,
+                }));
+              } catch (_) {
+                // Intent may not support this transition
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return responses;
+  }
+
+  private validateBackendSwitch(pid: string, backendHealth: Record<string, any>): MessageEnvelope | null {
+    const policy = this.backendHealthPolicy;
+    if (!policy || !policy.enabled) return null;
+
+    const autoSwitch = policy.auto_switch ?? "allowed";
+    if (autoSwitch === "forbidden") {
+      return this.makeProtocolError("BACKEND_SWITCH_DENIED", undefined, "Backend model switching is forbidden by session policy (auto_switch=forbidden)");
+    }
+
+    const allowedProviders = policy.allowed_providers as string[] | undefined;
+    if (allowedProviders) {
+      const newModelId = backendHealth.model_id ?? "";
+      const newProvider = newModelId.includes("/") ? newModelId.split("/")[0] : "";
+      if (newProvider && !allowedProviders.includes(newProvider)) {
+        return this.makeProtocolError("BACKEND_SWITCH_DENIED", undefined, `Provider '${newProvider}' is not in allowed_providers: ${JSON.stringify(allowedProviders)}`);
+      }
+    }
+
+    return null;
+  }
+
+  private buildLivenessPolicy(): Record<string, any> {
+    const policy: Record<string, any> = {
+      heartbeat_interval_sec: this.heartbeatIntervalSec,
+      unavailability_timeout_sec: this.unavailabilityTimeoutMs / 1000,
+      intent_claim_grace_period_sec: this.intentClaimGraceMs / 1000,
+      resolution_timeout_sec: this.resolutionTimeoutMs / 1000,
+    };
+    if (this.backendHealthPolicy) {
+      policy.backend_health_policy = this.backendHealthPolicy;
+    }
+    return policy;
+  }
+
+  private makeCoordinatorStatusBackendAlert(affectedPrincipal: string, backendHealth: Record<string, any>): MessageEnvelope {
+    const openConflicts = [...this.conflicts.values()].filter(
+      (c) => c.stateMachine.currentState !== "CLOSED" && c.stateMachine.currentState !== "DISMISSED"
+    ).length;
+    return this.makeEnvelope(MessageType.COORDINATOR_STATUS, {
+      event: "backend_alert",
+      coordinator_id: this.coordinatorId,
+      session_health: openConflicts === 0 ? "healthy" : "degraded",
+      active_participants: [...this.participants.values()].filter((p) => p.is_available).length,
+      open_conflicts: openConflicts,
+      affected_principal: affectedPrincipal,
+      backend_detail: {
+        model_id: backendHealth.model_id ?? "",
+        provider_status: backendHealth.provider_status ?? "unknown",
+        status_detail: backendHealth.status_detail ?? null,
+        alternatives: backendHealth.alternatives ?? [],
+      },
+    });
   }
 
   private handleGoodbye(envelope: MessageEnvelope): MessageEnvelope[] {
@@ -1388,6 +1514,9 @@ export class SessionCoordinator {
         last_seen: participant.last_seen ? new Date(participant.last_seen).getTime() : Date.now(),
         status: participant.status ?? "idle",
         is_available: participant.is_available ?? true,
+        backend_model_id: participant.backend_model_id,
+        backend_provider: participant.backend_provider,
+        backend_provider_status: participant.backend_provider_status ?? "unknown",
       });
     }
 

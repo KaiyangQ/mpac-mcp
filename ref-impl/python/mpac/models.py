@@ -163,6 +163,37 @@ class ErrorCode(Enum):
     REPLAY_DETECTED = "REPLAY_DETECTED"
     CAUSAL_GAP = "CAUSAL_GAP"
     INTENT_BACKOFF = "INTENT_BACKOFF"
+    BACKEND_SWITCH_DENIED = "BACKEND_SWITCH_DENIED"
+
+
+class BackendProviderStatus(Enum):
+    """Backend AI model provider status values, aligned with aistatus.cc."""
+    OPERATIONAL = "operational"
+    DEGRADED = "degraded"
+    DOWN = "down"
+    UNKNOWN = "unknown"
+
+
+class BackendSwitchReason(Enum):
+    """Reasons for backend model switching."""
+    PROVIDER_DOWN = "provider_down"
+    PROVIDER_DEGRADED = "provider_degraded"
+    MANUAL = "manual"
+    COST_OPTIMIZATION = "cost_optimization"
+
+
+class BackendHealthAction(Enum):
+    """Coordinator actions for backend health events."""
+    IGNORE = "ignore"
+    WARN = "warn"
+    SUSPEND_AND_CLAIM = "suspend_and_claim"
+
+
+class AutoSwitchPolicy(Enum):
+    """Model switching governance policy."""
+    ALLOWED = "allowed"
+    NOTIFY_FIRST = "notify_first"
+    FORBIDDEN = "forbidden"
 
 
 class CredentialType(Enum):
@@ -181,6 +212,7 @@ class CoordinatorEvent(Enum):
     HANDOVER = "handover"
     ASSUMED = "assumed"
     AUTHORIZATION = "authorization"
+    BACKEND_ALERT = "backend_alert"
 
 
 class SessionHealth(Enum):

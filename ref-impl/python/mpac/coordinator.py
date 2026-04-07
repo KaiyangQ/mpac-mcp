@@ -30,7 +30,7 @@ from .state_machines import (
 from .watermark import LamportClock
 
 
-PROTOCOL_VERSION = "0.1.12"
+PROTOCOL_VERSION = "0.1.13"
 
 
 def _now() -> datetime:
@@ -134,6 +134,9 @@ class ParticipantInfo:
     last_seen: datetime = field(default_factory=_now)
     status: str = "idle"
     is_available: bool = True
+    backend_model_id: Optional[str] = None
+    backend_provider: Optional[str] = None
+    backend_provider_status: str = "unknown"
 
 
 class SessionCoordinator:
@@ -153,6 +156,7 @@ class SessionCoordinator:
         intent_claim_grace_sec: float = 0.0,
         role_policy: Optional[Dict[str, Any]] = None,
         replay_window_sec: float = 300.0,
+        backend_health_policy: Optional[Dict[str, Any]] = None,
     ):
         if execution_model == "pre_commit" and compliance_profile != ComplianceProfile.GOVERNANCE.value:
             raise ValueError("pre_commit sessions require Governance Profile compliance")
@@ -187,6 +191,7 @@ class SessionCoordinator:
         self.session_started_at = _now()
         self.role_policy: Optional[Dict[str, Any]] = role_policy
         self.replay_window_sec = replay_window_sec
+        self._backend_health_policy: Optional[Dict[str, Any]] = backend_health_policy
         self.lifecycle_policy = {
             "auto_close": False,
             "auto_close_grace_sec": 60,
@@ -435,11 +440,15 @@ class SessionCoordinator:
             roles=granted_roles,
             capabilities=payload.get("capabilities", []),
         )
+        backend = payload.get("backend")
         self.participants[principal.principal_id] = ParticipantInfo(
             principal=principal,
             last_seen=_now(),
             status="idle",
             is_available=True,
+            backend_model_id=backend.get("model_id") if backend else None,
+            backend_provider=backend.get("provider") if backend else None,
+            backend_provider_status="operational" if backend else "unknown",
         )
 
         responses = self._handle_owner_rejoin(principal.principal_id)
@@ -457,12 +466,7 @@ class SessionCoordinator:
                     "require_acknowledgment": True,
                     "intent_expiry_grace_sec": self.intent_expiry_grace_sec,
                 },
-                "liveness_policy": {
-                    "heartbeat_interval_sec": self.heartbeat_interval_sec,
-                    "unavailability_timeout_sec": self.unavailability_timeout_sec,
-                    "intent_claim_grace_period_sec": self.intent_claim_grace_sec,
-                    "resolution_timeout_sec": self.resolution_timeout_sec,
-                },
+                "liveness_policy": self._build_liveness_policy(),
                 "participant_count": len(self.participants),
                 "granted_roles": granted_roles,
                 "identity_verified": self.security_profile == "open" or bool(payload.get("credential")),
@@ -487,7 +491,142 @@ class SessionCoordinator:
                 info.is_available = True
                 responses.extend(self._handle_owner_rejoin(pid))
 
+            # Backend health monitoring (Section 14.3.1)
+            backend_health = envelope.payload.get("backend_health")
+            if backend_health:
+                responses.extend(self._process_backend_health(pid, info, backend_health))
+
         return responses
+
+    def _process_backend_health(
+        self, pid: str, info: "ParticipantInfo", backend_health: Dict[str, Any]
+    ) -> List[MessageEnvelope]:
+        """Evaluate backend health and enforce backend_health_policy."""
+        responses: List[MessageEnvelope] = []
+        provider_status = backend_health.get("provider_status", "unknown")
+        old_status = info.backend_provider_status
+
+        # Update tracked backend info
+        info.backend_model_id = backend_health.get("model_id", info.backend_model_id)
+        info.backend_provider_status = provider_status
+
+        # Check for model switch
+        switched_from = backend_health.get("switched_from")
+        if switched_from:
+            switch_error = self._validate_backend_switch(pid, backend_health)
+            if switch_error:
+                return [switch_error]
+            info.backend_provider = backend_health.get("model_id", "").split("/")[0] if "/" in backend_health.get("model_id", "") else info.backend_provider
+
+        # Determine action based on backend_health_policy
+        policy = self._get_backend_health_policy()
+        if not policy or not policy.get("enabled", False):
+            return responses
+
+        action = None
+        if provider_status == "down":
+            action = policy.get("on_down", "suspend_and_claim")
+        elif provider_status == "degraded":
+            action = policy.get("on_degraded", "warn")
+
+        if action and action != "ignore" and provider_status != old_status:
+            # Emit backend_alert
+            alert = self._make_coordinator_status(
+                event="backend_alert",
+                extra={
+                    "affected_principal": pid,
+                    "backend_detail": {
+                        "model_id": backend_health.get("model_id", ""),
+                        "provider_status": provider_status,
+                        "status_detail": backend_health.get("status_detail"),
+                        "alternatives": backend_health.get("alternatives", []),
+                    },
+                },
+            )
+            responses.append(alert)
+
+            # suspend_and_claim: suspend agent's active intents
+            if action == "suspend_and_claim":
+                for intent in self.intents.values():
+                    if intent.principal_id == pid and not intent.stateMachine.isTerminal():
+                        if intent.stateMachine.currentState.value != "SUSPENDED":
+                            try:
+                                intent.stateMachine.transition("unavailable")
+                                responses.append(self._make_envelope(
+                                    "INTENT_UPDATE",
+                                    {
+                                        "intent_id": intent.intent_id,
+                                        "objective": f"[SUSPENDED: backend {provider_status}] {intent.objective}",
+                                    },
+                                ))
+                            except Exception:
+                                pass  # Intent may not support this transition
+
+        return responses
+
+    def _validate_backend_switch(self, pid: str, backend_health: Dict[str, Any]) -> Optional[MessageEnvelope]:
+        """Validate a backend model switch against backend_health_policy."""
+        policy = self._get_backend_health_policy()
+        if not policy or not policy.get("enabled", False):
+            return None
+
+        auto_switch = policy.get("auto_switch", "allowed")
+        if auto_switch == "forbidden":
+            return self._make_protocol_error(
+                "BACKEND_SWITCH_DENIED",
+                None,
+                f"Backend model switching is forbidden by session policy (auto_switch=forbidden)",
+            )
+
+        allowed_providers = policy.get("allowed_providers")
+        if allowed_providers:
+            new_model_id = backend_health.get("model_id", "")
+            new_provider = new_model_id.split("/")[0] if "/" in new_model_id else ""
+            if new_provider and new_provider not in allowed_providers:
+                return self._make_protocol_error(
+                    "BACKEND_SWITCH_DENIED",
+                    None,
+                    f"Provider '{new_provider}' is not in allowed_providers: {allowed_providers}",
+                )
+
+        return None
+
+    def _get_backend_health_policy(self) -> Optional[Dict[str, Any]]:
+        """Return the backend_health_policy from session config, or None."""
+        return getattr(self, "_backend_health_policy", None)
+
+    def _build_liveness_policy(self) -> Dict[str, Any]:
+        """Build the liveness_policy object for SESSION_INFO."""
+        policy: Dict[str, Any] = {
+            "heartbeat_interval_sec": self.heartbeat_interval_sec,
+            "unavailability_timeout_sec": self.unavailability_timeout_sec,
+            "intent_claim_grace_period_sec": self.intent_claim_grace_sec,
+            "resolution_timeout_sec": self.resolution_timeout_sec,
+        }
+        if self._backend_health_policy:
+            policy["backend_health_policy"] = self._backend_health_policy
+        return policy
+
+    def _compute_session_health_str(self) -> str:
+        """Compute session health as a string."""
+        open_conflicts = sum(
+            1 for c in self.conflicts.values()
+            if c.state_machine.current_state not in (ConflictState.CLOSED, ConflictState.DISMISSED)
+        )
+        return "healthy" if open_conflicts == 0 else "degraded"
+
+    def _make_coordinator_status(self, event: str, extra: Optional[Dict[str, Any]] = None) -> MessageEnvelope:
+        """Create a COORDINATOR_STATUS message."""
+        payload: Dict[str, Any] = {
+            "event": event,
+            "coordinator_id": self.coordinator_id,
+            "session_health": self._compute_session_health_str(),
+            "active_participants": sum(1 for p in self.participants.values() if p.is_available),
+            "open_conflicts": sum(1 for c in self.conflicts.values() if not c.get("resolved", False)),
+        }
+        if extra:
+            payload.update(extra)
+        return self._make_envelope(MessageType.COORDINATOR_STATUS.value, payload)
 
     def _handle_goodbye(self, envelope: MessageEnvelope) -> List[MessageEnvelope]:
         """Apply the participant's requested disposition and mark them offline."""
@@ -1922,7 +2061,7 @@ class SessionCoordinator:
         return [message.to_dict()]
 
     def snapshot(self) -> Dict[str, Any]:
-        """Capture a v0.1.12-compatible coordinator snapshot."""
+        """Capture a v0.1.13-compatible coordinator snapshot."""
         return {
             "snapshot_version": 2,
             "session_id": self.session_id,

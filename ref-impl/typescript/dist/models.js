@@ -83,6 +83,7 @@ export var CoordinatorEvent;
     CoordinatorEvent["HANDOVER"] = "handover";
     CoordinatorEvent["ASSUMED"] = "assumed";
     CoordinatorEvent["AUTHORIZATION"] = "authorization";
+    CoordinatorEvent["BACKEND_ALERT"] = "backend_alert";
 })(CoordinatorEvent || (CoordinatorEvent = {}));
 export var SessionHealth;
 (function (SessionHealth) {
@@ -154,5 +155,32 @@ export var ErrorCode;
     ErrorCode["REPLAY_DETECTED"] = "REPLAY_DETECTED";
     ErrorCode["CAUSAL_GAP"] = "CAUSAL_GAP";
     ErrorCode["INTENT_BACKOFF"] = "INTENT_BACKOFF";
+    ErrorCode["BACKEND_SWITCH_DENIED"] = "BACKEND_SWITCH_DENIED";
 })(ErrorCode || (ErrorCode = {}));
+export var BackendProviderStatus;
+(function (BackendProviderStatus) {
+    BackendProviderStatus["OPERATIONAL"] = "operational";
+    BackendProviderStatus["DEGRADED"] = "degraded";
+    BackendProviderStatus["DOWN"] = "down";
+    BackendProviderStatus["UNKNOWN"] = "unknown";
+})(BackendProviderStatus || (BackendProviderStatus = {}));
+export var BackendSwitchReason;
+(function (BackendSwitchReason) {
+    BackendSwitchReason["PROVIDER_DOWN"] = "provider_down";
+    BackendSwitchReason["PROVIDER_DEGRADED"] = "provider_degraded";
+    BackendSwitchReason["MANUAL"] = "manual";
+    BackendSwitchReason["COST_OPTIMIZATION"] = "cost_optimization";
+})(BackendSwitchReason || (BackendSwitchReason = {}));
+export var BackendHealthAction;
+(function (BackendHealthAction) {
+    BackendHealthAction["IGNORE"] = "ignore";
+    BackendHealthAction["WARN"] = "warn";
+    BackendHealthAction["SUSPEND_AND_CLAIM"] = "suspend_and_claim";
+})(BackendHealthAction || (BackendHealthAction = {}));
+export var AutoSwitchPolicy;
+(function (AutoSwitchPolicy) {
+    AutoSwitchPolicy["ALLOWED"] = "allowed";
+    AutoSwitchPolicy["NOTIFY_FIRST"] = "notify_first";
+    AutoSwitchPolicy["FORBIDDEN"] = "forbidden";
+})(AutoSwitchPolicy || (AutoSwitchPolicy = {}));
 //# sourceMappingURL=models.js.map

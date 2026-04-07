@@ -14,6 +14,7 @@ This isn't a hypothetical. As AI agents become more autonomous, multi-principal 
 
 - Two people's agents touch the same shared resources
 - Agents from different teams or organizations need to collaborate
+- Family members' agents negotiate a shared trip, budget, or schedule without a single controller
 - Multiple stakeholders have competing priorities over shared state
 - Someone needs to audit *who decided what and why* across organizational boundaries
 
@@ -96,9 +97,11 @@ Both agents plan and commit their operations through `OP_COMMIT`, carrying state
 
 Total protocol messages: **10.** The entire coordination — from joining to conflict resolution to commit — happened through structured MPAC messages, not ad-hoc chat or manual human intervention.
 
-## What Makes v0.1.12 Different
+The same pattern also shows up well outside software. In a second validation scenario, three agents serving Dad, Mom, and Kid plan a 5-day family trip. They claim itinerary days and budget categories as `task_set` resources, negotiate overlaps like "camping night vs boutique minsu" and "theme park vs cultural workshop," and commit the resulting plan through `OP_BATCH_COMMIT`. The protocol primitives are the same; only the domain changes.
 
-MPAC has evolved through twelve revision rounds, each driven by independent audit. The current version represents a step-change in maturity: the protocol is no longer just a specification — it has machine-enforceable constraints and adversarial-tested reference implementations.
+## What Makes v0.1.13 Different
+
+MPAC has evolved through thirteen revision rounds, each driven by independent audit. The current version represents a step-change in maturity: the protocol is no longer just a specification — it has machine-enforceable constraints, adversarial-tested reference implementations, and backend health monitoring for production resilience.
 
 **Schema conformance closure.** All 21 message types have dedicated JSON Schema definitions (Draft 2020-12). The envelope schema dispatches payload validation to the correct message-specific schema via `if/then` conditional constraints. A third-party implementation can now get wire compatibility by passing schema validation alone.
 
@@ -112,6 +115,7 @@ MPAC has evolved through twelve revision rounds, each driven by independent audi
 - **Frozen-scope enforcement** — operations targeting resources within a frozen conflict scope are blocked. The check is target-based, not intent-based, so it cannot be bypassed by omitting optional fields.
 - **Batch atomicity** — `all_or_nothing` batches that fail validation clean up all already-registered operations before returning the rejection.
 - **Snapshot persistence** — frozen state survives coordinator recovery. A coordinator restart doesn't silently unfreeze contested scopes.
+- **Backend health monitoring** — coordinators expose health metrics and readiness state for production deployments; participants can query endpoint availability and recovery status.
 
 **Adversarial testing.** 66 new tests (34 Python + 32 TypeScript) specifically target enforcement bypass attempts: unregistered senders, missing credentials, unauthorized resolvers, frozen-scope evasion via omitted `intent_id`, snapshot recovery state loss, and partial-overlap edge cases. These tests were written in response to real findings from five rounds of independent audit.
 
@@ -126,16 +130,17 @@ Being clear about boundaries is as important as explaining capabilities:
 
 ## Current Status
 
-MPAC is at **v0.1.12** — a draft protocol with conformance-tested reference implementations.
+MPAC is at **v0.1.13** — a draft protocol with conformance-tested reference implementations and production readiness features.
 
 What exists today:
 
 - **Full protocol specification** ([SPEC.md](../SPEC.md)) — 30 sections covering all five layers, three security profiles, three compliance profiles, explicit consistency and execution models, normative state transition tables, and cross-lifecycle state machine rules.
 - **Developer reference** ([MPAC_Developer_Reference.md](../MPAC_Developer_Reference.md)) — complete data dictionary with 10 core objects, 21 message types, 3 state machines with normative transition tables, and an implementation checklist.
 - **JSON Schema** ([ref-impl/schema/](../ref-impl/schema/)) — machine-readable wire format definitions for envelope and all 21 message payload schemas, with `if/then` conditional constraints for coordinator-only messages, handover fields, claim status decisions, and authorization events.
-- **Reference implementations** in [Python](../ref-impl/python/) (109 tests) and [TypeScript](../ref-impl/typescript/) (88 tests) — full protocol coverage including session lifecycle, intent management, operation execution (pre-commit and post-commit models), conflict detection and resolution, coordinator fault recovery with snapshot persistence, atomic batch operations, frozen-scope enforcement, and credential validation.
+- **Reference implementations** in [Python](../ref-impl/python/) (109 tests) and [TypeScript](../ref-impl/typescript/) (88 tests) — full protocol coverage including session lifecycle, intent management, operation execution (pre-commit and post-commit models), conflict detection and resolution, coordinator fault recovery with snapshot persistence, atomic batch operations, frozen-scope enforcement, credential validation, and backend health monitoring.
 - **AI agent demo** ([ref-impl/demo/](../ref-impl/demo/)) — two Claude agents coordinating through the full protocol lifecycle, exercising session join, intent declaration, conflict detection, negotiation, commit, coordinator status, state snapshot, and session close.
-- **Audit-driven evolution** — every version change is archived with rationale. The protocol has been through twelve revision rounds including a five-dimension audit (v0.1.3), a gap analysis (v0.1.4→v0.1.5), a SOSP/OSDI-level deep review (v0.1.6→v0.1.7), schema conformance closure (v0.1.12), four rounds of adversarial runtime enforcement audit, a security/consistency closure pass, and a conformance hardening pass (timestamp window, schema enum alignment, max_count self-exclusion, no-policy rejection).
+- **Distributed validation demos** ([ref-impl/demo/distributed/](../ref-impl/demo/distributed/)) — WebSocket-based live runs in two domains: code-editing with optimistic concurrency control and family-trip planning with `task_set` scope overlap, natural-language negotiation, and shared-budget coordination.
+- **Audit-driven evolution** — every version change is archived with rationale. The protocol has been through thirteen revision rounds including a five-dimension audit (v0.1.3), a gap analysis (v0.1.4→v0.1.5), a SOSP/OSDI-level deep review (v0.1.6→v0.1.7), schema conformance closure (v0.1.12), four rounds of adversarial runtime enforcement audit, a security/consistency closure pass, a conformance hardening pass (timestamp window, schema enum alignment, max_count self-exclusion, no-policy rejection), and backend health monitoring integration (v0.1.13).
 
 What's still ahead:
 

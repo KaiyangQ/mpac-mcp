@@ -24,7 +24,7 @@ export function createEnvelope(
 ): MessageEnvelope {
   return {
     protocol: "MPAC",
-    version: "0.1.12",
+    version: "0.1.13",
     message_type: messageType,
     message_id: uuidv4(),
     session_id: sessionId,

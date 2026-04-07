@@ -82,6 +82,7 @@ export enum CoordinatorEvent {
   HANDOVER = "handover",
   ASSUMED = "assumed",
   AUTHORIZATION = "authorization",
+  BACKEND_ALERT = "backend_alert",
 }
 
 export enum SessionHealth {
@@ -153,6 +154,33 @@ export enum ErrorCode {
   REPLAY_DETECTED = "REPLAY_DETECTED",
   CAUSAL_GAP = "CAUSAL_GAP",
   INTENT_BACKOFF = "INTENT_BACKOFF",
+  BACKEND_SWITCH_DENIED = "BACKEND_SWITCH_DENIED",
+}
+
+export enum BackendProviderStatus {
+  OPERATIONAL = "operational",
+  DEGRADED = "degraded",
+  DOWN = "down",
+  UNKNOWN = "unknown",
+}
+
+export enum BackendSwitchReason {
+  PROVIDER_DOWN = "provider_down",
+  PROVIDER_DEGRADED = "provider_degraded",
+  MANUAL = "manual",
+  COST_OPTIMIZATION = "cost_optimization",
+}
+
+export enum BackendHealthAction {
+  IGNORE = "ignore",
+  WARN = "warn",
+  SUSPEND_AND_CLAIM = "suspend_and_claim",
+}
+
+export enum AutoSwitchPolicy {
+  ALLOWED = "allowed",
+  NOTIFY_FIRST = "notify_first",
+  FORBIDDEN = "forbidden",
 }
 
 export interface Principal {

@@ -6,7 +6,7 @@
     "message_type": "HELLO",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "HELLO",
       "message_id": "90bc0eee-2940-431b-a6c9-c0a485ac3c98",
       "session_id": "family-trip-2026-summer",
@@ -41,7 +41,7 @@
     "message_type": "SESSION_INFO",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "SESSION_INFO",
       "message_id": "2c76c2dc-f56e-424e-a5c7-655b496c11ec",
       "session_id": "family-trip-2026-summer",
@@ -53,7 +53,7 @@
       "ts": "2026-04-06T17:58:13.621379Z",
       "payload": {
         "session_id": "family-trip-2026-summer",
-        "protocol_version": "0.1.12",
+        "protocol_version": "0.1.13",
         "security_profile": "open",
         "compliance_profile": "core",
         "watermark_kind": "lamport_clock",
@@ -90,7 +90,7 @@
     "message_type": "HELLO",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "HELLO",
       "message_id": "da9688f5-1b5b-4ae5-9f1c-a23e133c4f6b",
       "session_id": "family-trip-2026-summer",
@@ -125,7 +125,7 @@
     "message_type": "SESSION_INFO",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "SESSION_INFO",
       "message_id": "0262a4d9-75ef-4da1-9afa-fbb3f448162b",
       "session_id": "family-trip-2026-summer",
@@ -137,7 +137,7 @@
       "ts": "2026-04-06T17:58:13.927988Z",
       "payload": {
         "session_id": "family-trip-2026-summer",
-        "protocol_version": "0.1.12",
+        "protocol_version": "0.1.13",
         "security_profile": "open",
         "compliance_profile": "core",
         "watermark_kind": "lamport_clock",
@@ -174,7 +174,7 @@
     "message_type": "HELLO",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "HELLO",
       "message_id": "939b183e-2925-4561-86f7-33ff640f93d4",
       "session_id": "family-trip-2026-summer",
@@ -209,7 +209,7 @@
     "message_type": "SESSION_INFO",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "SESSION_INFO",
       "message_id": "e4457870-9bac-4a92-9e75-1bf58e78be5b",
       "session_id": "family-trip-2026-summer",
@@ -221,7 +221,7 @@
       "ts": "2026-04-06T17:58:14.235542Z",
       "payload": {
         "session_id": "family-trip-2026-summer",
-        "protocol_version": "0.1.12",
+        "protocol_version": "0.1.13",
         "security_profile": "open",
         "compliance_profile": "core",
         "watermark_kind": "lamport_clock",
@@ -258,7 +258,7 @@
     "message_type": "INTENT_ANNOUNCE",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "INTENT_ANNOUNCE",
       "message_id": "25fc2df5-631f-424c-9e84-c521460d71a9",
       "session_id": "family-trip-2026-summer",
@@ -302,7 +302,7 @@
     "message_type": "INTENT_ANNOUNCE",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "INTENT_ANNOUNCE",
       "message_id": "a1bfc67c-1442-4196-8e9f-0ced92e5a537",
       "session_id": "family-trip-2026-summer",
@@ -345,7 +345,7 @@
     "message_type": "CONFLICT_REPORT",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "CONFLICT_REPORT",
       "message_id": "c94e2016-ae6a-4d84-b6d0-7c50f828de42",
       "session_id": "family-trip-2026-summer",
@@ -378,7 +378,7 @@
     "message_type": "INTENT_ANNOUNCE",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "INTENT_ANNOUNCE",
       "message_id": "4818ea5f-7d49-4c3d-925c-ca97525e1824",
       "session_id": "family-trip-2026-summer",
@@ -420,7 +420,7 @@
     "message_type": "CONFLICT_REPORT",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "CONFLICT_REPORT",
       "message_id": "359307ff-69c9-4d77-b308-95fbfc370473",
       "session_id": "family-trip-2026-summer",
@@ -452,7 +452,7 @@
     "message_type": "CONFLICT_REPORT",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "CONFLICT_REPORT",
       "message_id": "70dca956-46d4-41fe-b03f-933593085c7d",
       "session_id": "family-trip-2026-summer",
@@ -485,7 +485,7 @@
     "message_type": "CONFLICT_ACK",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "CONFLICT_ACK",
       "message_id": "f419d617-b41d-405b-b4aa-14aab197afee",
       "session_id": "family-trip-2026-summer",
@@ -513,7 +513,7 @@
     "message_type": "CONFLICT_ACK",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "CONFLICT_ACK",
       "message_id": "5cc6b9d8-e2ee-4efe-a89e-fc920e3aca95",
       "session_id": "family-trip-2026-summer",
@@ -541,7 +541,7 @@
     "message_type": "CONFLICT_ACK",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "CONFLICT_ACK",
       "message_id": "53cd585b-1b38-4076-9aa3-991e239d300b",
       "session_id": "family-trip-2026-summer",
@@ -569,7 +569,7 @@
     "message_type": "CONFLICT_ACK",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "CONFLICT_ACK",
       "message_id": "25f04128-00bb-43a7-829b-d1701e9dc6b5",
       "session_id": "family-trip-2026-summer",
@@ -597,7 +597,7 @@
     "message_type": "CONFLICT_ACK",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "CONFLICT_ACK",
       "message_id": "5ebacbc3-daf9-43ca-925d-f87e277e37a5",
       "session_id": "family-trip-2026-summer",
@@ -625,7 +625,7 @@
     "message_type": "CONFLICT_ACK",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "CONFLICT_ACK",
       "message_id": "72d8ce8a-a37f-4341-8992-11876511cede",
       "session_id": "family-trip-2026-summer",
@@ -653,7 +653,7 @@
     "message_type": "OP_BATCH_COMMIT",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "OP_BATCH_COMMIT",
       "message_id": "c7032fb9-19ac-4b41-bd58-b8fcdf1368cc",
       "session_id": "family-trip-2026-summer",
@@ -699,7 +699,7 @@
     "message_type": "OP_BATCH_COMMIT",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "OP_BATCH_COMMIT",
       "message_id": "7bc84e40-3962-45cc-b137-2779e32c10f0",
       "session_id": "family-trip-2026-summer",
@@ -753,7 +753,7 @@
     "message_type": "OP_BATCH_COMMIT",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "OP_BATCH_COMMIT",
       "message_id": "d515d51a-9ac3-49ae-9e20-a9eb45b0e80a",
       "session_id": "family-trip-2026-summer",
@@ -799,7 +799,7 @@
     "message_type": "GOODBYE",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "GOODBYE",
       "message_id": "75ee1aa7-2554-4f28-91c0-bfb4fb43b772",
       "session_id": "family-trip-2026-summer",
@@ -826,7 +826,7 @@
     "message_type": "GOODBYE",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "GOODBYE",
       "message_id": "22cf13a4-807e-4c9b-9b64-11982d54814a",
       "session_id": "family-trip-2026-summer",
@@ -853,7 +853,7 @@
     "message_type": "GOODBYE",
     "envelope": {
       "protocol": "MPAC",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "message_type": "GOODBYE",
       "message_id": "0c90f251-a7a5-4e20-a9c3-87f5cb482b11",
       "session_id": "family-trip-2026-summer",

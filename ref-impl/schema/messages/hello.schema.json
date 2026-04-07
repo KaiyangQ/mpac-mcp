@@ -24,6 +24,21 @@
         "name": { "type": "string" },
         "version": { "type": "string" }
       }
+    },
+    "backend": {
+      "type": "object",
+      "required": ["model_id", "provider"],
+      "properties": {
+        "model_id": {
+          "type": "string",
+          "description": "Full model identifier in provider/model format (e.g., anthropic/claude-sonnet-4.6)"
+        },
+        "provider": {
+          "type": "string",
+          "description": "Provider slug (e.g., anthropic, openai, google)"
+        }
+      },
+      "description": "Agent's AI model backend dependency. Optional; when present, enables backend health monitoring (Section 14.3.1)."
     }
   }
 }

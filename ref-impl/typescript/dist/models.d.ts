@@ -73,7 +73,8 @@ export declare enum CoordinatorEvent {
     RECOVERED = "recovered",
     HANDOVER = "handover",
     ASSUMED = "assumed",
-    AUTHORIZATION = "authorization"
+    AUTHORIZATION = "authorization",
+    BACKEND_ALERT = "backend_alert"
 }
 export declare enum SessionHealth {
     HEALTHY = "healthy",
@@ -137,7 +138,30 @@ export declare enum ErrorCode {
     CREDENTIAL_REJECTED = "CREDENTIAL_REJECTED",
     REPLAY_DETECTED = "REPLAY_DETECTED",
     CAUSAL_GAP = "CAUSAL_GAP",
-    INTENT_BACKOFF = "INTENT_BACKOFF"
+    INTENT_BACKOFF = "INTENT_BACKOFF",
+    BACKEND_SWITCH_DENIED = "BACKEND_SWITCH_DENIED"
+}
+export declare enum BackendProviderStatus {
+    OPERATIONAL = "operational",
+    DEGRADED = "degraded",
+    DOWN = "down",
+    UNKNOWN = "unknown"
+}
+export declare enum BackendSwitchReason {
+    PROVIDER_DOWN = "provider_down",
+    PROVIDER_DEGRADED = "provider_degraded",
+    MANUAL = "manual",
+    COST_OPTIMIZATION = "cost_optimization"
+}
+export declare enum BackendHealthAction {
+    IGNORE = "ignore",
+    WARN = "warn",
+    SUSPEND_AND_CLAIM = "suspend_and_claim"
+}
+export declare enum AutoSwitchPolicy {
+    ALLOWED = "allowed",
+    NOTIFY_FIRST = "notify_first",
+    FORBIDDEN = "forbidden"
 }
 export interface Principal {
     principal_id: string;

@@ -149,7 +149,7 @@ describe("v0.1.5 Features", () => {
       expect(snap).toBeDefined();
       expect(snap.snapshot_version).toBe(2);
       expect(snap.session_id).toBe(sid);
-      expect(snap.protocol_version).toBe("0.1.12");
+      expect(snap.protocol_version).toBe("0.1.13");
       expect(snap.captured_at).toBeDefined();
       expect(snap.coordinator_epoch).toBeDefined();
       expect(snap.lamport_clock).toBeDefined();

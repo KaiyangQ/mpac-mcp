@@ -17,7 +17,8 @@ version_history/
 ├── v0.1.9_core_coherence_closure/         ← v0.1.9 spec snapshot, update record, and changeset
 ├── v0.1.10_execution_governance_closure/  ← v0.1.10 spec snapshot, update record, and changeset
 ├── v0.1.11_example_and_schema_alignment/  ← v0.1.11 spec snapshot, update record, and changeset
-└── v0.1.12_conformance_closure/           ← v0.1.12 spec snapshot and update record
+├── v0.1.12_conformance_closure/           ← v0.1.12 spec snapshot and update record
+└── v0.1.13_backend_health_monitoring/     ← v0.1.13 spec snapshot and update record
 ```
 
 The current source of truth is always **SPEC.md** in the project root.
@@ -353,6 +354,31 @@ Schema conformance closure driven by an independent protocol audit. All 21 messa
 | `SPEC_v0.1.12_2026-04-05.md` | Archived SPEC.md snapshot of the v0.1.12 spec |
 | `MPAC_v0.1.12_Update_Record.md` | Detailed update record: audit findings → resolution map |
 | `MPAC_v0.1.12_Distributed_Validation.md` | Distributed validation report: WebSocket transport, concurrent Claude agents, real code modification, optimistic concurrency control |
+
+---
+
+## v0.1.13 — Backend Health Monitoring (2026-04-07)
+
+New feature: backend AI model health monitoring integrated with [aistatus.cc](https://aistatus.cc). Agents can declare their AI model dependency at session join, report backend provider health in heartbeats, and trigger coordinator-mediated alerts and model switching governance. All changes are additive and backward-compatible — agents that don't declare a `backend` are unaffected.
+
+**Key changes:**
+- `HELLO` payload: new optional `backend` field (`model_id`, `provider`) for declaring AI model dependency
+- `HEARTBEAT` payload: new optional `backend_health` field (`model_id`, `provider_status`, `status_detail`, `checked_at`, `alternatives`, `switched_from`, `switch_reason`) for reporting backend health
+- `COORDINATOR_STATUS`: new `backend_alert` event with conditional fields `affected_principal` and `backend_detail`
+- `SESSION_INFO` liveness_policy: new optional `backend_health_policy` object (`enabled`, `check_source`, `check_interval_sec`, `on_degraded`, `on_down`, `auto_switch`, `allowed_providers`)
+- New error code: `BACKEND_SWITCH_DENIED` for rejected model switches (auto_switch=forbidden or provider not in allowed_providers)
+- New SPEC Section 14.3.1: full behavioral specification of backend health monitoring, including coordinator actions (ignore/warn/suspend_and_claim) and model switching governance (allowed/notify_first/forbidden)
+- Protocol vs. implementation boundary: protocol manages signaling and governance rules; model selection, switch timing, and fallback strategy are implementation decisions
+- `provider_status` enum and `alternatives` structure directly mirror the aistatus.cc `/api/check` response format
+- Both reference implementations (Python + TypeScript) updated: `ParticipantInfo` tracks backend state, `handleHeartbeat` processes backend_health, coordinator emits `backend_alert` events and enforces switch policy
+- All 109 Python tests + 88 TypeScript tests pass with zero regressions
+
+**Contents:**
+
+| File | Description |
+|------|-------------|
+| `SPEC_v0.1.13_2026-04-07.md` | Archived SPEC.md snapshot of the v0.1.13 spec |
+| `MPAC_v0.1.13_Update_Record.md` | Detailed update record: feature design, API alignment, and implementation notes |
 
 ---
 

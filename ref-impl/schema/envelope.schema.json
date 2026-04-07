@@ -2,12 +2,12 @@
   "$id": "https://mpac-protocol.org/schema/envelope.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "MPAC Message Envelope",
-  "description": "Outer wrapper for all MPAC v0.1.12 messages. The payload field is validated against the message-type-specific schema via oneOf dispatch.",
+  "description": "Outer wrapper for all MPAC v0.1.13 messages. The payload field is validated against the message-type-specific schema via oneOf dispatch.",
   "type": "object",
   "required": ["protocol", "version", "message_type", "message_id", "session_id", "sender", "ts", "payload"],
   "properties": {
     "protocol": { "type": "string", "const": "MPAC" },
-    "version": { "type": "string", "description": "Protocol version, e.g. '0.1.12'" },
+    "version": { "type": "string", "description": "Protocol version, e.g. '0.1.13'" },
     "message_type": {
       "type": "string",
       "enum": [

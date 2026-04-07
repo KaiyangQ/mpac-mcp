@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mpac-ref-py"
-version = "0.1.12"
-description = "Python reference implementation for MPAC (Multi-Principal Agent Coordination Protocol) v0.1.12"
+version = "0.1.13"
+description = "Python reference implementation for MPAC (Multi-Principal Agent Coordination Protocol) v0.1.13"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}

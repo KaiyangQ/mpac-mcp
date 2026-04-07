@@ -50,6 +50,9 @@ interface ParticipantInfo {
     last_seen: number;
     status: string;
     is_available: boolean;
+    backend_model_id?: string;
+    backend_provider?: string;
+    backend_provider_status: string;
 }
 export declare class SessionCoordinator {
     private sessionId;
@@ -81,13 +84,18 @@ export declare class SessionCoordinator {
     private sessionStartedAt;
     private rolePolicy;
     private replayWindowSec;
-    constructor(sessionId: string, securityProfile?: SecurityProfile | string, complianceProfile?: ComplianceProfile | string, intentExpiryGraceSec?: number, unavailabilityTimeoutSec?: number, resolutionTimeoutSec?: number, executionModel?: "pre_commit" | "post_commit", stateRefFormat?: string, intentClaimGraceSec?: number, rolePolicy?: any, replayWindowSec?: number);
+    private backendHealthPolicy;
+    constructor(sessionId: string, securityProfile?: SecurityProfile | string, complianceProfile?: ComplianceProfile | string, intentExpiryGraceSec?: number, unavailabilityTimeoutSec?: number, resolutionTimeoutSec?: number, executionModel?: "pre_commit" | "post_commit", stateRefFormat?: string, intentClaimGraceSec?: number, rolePolicy?: any, replayWindowSec?: number, backendHealthPolicy?: any);
     processMessage(envelope: MessageEnvelope): MessageEnvelope[];
     checkExpiry(nowMs?: number): MessageEnvelope[];
     checkLiveness(nowMs?: number): MessageEnvelope[];
     checkResolutionTimeouts(nowMs?: number): MessageEnvelope[];
     private handleHello;
     private handleHeartbeat;
+    private processBackendHealth;
+    private validateBackendSwitch;
+    private buildLivenessPolicy;
+    private makeCoordinatorStatusBackendAlert;
     private handleGoodbye;
     private handleIntentAnnounce;
     private handleIntentUpdate;
