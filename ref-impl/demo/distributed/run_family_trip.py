@@ -102,20 +102,20 @@ TRIP_CONTEXT = """
 FAMILY TRIP PLANNING — Summer 2026
 
 FAMILY:
-  - Dad (张伟): 38, drives, budget controller, loves hiking and camping
-  - Mom (李娜): 36, food enthusiast, cultural experiences, allergic to seafood
-  - Kid (张小明): 12 years old, wants theme parks and water activities
+  - Dad (Zhang Wei): 38, drives, budget controller, loves hiking and camping
+  - Mom (Li Na): 36, food enthusiast, cultural experiences, allergic to seafood
+  - Kid (Zhang Xiaoming): 12 years old, wants theme parks and water activities
 
 TRIP PARAMETERS:
   - Duration: 5 days (July 12-16, 2026)
-  - Starting point: Shanghai (上海)
+  - Starting point: Shanghai
   - Total budget: ¥15,000
   - Transportation: Self-driving (own car)
-  - Destination area: Moganshan (莫干山) / Anji (安吉), Zhejiang Province
+  - Destination area: Moganshan / Anji, Zhejiang Province
     (about 3-3.5 hours drive from Shanghai)
 
 KNOWN OPTIONS IN THE AREA:
-  - Moganshan: Bamboo forests, hiking trails, boutique minsu (民宿), campsite
+  - Moganshan: Bamboo forests, hiking trails, boutique homestay, campsite
   - Anji: Hello Kitty Park (theme park), water parks, bamboo museum, tea plantations
   - Local food: Bamboo shoots, smoked tofu, local mountain vegetables (NO seafood)
 
@@ -145,7 +145,7 @@ async def run_family_trip():
     dad_agent = TripAgent(
         name="Dad",
         principal_id="agent:dad-planner",
-        role_description="Dad's (张伟) travel planner — handles transportation, driving routes, outdoor activities, and overall budget control",
+        role_description="Dad's (Zhang Wei) travel planner — handles transportation, driving routes, outdoor activities, and overall budget control",
         preferences="Loves nature, hiking, camping under the stars. Prefers budget-efficient options. Enjoys teaching his kid about nature. Wants at least one night camping.",
         constraints="Must drive ≤ 5 hours/day. Controls total budget of ¥15,000. Already owns camping gear. Responsible for all driving logistics.",
         responsibilities=["driving routes", "outdoor activities", "budget oversight", "transportation"],
@@ -155,8 +155,8 @@ async def run_family_trip():
     mom_agent = TripAgent(
         name="Mom",
         principal_id="agent:mom-planner",
-        role_description="Mom's (李娜) travel planner — handles accommodation booking, restaurant selection, and cultural experiences",
-        preferences="Loves cultural experiences: local cooking classes, handicraft workshops, boutique minsu (民宿). Foodie but allergic to all seafood. Wants the family to experience local culture together.",
+        role_description="Mom's (Li Na) travel planner — handles accommodation booking, restaurant selection, and cultural experiences",
+        preferences="Loves cultural experiences: local cooking classes, handicraft workshops, boutique homestay. Foodie but allergic to all seafood. Wants the family to experience local culture together.",
         constraints="CRITICAL: Allergic to seafood — ALL meals must be seafood-free, verify with every restaurant. Accommodation must be clean and kid-friendly (child is 12). Budget for accommodation: ¥4,000-6,000 for 4 nights.",
         responsibilities=["accommodation", "restaurants", "cultural experiences", "meal planning"],
         roles=["owner"],
@@ -165,7 +165,7 @@ async def run_family_trip():
     kid_agent = TripAgent(
         name="Kid",
         principal_id="agent:kid-planner",
-        role_description="Xiaoming's (张小明, 12yo) fun planner — advocates for theme parks, water activities, and free play time",
+        role_description="Xiaoming's (Zhang Xiaoming, 12yo) fun planner — advocates for theme parks, water activities, and free play time",
         preferences="LOVES theme parks (especially Hello Kitty Park in Anji), water parks, swimming. Wants at least one full day at a theme park and one day of free/unstructured play. Likes campfires and stargazing too!",
         constraints="Must be age-appropriate activities (12 years old). Needs at least 1 day of free play. Activity budget should stay under ¥3,000. School break July 10-25.",
         responsibilities=["theme parks", "water activities", "fun activities", "free play day"],
