@@ -46,6 +46,7 @@ ref-impl/
     src/                         ← 8 source files
     tests/                       ← 11 test files (101 test cases)
   demo/
+    README.md                    ← Demo guide: purpose, protocol coverage, and architecture
     run_interop.sh               ← Cross-language interoperability test
     run_ai_agents.py             ← AI agent demo (2 Claude agents coordinating via MPAC)
     ai_demo_transcript.json      ← Full protocol transcript from the AI demo
@@ -114,7 +115,7 @@ The full transcript from a successful run is available at [ai_demo_transcript.js
 
 ### Distributed Validations
 
-MPAC now has two real-world WebSocket validation scenarios that exercise the same protocol primitives in different domains.
+MPAC has 7 live AI agent demos that exercise all 21 protocol message types across multiple domains. See the [Demo README](./ref-impl/demo/README.md) for a complete guide including protocol coverage, architecture, and message type mapping.
 
 **Code-editing end-to-end validation**
 
@@ -212,7 +213,7 @@ cp local_config.example.json local_config.json
 {
   "anthropic": {
     "api_key": "your_key_here",
-    "model": "claude-sonnet-4-20250514"
+    "model": "claude-sonnet-4-6"
   }
 }
 ```
@@ -265,7 +266,7 @@ MPAC is an open protocol in active development. If you're working on multi-agent
 
 - **Read the spec:** [SPEC.md](./SPEC.md)
 - **Try the implementations:** [Python](./ref-impl/python/) | [TypeScript](./ref-impl/typescript/)
-- **Run the AI demo:** [ref-impl/demo/run_ai_agents.py](./ref-impl/demo/run_ai_agents.py)
+- **Run the demos:** [Demo Guide](./ref-impl/demo/README.md) — 7 live AI agent demos covering all 21 message types
 - **Review protocol evolution:** [version_history/CHANGELOG.md](./version_history/CHANGELOG.md)
 
 ---
