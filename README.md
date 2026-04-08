@@ -56,6 +56,8 @@ ref-impl/
       run_e2e.py                 ← End-to-end test: real code fixes + optimistic concurrency
       trip_agent.py              ← Consumer-planning agent with per-principal preferences
       run_family_trip.py         ← Family trip validation: 3 agents plan a shared itinerary
+      run_precommit_claim.py     ← Pre-commit + INTENT_CLAIM: fault recovery demo
+      run_escalation.py          ← Conflict escalation to arbiter demo
       family_trip_transcript.json ← Full transcript from the family-trip run
       test_project/src/          ← 5 Python files with intentional bugs for agents to fix
 version_history/                 ← Protocol evolution: archived versions, changelogs, reviews
@@ -166,6 +168,36 @@ This demonstrates:
 - **Pre-emptive conflict detection** — `INTENT_ANNOUNCE` scope overlap catches conflicts before work begins, vs. traditional post-hoc discovery
 - **Parallel execution** — all three agents review, submit conflict positions, and commit in parallel via WebSocket
 
+**Pre-Commit + INTENT_CLAIM Fault Recovery**
+
+The fourth distributed scenario exercises the pre-commit execution model and agent fault recovery. Three agents work in governance mode: one agent's proposal is authorized then committed, another's is rejected after intent withdrawal, and when the third agent crashes, its work is claimed by a surviving agent via `INTENT_CLAIM`:
+
+```bash
+cd ref-impl/demo/distributed
+python run_precommit_claim.py
+```
+
+This demonstrates:
+- **Pre-commit authorization flow** — `OP_PROPOSE` → `COORDINATOR_STATUS(authorization)` → `OP_COMMIT` completion
+- **INTENT_UPDATE** — agent expands scope mid-session, triggering new conflict detection
+- **INTENT_WITHDRAW + OP_REJECT** — agent withdraws intent; subsequent proposal rejected with `intent_terminated`
+- **Agent crash recovery** — liveness timeout detects unavailable agent, suspends intents, surviving agent claims via `INTENT_CLAIM` with governance approval
+
+**Conflict Escalation to Arbiter**
+
+The fifth distributed scenario demonstrates multi-level governance. Two owner agents dispute a scope overlap, escalate to a designated arbiter, and the arbiter renders a binding decision via Claude:
+
+```bash
+cd ref-impl/demo/distributed
+python run_escalation.py
+```
+
+This demonstrates:
+- **CONFLICT_ACK with dispute** — both agents acknowledge the conflict as "disputed"
+- **CONFLICT_ESCALATE** — agent escalates unresolved conflict to a designated arbiter
+- **Arbiter resolution** — arbiter analyzes both positions via Claude and issues a binding `RESOLUTION`
+- **Multi-level governance** — owner → arbiter authority chain with Claude-powered judicial decision-making
+
 ---
 
 ## API Key Configuration
@@ -191,7 +223,7 @@ Do not commit `local_config.json` to a public repository.
 
 ## Current Coverage
 
-The root spec, JSON Schema, and both reference implementations are fully aligned at v0.1.13. All 21 message types now have dedicated payload schemas with `if/then` conditional constraints, and the envelope schema dispatches payload validation by `message_type`. Both implementations now enforce 6 runtime rules (HELLO-first gate, credential validation, resolution authority, frozen-scope blocking, batch atomicity rollback, complete error codes). The Python implementation has 109 tests (including 34 adversarial enforcement tests) plus live Claude API demos; the TypeScript implementation has 88 tests (including 32 adversarial enforcement tests). Distributed validations now verify the protocol over WebSocket transport in two domains: code editing with optimistic concurrency control and family trip planning with `task_set`-based negotiation. Backend Health Monitoring provides real-time coordinator status tracking, heartbeat validation, and automated fault recovery mechanisms.
+The root spec, JSON Schema, and both reference implementations are fully aligned at v0.1.13. All 21 message types now have dedicated payload schemas with `if/then` conditional constraints, and the envelope schema dispatches payload validation by `message_type`. Both implementations now enforce 6 runtime rules (HELLO-first gate, credential validation, resolution authority, frozen-scope blocking, batch atomicity rollback, complete error codes). The Python implementation has 109 tests (including 34 adversarial enforcement tests) plus live Claude API demos; the TypeScript implementation has 88 tests (including 32 adversarial enforcement tests). Distributed validations now verify the protocol over WebSocket transport across five domains: code editing with optimistic concurrency control, family trip planning with `task_set`-based negotiation, coordination overhead measurement, pre-commit authorization with fault recovery, and conflict escalation to arbiter. All 21 message types have live Claude API demo coverage.
 
 | Dimension | Covered | Remaining gaps |
 |-----------|---------|----------------|
@@ -203,8 +235,9 @@ The root spec, JSON Schema, and both reference implementations are fully aligned
 | Security | Credential exchange (5 types), **credential validation on HELLO** (authenticated/verified profiles), **HELLO-first gate**, **role policy evaluation** (Section 23.1.5, no-policy rejection), **replay protection** (duplicate message_id + timestamp window rejection), sender incarnation tracking, snapshot anti-replay checkpoint persistence | Signature verification, trust binding |
 | Session lifecycle | `SESSION_INFO` execution model declaration, SESSION_CLOSE (spec-aligned schema + detailed summary per Section 9.6.2), auto-close, post-close rejection | Transcript export policy persistence |
 | Consistency & execution model | Post-commit and governance-only pre-commit authorization/completion flow, coordinator epoch on outbound messages, **optimistic concurrency control** (state_ref_before validation, STALE_STATE_REF rejection, rebase pattern) | Multi-coordinator fencing during live handover |
-| Transport & concurrency | **WebSocket transport binding** (JSON-over-WebSocket, message-type routing), **concurrent Claude agent coordination** (parallel LLM calls) across code-editing and family-trip demos, **real file modification** with SHA-256 state_ref tracking, `task_set` itinerary/budget coordination, coordinator auto-resolve for pure-agent scenarios | Additional transport bindings (gRPC, HTTP/2), multi-node coordinator |
-| Fault recovery | **Backend Health Monitoring** (coordinator status/heartbeat, v0.1.13 snapshot format, snapshot recovery + audit log replay, coordinator epoch bump on recovery, automated failure detection) | Split-brain detection, multi-coordinator election |
+| Transport & concurrency | **WebSocket transport binding** (JSON-over-WebSocket, message-type routing), **concurrent Claude agent coordination** (parallel LLM calls) across code-editing, family-trip, overhead-comparison, pre-commit, and escalation demos, **real file modification** with SHA-256 state_ref tracking, `task_set` itinerary/budget coordination, coordinator auto-resolve for pure-agent scenarios | Additional transport bindings (gRPC, HTTP/2), multi-node coordinator |
+| Fault recovery | **Backend Health Monitoring** (coordinator status/heartbeat, v0.1.13 snapshot format, snapshot recovery + audit log replay, coordinator epoch bump on recovery, automated failure detection), **INTENT_CLAIM fault recovery demo** (agent crash → liveness timeout → intent suspension → claim with governance approval) | Split-brain detection, multi-coordinator election |
+| Demo coverage | **21/21 message types** with live Claude API demos across 7 distributed scenarios: code editing, family trip, overhead comparison, pre-commit authorization, agent crash recovery (INTENT_CLAIM), conflict escalation (CONFLICT_ESCALATE), and arbiter resolution | — |
 | Robustness | OP_SUPERSEDE chains, batch commit tracking, **batch atomicity rollback** (all_or_nothing cleanup), **frozen-scope enforcement**, claim conflict / resolution conflict handling, **CAUSAL_GAP / INTENT_BACKOFF error codes** | Conformance harness in a Node-enabled TypeScript CI lane |
 
 ---

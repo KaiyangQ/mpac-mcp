@@ -27,11 +27,20 @@ log = logging.getLogger("coordinator")
 class WSCoordinator:
     """WebSocket server wrapping MPAC SessionCoordinator."""
 
-    def __init__(self, session_id: str, host: str = "localhost", port: int = 8765):
+    def __init__(self, session_id: str, host: str = "localhost", port: int = 8765, **kwargs):
         self.session_id = session_id
         self.host = host
         self.port = port
-        self.coordinator = SessionCoordinator(session_id)
+        self.coordinator = SessionCoordinator(
+            session_id,
+            execution_model=kwargs.get("execution_model", "post_commit"),
+            compliance_profile=kwargs.get("compliance_profile", "core"),
+            security_profile=kwargs.get("security_profile", "open"),
+            unavailability_timeout_sec=kwargs.get("unavailability_timeout_sec", 90.0),
+            resolution_timeout_sec=kwargs.get("resolution_timeout_sec", 300.0),
+            intent_claim_grace_sec=kwargs.get("intent_claim_grace_sec", 0.0),
+            role_policy=kwargs.get("role_policy"),
+        )
         # Map principal_id -> websocket connection
         self.connections: dict[str, websockets.WebSocketServerProtocol] = {}
         # Map websocket -> principal_id (reverse lookup)

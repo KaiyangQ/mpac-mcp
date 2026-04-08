@@ -377,6 +377,12 @@ New feature: backend AI model health monitoring integrated with [aistatus.cc](ht
 - Fixed Python `_process_backend_health` naming bug (`stateMachine` → `state_machine`) and transition event (`"unavailable"` → `"SUSPENDED"`)
 - All 122 Python tests + 101 TypeScript tests pass with zero regressions
 - **Coordination overhead demo** (`run_overhead_comparison.py`): same 3-agent PR review scenario run in Traditional (serial) vs MPAC (parallel) mode, with precise decision_time / coordination_overhead breakdown. Representative results: decision time -9% (API noise), coordination overhead **-95%**, wall clock -79%.
+- **Pre-commit + INTENT_CLAIM demo** (`run_precommit_claim.py`): 3 agents in `pre_commit` + `governance` mode exercise 6 previously uncovered message types (INTENT_UPDATE, INTENT_WITHDRAW, INTENT_CLAIM, INTENT_CLAIM_STATUS, OP_PROPOSE, OP_REJECT). Demonstrates pre-commit authorization flow, agent crash simulation with liveness detection, and governance-mediated claim approval.
+- **Conflict escalation demo** (`run_escalation.py`): 2 owner agents + 1 arbiter exercise CONFLICT_ESCALATE with Claude-powered arbiter resolution. Demonstrates multi-level governance (owner → arbiter) and binding arbitration.
+- **Full message type demo coverage**: all 21 MPAC message types now have live Claude API demo coverage across 7 distributed demos.
+- `ws_coordinator.py` constructor now accepts `**kwargs` for `execution_model`, `compliance_profile`, etc. (backward-compatible)
+- `ws_agent.py` Python 3.9 compatibility fix (`from __future__ import annotations`)
+- Apache License 2.0 added (`LICENSE`)
 
 **Contents:**
 

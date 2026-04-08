@@ -158,6 +158,37 @@ The demo confirms: decision time is statistically equivalent across modes (same 
 
 ---
 
+### Full Message Type Demo Coverage (New Demos)
+
+Two new WebSocket-based demos added to achieve 21/21 message type coverage in live Claude API demos. Both demos use real Claude API calls for agent decision-making.
+
+1. **Pre-Commit + INTENT_CLAIM demo** (`run_precommit_claim.py`): 3 agents (Alice, Bob, Charlie) in `pre_commit` execution model with `governance` compliance profile. Exercises 6 previously uncovered message types:
+   - **INTENT_UPDATE** — Alice expands her scope mid-session, triggering new conflict detection
+   - **OP_PROPOSE** — Bob proposes an operation; coordinator authorizes via `COORDINATOR_STATUS(event=authorization)`; Bob then commits (pre-commit completion flow)
+   - **OP_REJECT** — Charlie proposes against a withdrawn intent; coordinator rejects with `reason: intent_terminated`
+   - **INTENT_WITHDRAW** — Charlie voluntarily withdraws his intent after conflict resolution
+   - **INTENT_CLAIM** — Alice's process crashes (simulated via connection close + liveness timeout); Bob claims her suspended intent
+   - **INTENT_CLAIM_STATUS** — Coordinator approves the claim (Charlie serves as governance approver)
+
+   Also demonstrates: pre-commit authorization flow, agent crash simulation with liveness detection, governance-mediated claim approval, and continued work on claimed scope.
+
+2. **Conflict Escalation demo** (`run_escalation.py`): 2 owner agents (Alice, Bob) + 1 arbiter in `governance` compliance profile. Exercises the previously uncovered CONFLICT_ESCALATE message type:
+   - Both agents announce overlapping intents on a UI component library → `CONFLICT_REPORT`
+   - Both ACK as `disputed` via `CONFLICT_ACK`
+   - Alice explicitly escalates to the arbiter via `CONFLICT_ESCALATE`
+   - Arbiter uses Claude to analyze both positions and renders a binding `RESOLUTION`
+   - Losing agent withdraws intent; winning agent commits
+
+   Also demonstrates: arbiter role, multi-level governance (owner → arbiter), Claude-powered judicial decision-making.
+
+**Infrastructure changes:**
+- `ws_coordinator.py`: Constructor now accepts `**kwargs` to pass `execution_model`, `compliance_profile`, `unavailability_timeout_sec`, `resolution_timeout_sec`, `intent_claim_grace_sec`, and `role_policy` through to `SessionCoordinator`. Fully backward-compatible (all params have defaults matching previous behavior).
+- `ws_agent.py`: Added `from __future__ import annotations` for Python 3.9 compatibility (existing `dict | None` type hints required Python 3.10+).
+- `local_config.example.json`: New example config file for API key setup (previously only referenced in README but did not exist).
+- `LICENSE`: Apache License 2.0 added to project root.
+
+---
+
 ## Test Results
 
 - Python: 122/122 tests passed (109 existing + 13 new backend health tests)
