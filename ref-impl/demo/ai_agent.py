@@ -1,8 +1,11 @@
-"""AI Agent wrapper — connects a Claude LLM to an MPAC Participant."""
+"""AI Agent wrapper — connects a Claude LLM to an MPAC Participant.
+
+NOTE: This demo calls the Anthropic API (~6 requests per run).
+      You will need a valid API key in local_config.json.
+"""
 import sys, os, json, uuid
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 
-import httpx
 import anthropic
 from mpac.models import Scope, MessageType
 from mpac.participant import Participant
@@ -13,10 +16,8 @@ _cfg_path = os.path.join(os.path.dirname(__file__), '..', '..', 'local_config.js
 with open(_cfg_path) as f:
     _cfg = json.load(f)["anthropic"]
 
-# Use custom httpx client to handle proxy SSL
-_http_client = httpx.Client(verify=False)
-_client = anthropic.Anthropic(api_key=_cfg["api_key"], http_client=_http_client)
-_model = _cfg.get("model", "claude-sonnet-4-20250514")
+_client = anthropic.Anthropic(api_key=_cfg["api_key"])
+_model = _cfg.get("model", "claude-sonnet-4-6")
 
 
 class AIAgent:

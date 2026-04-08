@@ -8,7 +8,7 @@ version = "0.1.13"
 description = "Python reference implementation for MPAC (Multi-Principal Agent Coordination Protocol) v0.1.13"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 authors = [
     {name = "MPAC Reference Implementation Team"}
 ]

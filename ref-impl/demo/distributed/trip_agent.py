@@ -5,13 +5,15 @@ MPAC Family Trip Agent — an AI agent specialized for trip planning.
 Each agent represents one family member's preferences and constraints.
 Uses Claude API for decision-making: intent planning, conflict negotiation,
 and itinerary generation.
+
+NOTE: This module calls the Anthropic API. You will need a valid API key
+      in local_config.json.
 """
 import sys, os, json, asyncio, uuid, logging, time, hashlib
 from typing import Optional, Dict, Any, List
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python'))
 
-import httpx
 import anthropic
 import websockets
 from mpac.models import Scope, MessageType
@@ -22,9 +24,8 @@ _cfg_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'local_con
 with open(_cfg_path) as f:
     _cfg = json.load(f)["anthropic"]
 
-_http_client = httpx.Client(verify=False)
-_client = anthropic.Anthropic(api_key=_cfg["api_key"], http_client=_http_client)
-_model = _cfg.get("model", "claude-sonnet-4-20250514")
+_client = anthropic.Anthropic(api_key=_cfg["api_key"])
+_model = _cfg.get("model", "claude-sonnet-4-6")
 
 
 class TripAgent:

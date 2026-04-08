@@ -5,6 +5,9 @@ MPAC Live Demo — Two AI agents (Claude) coordinate through the MPAC protocol.
 Scenario: A Python web project needs refactoring. Two agents independently decide
 what to work on, announce intents, and the coordinator detects conflicts when
 their scopes overlap. The agents then negotiate through the protocol.
+
+NOTE: This demo calls the Anthropic API (~6 requests per run).
+      You will need a valid API key in local_config.json.
 """
 import sys, os, json, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))

@@ -383,6 +383,7 @@ New feature: backend AI model health monitoring integrated with [aistatus.cc](ht
 - `ws_coordinator.py` constructor now accepts `**kwargs` for `execution_model`, `compliance_profile`, etc. (backward-compatible)
 - `ws_agent.py` Python 3.9 compatibility fix (`from __future__ import annotations`)
 - Apache License 2.0 added (`LICENSE`)
+- **Demo hardening for open-source release:** removed `httpx.Client(verify=False)` from all demo agents (Anthropic SDK handles HTTPS natively); updated default model from dated snapshot `claude-sonnet-4-20250514` to stable family ID `claude-sonnet-4-6`; added API cost disclaimer notes to all demo docstrings; fixed `pyproject.toml` license from MIT to Apache-2.0
 
 **Contents:**
 

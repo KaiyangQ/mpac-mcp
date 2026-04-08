@@ -19,7 +19,8 @@ Usage:
     python run_overhead_comparison.py --mode traditional  # run only traditional
     python run_overhead_comparison.py --mode mpac         # run only MPAC
 
-Requires: local_config.json with anthropic.api_key at project root.
+NOTE: This demo calls the Anthropic API (~12 requests per run, both modes).
+      You will need a valid API key in local_config.json.
 """
 import sys, os, json, asyncio, logging, time, uuid, copy
 from datetime import datetime, timezone
@@ -28,7 +29,6 @@ from typing import Optional
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python'))
 
-import httpx
 import anthropic
 import websockets
 from mpac.models import Scope, MessageType
@@ -43,9 +43,8 @@ _cfg_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'local_con
 with open(_cfg_path) as f:
     _cfg = json.load(f)["anthropic"]
 
-_http_client = httpx.Client(verify=False)
-_client = anthropic.Anthropic(api_key=_cfg["api_key"], http_client=_http_client)
-_model = _cfg.get("model", "claude-sonnet-4-20250514")
+_client = anthropic.Anthropic(api_key=_cfg["api_key"])
+_model = _cfg.get("model", "claude-sonnet-4-6")
 
 logging.basicConfig(
     level=logging.INFO,

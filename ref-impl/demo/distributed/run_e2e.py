@@ -11,6 +11,9 @@ This is the real deal:
 6. We diff the results to prove the protocol coordinated real work
 
 The test project (test_project/src/) has intentional bugs that both agents will try to fix.
+
+NOTE: This demo calls the Anthropic API (~6-10 requests per run).
+      You will need a valid API key in local_config.json.
 """
 import sys, os, json, asyncio, logging, time, shutil, difflib, hashlib
 
@@ -86,16 +89,14 @@ def show_diff(original: str, modified: str, filename: str):
 #  Enhanced agent — can read/write real files
 # ═══════════════════════════════════════════════════════════════
 
-import httpx
 import anthropic
 
 _cfg_path = os.path.join(SCRIPT_DIR, '..', '..', '..', 'local_config.json')
 with open(_cfg_path) as f:
     _cfg = json.load(f)["anthropic"]
 
-_http_client = httpx.Client(verify=False)
-_client = anthropic.Anthropic(api_key=_cfg["api_key"], http_client=_http_client)
-_model = _cfg.get("model", "claude-sonnet-4-20250514")
+_client = anthropic.Anthropic(api_key=_cfg["api_key"])
+_model = _cfg.get("model", "claude-sonnet-4-6")
 
 
 def ask_claude_for_fix(agent_name: str, role: str, file_path: str, file_content: str,

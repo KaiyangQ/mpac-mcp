@@ -3,13 +3,16 @@
 MPAC Family Trip Planning Demo — Three AI Agents Coordinate a Family Vacation.
 
 This is a real multi-principal coordination scenario:
-  - Dad's agent (张伟): Budget controller, driver, outdoor enthusiast
-  - Mom's agent (李娜): Food & accommodation, cultural experiences
-  - Kid's agent (张小明, 12yo): Theme parks, water activities, fun
+  - Dad's agent (Zhang Wei): Budget controller, driver, outdoor enthusiast
+  - Mom's agent (Li Na): Food & accommodation, cultural experiences
+  - Kid's agent (Zhang Xiaoming, 12yo): Theme parks, water activities, fun
 
 Each agent calls the Claude API independently to make decisions.
 The coordinator detects scope overlaps and mediates conflicts.
 A human arbiter (Dad) resolves disputed conflicts.
+
+NOTE: This demo calls the Anthropic API (~9-15 requests per run).
+      You will need a valid API key in local_config.json.
 
 Usage:
     python run_family_trip.py

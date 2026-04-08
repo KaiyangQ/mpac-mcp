@@ -9,6 +9,9 @@ Architecture:
   - Scenario forces scope overlap to test conflict detection over the wire
 
 This is the first test where MPAC messages travel over a real network transport.
+
+NOTE: This demo calls the Anthropic API (~6 requests per run).
+      You will need a valid API key in local_config.json.
 """
 import sys, os, json, asyncio, logging, time, signal
 

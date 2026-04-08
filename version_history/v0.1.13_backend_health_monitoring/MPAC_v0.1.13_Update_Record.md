@@ -189,6 +189,28 @@ Two new WebSocket-based demos added to achieve 21/21 message type coverage in li
 
 ---
 
+### Demo Hardening for Open-Source Release
+
+5 issues identified and fixed across all API-calling demo scripts:
+
+1. **Hardcoded model name (P2):** All 5 demo agent modules used `claude-sonnet-4-20250514` as the fallback default. This dated model snapshot will become stale as models are deprecated.
+
+   **Fix:** Changed default to `claude-sonnet-4-6` (stable model family ID) across `ai_agent.py`, `ws_agent.py`, `trip_agent.py`, `run_e2e.py`, `run_overhead_comparison.py`, and `local_config.example.json`.
+
+2. **SSL verification disabled (P2):** All 5 demo agent modules created `httpx.Client(verify=False)` and passed it to the Anthropic SDK. This is a security concern for a public repository and unnecessary since the Anthropic SDK handles HTTPS natively.
+
+   **Fix:** Removed `httpx.Client(verify=False)`, removed unused `import httpx`, use default `anthropic.Anthropic(api_key=...)` constructor.
+
+3. **Missing API cost disclaimers (P3):** None of the 8 demo scripts warned users about API key requirements or approximate request counts.
+
+   **Fix:** Added `NOTE:` blocks to all demo docstrings specifying API key requirement and approximate request count per run.
+
+4. **License mismatch (P2):** `pyproject.toml` declared `license = "MIT"` while the repository LICENSE file is Apache 2.0.
+
+   **Fix:** Changed to `license = "Apache-2.0"`.
+
+---
+
 ## Test Results
 
 - Python: 122/122 tests passed (109 existing + 13 new backend health tests)
