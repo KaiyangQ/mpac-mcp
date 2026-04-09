@@ -47,6 +47,10 @@ ref-impl/
     tests/                       ← 11 test files (101 test cases)
   demo/
     README.md                    ← Demo guide: purpose, protocol coverage, and architecture
+mpac-package/                    ← Pip-installable package (pip install ./mpac-package)
+mpac-starter-kit.zip             ← Self-contained kit to send to collaborators
+test_site_A/                     ← Host site: coordinator + workspace + Agent Alice
+test_site_B/                     ← Join site: Agent Bob connects to remote coordinator
     run_interop.sh               ← Cross-language interoperability test
     run_ai_agents.py             ← AI agent demo (2 Claude agents coordinating via MPAC)
     ai_demo_transcript.json      ← Full protocol transcript from the AI demo
@@ -198,6 +202,32 @@ This demonstrates:
 - **CONFLICT_ESCALATE** — agent escalates unresolved conflict to a designated arbiter
 - **Arbiter resolution** — arbiter analyzes both positions via Claude and issues a binding `RESOLUTION`
 - **Multi-level governance** — owner → arbiter authority chain with Claude-powered judicial decision-making
+
+---
+
+## Remote Collaboration (pip package)
+
+MPAC is available as a pip-installable Python package. Two people on different computers can run AI agents that collaboratively edit shared code files through the protocol.
+
+**Host (starts coordinator + workspace):**
+```bash
+cd test_site_A
+pip install ../mpac-package
+python run.py
+# Shows: ws://your-ip:8766 — share this with collaborator
+```
+
+**Collaborator (joins remotely):**
+```bash
+pip install mpac_protocol-0.1.0-py3-none-any.whl
+python run.py ws://host-ip:8766
+```
+
+Or send `mpac-starter-kit.zip` to the collaborator — it contains the `.whl`, `run.py`, and a README with setup instructions.
+
+Both users get an interactive CLI where they can view workspace files, give tasks to their agent, and see color-coded diffs of changes. Real-time notifications show when the other agent commits changes. The coordinator holds all files in memory; agents read/write through WebSocket — no shared filesystem needed.
+
+For cross-network collaboration (different WiFi), use [ngrok](https://ngrok.com): `ngrok http 8766` creates a public URL.
 
 ---
 

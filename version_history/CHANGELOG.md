@@ -394,6 +394,20 @@ New feature: backend AI model health monitoring integrated with [aistatus.cc](ht
 
 ---
 
+## Pip Package and Remote Collaboration (2026-04-08)
+
+Engineering-only release: the MPAC protocol core is now available as a pip-installable Python package (`mpac-protocol`) with a built-in WebSocket coordinator, shared file workspace, and interactive agent CLI. Two people on different computers can collaboratively operate AI agents on shared code files through the MPAC protocol. No protocol changes — SPEC.md is unchanged.
+
+**Key changes:**
+- `mpac-package/`: pip-installable package wrapping protocol core (7 modules), WebSocket transport (MPACServer + MPACAgent), in-memory FileStore with SHA-256 optimistic concurrency, and interactive CLI (view files, give tasks, see color-coded diffs)
+- Sideband file operations: `FILE_LIST`, `FILE_READ`, `FILE_UPDATED` messages over WebSocket alongside MPAC protocol messages; `OP_COMMIT` payload carries `file_changes` for coordinator-side storage
+- `test_site_A/` and `test_site_B/`: two-site simulation with separate venvs, each `pip install`-ing the package independently
+- `mpac-starter-kit.zip`: self-contained distribution (`.whl` + `run.py` + `README.txt`) for collaborators
+- ngrok compatibility: agent auto-detects ngrok URLs and adds `ngrok-skip-browser-warning` header
+- End-to-end validated: both agents connect, read workspace, announce intents, detect conflicts, generate fixes via Claude, commit with state_ref tracking, see each other's changes in real-time
+
+---
+
 ## Archival Convention and Procedure
 
 When the user says "归档" or "archive the spec" or "参考 version history 里的 readme 把现有 spec 归档", follow this procedure exactly:
