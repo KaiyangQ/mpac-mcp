@@ -29,6 +29,5 @@ test_site_B/.venv/
 test_site_B/config.json
 test_output/
 
-# Starter kit (contains built .whl)
+# Starter kit build dir (but keep the zip for distribution)
 mpac-starter-kit/
-mpac-starter-kit.zip
