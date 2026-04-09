@@ -15,3 +15,20 @@ ref-impl/demo/distributed/test_project/workdir/
 
 # Claude Code session config
 .claude/
+
+# MPAC package build artifacts
+mpac-package/build/
+mpac-package/dist/
+mpac-package/src/*.egg-info/
+
+# Test site venvs, configs with API keys, and output
+test_site_A/.venv/
+test_site_A/config.json
+test_site_A/output/
+test_site_B/.venv/
+test_site_B/config.json
+test_output/
+
+# Starter kit (contains built .whl)
+mpac-starter-kit/
+mpac-starter-kit.zip
