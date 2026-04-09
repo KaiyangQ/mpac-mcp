@@ -487,6 +487,9 @@ Return the complete fixed Python file."""
 
         _header(f"Task: {task}")
 
+        # Clear any stale conflicts from previous tasks
+        self.conflicts_received = []
+
         # 1. Decide intent
         print("  [1/4] Analyzing workspace and planning... (calling Claude)")
         intent = await asyncio.get_event_loop().run_in_executor(
@@ -589,6 +592,19 @@ Return the complete fixed Python file."""
                     print(f"  STALE! Another agent changed {fname}. Rebasing...")
                 else:
                     print(f"  ERROR: Failed to commit {fname} after {max_rebase} rebases")
+
+        # Withdraw the intent — task is done, scope should no longer be "claimed".
+        # This aligns intent lifecycle with task lifecycle for the interactive CLI.
+        try:
+            msg = self.participant.withdraw_intent(
+                self.session_id, intent["intent_id"], "task_completed"
+            )
+            await self._send(msg)
+        except Exception as e:
+            self.log.debug(f"withdraw_intent failed: {e}")
+
+        # Clear stale conflict reports from this task so the next task starts clean
+        self.conflicts_received = []
 
         _header("Task Complete!")
 
