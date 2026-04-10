@@ -1,5 +1,7 @@
 # MPAC — Multi-Principal Agent Coordination Protocol
 
+> **External users:** this is the active development branch. For the curated public release — protocol spec, reference implementations, pip package, and a worked two-machine collaboration example — see the [`opensource` branch](https://github.com/KaiyangQ/Agent_talking/tree/opensource) or check out tag [`v0.1.13`](https://github.com/KaiyangQ/Agent_talking/releases/tag/v0.1.13).
+
 **When multiple AI agents — serving different people — need to work together, who coordinates them?**
 
 MPAC is an application-layer protocol that provides coordination semantics for AI agents serving **multiple independent principals**. It handles the gap that MCP (tool invocation) and A2A (single-principal delegation) don't cover: structured coordination across organizational and trust boundaries.
