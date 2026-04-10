@@ -626,31 +626,30 @@ Return the complete updated file."""
 
     # ── Original autonomous workflow (still available) ─────────
 
-    async def run_task(self, task: str):
-        """Run a complete autonomous task (non-interactive)."""
-        self.log.info(f"=== {self.name} starting task: {task} ===")
+    async def execute_task(self, task: str) -> dict:
+        """Execute a single task within an established session (no HELLO/GOODBYE).
 
-        self.log.info("Phase 1: Joining session...")
-        await self._do_hello()
+        Returns a result dict with keys: committed (list of files), yielded (bool),
+        conflict_detected (bool).  Use this for multi-task sequences where agents
+        stay connected across tasks.
+        """
+        result = {"committed": [], "yielded": False, "conflict_detected": False}
 
-        self.log.info("Phase 2: Reading workspace...")
+        self.log.info(f"--- {self.name} task: {task} ---")
+
         files = await self.list_files()
-        for f in files:
-            self.log.info(f"  {f['path']} ({f['size']} bytes)")
 
-        self.log.info("Phase 3: Deciding intent (calling Claude)...")
         intent = await asyncio.get_event_loop().run_in_executor(
             None, self._decide_intent, task, files
         )
         self.log.info(f"  Intent: {intent.get('objective', '?')}")
 
-        self.log.info("Phase 4: Announcing intent...")
         await self._do_announce_intent(intent)
 
-        self.log.info("Phase 5: Waiting for conflicts (5s)...")
         await self._drain_conflicts(5.0)
 
         if self.conflicts_received:
+            result["conflict_detected"] = True
             self.log.info(f"  {len(self.conflicts_received)} conflict(s) detected!")
             for c in self.conflicts_received:
                 decision = await asyncio.get_event_loop().run_in_executor(
@@ -662,23 +661,23 @@ Return the complete updated file."""
                         self.session_id, intent["intent_id"], "yielded"
                     )
                     await self._send(msg)
-                    await self._do_goodbye()
-                    return
+                    result["yielded"] = True
+                    self.conflicts_received = []
+                    return result
             self.log.info("  Proceeding — coordinator will auto-resolve.")
         else:
             self.log.info("  No conflicts.")
 
-        self.log.info("Phase 6: Generating fixes and committing...")
         target_files = intent.get("files", [])
         max_rebase = 2
 
         for target in target_files:
             for attempt in range(max_rebase + 1):
-                result = await self.read_file(target)
-                if result is None:
+                file_result = await self.read_file(target)
+                if file_result is None:
                     self.log.warning(f"  File not found: {target}")
                     break
-                content, state_ref = result
+                content, state_ref = file_result
                 label = f" (rebase #{attempt})" if attempt > 0 else ""
                 self.log.info(f"  Reading {target}{label} ref={state_ref}")
 
@@ -687,25 +686,45 @@ Return the complete updated file."""
                     rebase_note = ("\nIMPORTANT: Another agent already modified this file. "
                                    "Build on top of their changes.")
 
-                self.log.info(f"  Calling Claude to fix {target}...")
+                self.log.info(f"  Calling Claude to update {target}...")
                 fixed = await asyncio.get_event_loop().run_in_executor(
                     None, self._generate_fix, task + rebase_note, target, content
                 )
 
-                op_id = f"op-{self.name.lower()}-{target.replace('/', '-').replace('.', '-')}"
-                if attempt > 0:
-                    op_id += f"-r{attempt}"
+                op_id = f"op-{self.name.lower()}-{target.replace('/', '-').replace('.', '-')}-{uuid.uuid4().hex[:6]}"
 
                 ok = await self._do_commit(intent["intent_id"], op_id, target, fixed, state_ref)
                 if ok:
                     self.log.info(f"  COMMITTED: {target}")
+                    result["committed"].append(target)
                     break
                 elif attempt < max_rebase:
                     self.log.info(f"  Rebasing {target}...")
                 else:
                     self.log.error(f"  Failed to commit {target} after {max_rebase} rebases")
 
-        self.log.info("Phase 7: Done!")
+        # Withdraw intent — release the scope for future tasks
+        try:
+            msg = self.participant.withdraw_intent(
+                self.session_id, intent["intent_id"], "task_completed"
+            )
+            await self._send(msg)
+        except Exception:
+            pass
+        self.conflicts_received = []
+
+        self.log.info(f"--- {self.name} task done (committed: {result['committed']}) ---")
+        return result
+
+    async def run_task(self, task: str):
+        """Run a complete autonomous task (non-interactive).
+
+        Handles full lifecycle: HELLO → execute_task → GOODBYE.
+        For multi-task sequences, use execute_task() directly.
+        """
+        self.log.info(f"=== {self.name} starting task: {task} ===")
+        await self._do_hello()
+        await self.execute_task(task)
         await self._do_goodbye()
         self.log.info(f"=== {self.name} completed ===")
 
