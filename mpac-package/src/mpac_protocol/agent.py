@@ -95,9 +95,11 @@ class MPACAgent:
         api_key: str,
         model: str = "claude-sonnet-4-6",
         role_description: str | None = None,
+        roles: list[str] | None = None,
+        principal_id: str | None = None,
     ):
         self.name = name
-        self.principal_id = f"agent:{name}"
+        self.principal_id = principal_id or f"agent:{name}"
         self.role_description = role_description or "A collaborative AI agent"
         self.client = anthropic.Anthropic(api_key=api_key)
         self.model = model
@@ -105,8 +107,12 @@ class MPACAgent:
             principal_id=self.principal_id,
             principal_type="agent",
             display_name=name,
-            roles=["contributor"],
-            capabilities=["intent.broadcast", "op.propose", "op.commit"],
+            roles=roles or ["contributor"],
+            capabilities=[
+                "intent.broadcast", "op.propose", "op.commit",
+                "intent.update", "intent.withdraw", "intent.claim",
+                "conflict.ack", "conflict.escalate", "governance.override",
+            ],
         )
         self.ws = None
         self.session_id = None
@@ -184,6 +190,26 @@ class MPACAgent:
             })
         elif mt == "GOODBYE":
             print(f"\n  >> {sender} left the session")
+        elif mt == "CONFLICT_ACK":
+            ack_type = payload.get("ack_type", "?")
+            print(f"\n  >> {sender} acknowledged conflict ({ack_type})")
+        elif mt == "CONFLICT_ESCALATE":
+            escalate_to = payload.get("escalate_to", "?")
+            print(f"\n  >> Conflict escalated to {escalate_to}")
+        elif mt == "RESOLUTION":
+            decision = payload.get("decision", "?")
+            print(f"\n  >> Conflict resolved: {decision}")
+        elif mt == "INTENT_UPDATE":
+            print(f"\n  >> {sender} updated intent scope")
+        elif mt == "INTENT_CLAIM_STATUS":
+            decision = payload.get("decision", "?")
+            print(f"\n  >> Claim decision: {decision}")
+        elif mt == "OP_PROPOSE":
+            target = payload.get("target", "?")
+            print(f"\n  >> {sender} proposed operation on {target}")
+        elif mt == "OP_REJECT":
+            reason = payload.get("reason", "?")
+            print(f"\n  >> Operation rejected: {reason}")
 
     async def _send(self, data: dict):
         """Send JSON over WebSocket."""
@@ -392,7 +418,16 @@ Return the complete updated file."""
         return resp
 
     async def _do_announce_intent(self, intent: dict):
-        scope = Scope(kind="file_set", resources=intent.get("files", []))
+        scope_kind = intent.get("scope_kind", "file_set")
+        items = intent.get("resources", intent.get("files", []))
+        scope_kwargs = {"kind": scope_kind}
+        if scope_kind == "task_set":
+            scope_kwargs["task_ids"] = items
+        elif scope_kind == "entity_set":
+            scope_kwargs["entities"] = items
+        else:
+            scope_kwargs["resources"] = items
+        scope = Scope(**scope_kwargs)
         msg = self.participant.announce_intent(
             self.session_id,
             intent["intent_id"],
@@ -439,6 +474,143 @@ Return the complete updated file."""
     async def _do_goodbye(self):
         msg = self.participant.goodbye(self.session_id, reason="completed")
         await self._send(msg)
+
+    # ── Extended protocol operations ──────────────────────────
+
+    async def do_heartbeat(self, status: str = "idle"):
+        """Send HEARTBEAT to maintain liveness."""
+        msg = self.participant.heartbeat(self.session_id, status=status)
+        await self._send(msg)
+
+    async def do_ack_conflict(self, conflict_id: str, ack_type: str = "seen"):
+        """Send CONFLICT_ACK."""
+        msg = self.participant.ack_conflict(self.session_id, conflict_id, ack_type)
+        await self._send(msg)
+        await asyncio.sleep(0.3)
+
+    async def do_update_intent(self, intent_id: str, objective: str | None = None,
+                                files: list[str] | None = None):
+        """Send INTENT_UPDATE to change scope or objective."""
+        scope = Scope(kind="file_set", resources=files) if files else None
+        msg = self.participant.update_intent(
+            self.session_id, intent_id, objective=objective, scope=scope,
+        )
+        await self._send(msg)
+        await asyncio.sleep(0.3)
+
+    async def do_propose(self, intent_id: str, op_id: str, target: str,
+                          op_kind: str = "replace") -> dict | None:
+        """Send OP_PROPOSE and wait for authorization (pre-commit mode).
+
+        Returns the authorization response, OP_REJECT, or None on timeout.
+        """
+        msg = self.participant.propose_op(
+            self.session_id, op_id, intent_id, target, op_kind,
+        )
+        await self._send(msg)
+
+        deadline = time.time() + 15.0
+        stash = []
+        while time.time() < deadline:
+            try:
+                remaining = max(0.1, deadline - time.time())
+                msg = await asyncio.wait_for(
+                    self.protocol_inbox.get(), timeout=remaining)
+                msg_type = msg.get("message_type", "")
+                if msg_type == "COORDINATOR_STATUS":
+                    event = msg.get("payload", {}).get("event", "")
+                    if event == "authorization":
+                        self.log.info(f"OP_PROPOSE authorized: {op_id}")
+                        for s in stash:
+                            await self.protocol_inbox.put(s)
+                        return msg
+                elif msg_type in ("OP_REJECT", "PROTOCOL_ERROR"):
+                    self.log.info(f"OP_PROPOSE {msg_type}: "
+                                  f"{msg.get('payload', {}).get('reason', msg.get('payload', {}).get('error_code', '?'))}")
+                    for s in stash:
+                        await self.protocol_inbox.put(s)
+                    return msg
+                elif msg_type == "CONFLICT_REPORT":
+                    self.conflicts_received.append(msg)
+                else:
+                    stash.append(msg)
+            except asyncio.TimeoutError:
+                continue
+        for s in stash:
+            await self.protocol_inbox.put(s)
+        return None
+
+    async def propose_and_commit(self, intent_id: str, op_id: str, target: str,
+                                  content: str, state_ref_before: str) -> bool:
+        """Pre-commit flow: OP_PROPOSE → authorization → OP_COMMIT.
+
+        Returns True if committed successfully.
+        """
+        auth = await self.do_propose(intent_id, op_id, target)
+        if auth is None or auth.get("message_type") != "COORDINATOR_STATUS":
+            return False
+        return await self._do_commit(intent_id, op_id, target, content, state_ref_before)
+
+    async def do_claim_intent(self, original_intent_id: str,
+                               original_principal_id: str,
+                               new_intent_id: str, objective: str,
+                               files: list[str],
+                               justification: str | None = None) -> dict | None:
+        """Send INTENT_CLAIM and wait for INTENT_CLAIM_STATUS.
+
+        Returns the claim status response, or None on timeout.
+        """
+        claim_id = f"claim-{self.name.lower()}-{uuid.uuid4().hex[:6]}"
+        scope = Scope(kind="file_set", resources=files)
+        msg = self.participant.claim_intent(
+            self.session_id, claim_id, original_intent_id,
+            original_principal_id, new_intent_id, objective, scope,
+            justification=justification,
+        )
+        await self._send(msg)
+
+        deadline = time.time() + 15.0
+        stash = []
+        while time.time() < deadline:
+            try:
+                remaining = max(0.1, deadline - time.time())
+                msg = await asyncio.wait_for(
+                    self.protocol_inbox.get(), timeout=remaining)
+                msg_type = msg.get("message_type", "")
+                if msg_type == "INTENT_CLAIM_STATUS":
+                    decision = msg.get("payload", {}).get("decision", "?")
+                    self.log.info(f"INTENT_CLAIM decision: {decision}")
+                    for s in stash:
+                        await self.protocol_inbox.put(s)
+                    return msg
+                elif msg_type == "CONFLICT_REPORT":
+                    self.conflicts_received.append(msg)
+                else:
+                    stash.append(msg)
+            except asyncio.TimeoutError:
+                continue
+        for s in stash:
+            await self.protocol_inbox.put(s)
+        return None
+
+    async def do_escalate_conflict(self, conflict_id: str, escalate_to: str,
+                                    reason: str, context: str | None = None):
+        """Send CONFLICT_ESCALATE to refer a dispute to an arbiter."""
+        msg = self.participant.escalate_conflict(
+            self.session_id, conflict_id, escalate_to, reason, context=context,
+        )
+        await self._send(msg)
+        await asyncio.sleep(0.5)
+
+    async def do_resolve_conflict(self, conflict_id: str, decision: str,
+                                   rationale: str, outcome: dict | None = None):
+        """Send RESOLUTION (typically from an arbiter)."""
+        msg = self.participant.resolve_conflict(
+            self.session_id, conflict_id, decision,
+            rationale=rationale, outcome=outcome,
+        )
+        await self._send(msg)
+        await asyncio.sleep(0.5)
 
     # ── Interactive workflow ───────────────────────────────────
 
