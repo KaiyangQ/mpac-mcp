@@ -3,6 +3,7 @@ MPAC Agent — autonomous AI agent that coordinates via MPAC protocol.
 
 Connects to an MPACServer, reads shared workspace files, uses Claude to
 decide what to work on, and commits changes through the protocol.
+Content-agnostic: works with code, documents, config files, or any text.
 """
 from __future__ import annotations
 
@@ -93,11 +94,11 @@ class MPACAgent:
         name: str,
         api_key: str,
         model: str = "claude-sonnet-4-6",
-        role_description: str = "A collaborative AI coding agent",
+        role_description: str | None = None,
     ):
         self.name = name
         self.principal_id = f"agent:{name}"
-        self.role_description = role_description
+        self.role_description = role_description or "A collaborative AI agent"
         self.client = anthropic.Anthropic(api_key=api_key)
         self.model = model
         self.participant = Participant(
@@ -281,10 +282,10 @@ class MPACAgent:
             f"  - {f['path']} ({f['size']} bytes, ref: {f['state_ref']})"
             for f in files_info
         )
-        system = f"""You are {self.name}, an AI coding agent. {self.role_description}
+        system = f"""You are {self.name}, a collaborative AI agent. {self.role_description}
 
 You participate in MPAC (Multi-Principal Agent Coordination Protocol).
-Decide which files you need to modify for the given task.
+Analyze the task and decide which workspace files you need to modify.
 
 Reply with ONLY a JSON object:
 {{
@@ -324,10 +325,10 @@ YOUR INTENT:
 
     def _generate_fix(self, task: str, path: str, content: str,
                       other_agent_info: str = "") -> str:
-        system = f"""You are {self.name}, an AI coding agent. {self.role_description}
+        system = f"""You are {self.name}, a collaborative AI agent. {self.role_description}
 
-You are given a Python source file. Fix it according to the objective.
-Return ONLY the complete fixed file — no markdown fences, no explanations."""
+You are given a file and an objective. Update the file according to the objective.
+Return ONLY the complete updated file — no markdown fences, no explanations."""
 
         coordination = ""
         if other_agent_info:
@@ -343,7 +344,7 @@ FILE: {path}
 CURRENT CONTENT:
 {content}
 
-Return the complete fixed Python file."""
+Return the complete updated file."""
 
         result = self._ask_claude(system, user, max_tokens=4096)
         result = self._extract_code(result)
@@ -351,25 +352,24 @@ Return the complete fixed Python file."""
 
     @staticmethod
     def _extract_code(text: str) -> str:
-        """Extract code from Claude response, stripping markdown fences and explanations."""
-        # Find the last ```-fenced code block (most likely the complete file)
+        """Extract content from Claude response, stripping markdown fences if present.
+
+        For code files: finds the longest fenced code block.
+        For non-code content (no fences found): returns the text as-is.
+        """
         import re
+        # Find any ```-fenced block (language tag is optional)
         blocks = list(re.finditer(
-            r"```(?:python|py)?\s*\n(.*?)```",
+            r"```(?:\w+)?\s*\n(.*?)```",
             text, re.DOTALL,
         ))
         if blocks:
-            # Use the last (or longest) fenced block — that's the full file
+            # Use the longest fenced block — that's the complete file
             best = max(blocks, key=lambda m: len(m.group(1)))
             return best.group(1).rstrip("\n")
 
-        # No fenced block — strip a leading ``` line and trailing ``` if present
-        lines = text.split("\n")
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        return "\n".join(lines)
+        # No fenced block — return text as-is (common for non-code content)
+        return text.strip()
 
     # ── MPAC message helpers ───────────────────────────────────
 
