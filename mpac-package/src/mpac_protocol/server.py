@@ -20,6 +20,21 @@ from .core.coordinator import SessionCoordinator
 log = logging.getLogger("mpac.server")
 
 
+# Directories and files skipped by FileStore.load_directory by default.
+# These are the usual suspects that almost nobody wants shared in a
+# collaborative workspace (VCS metadata, build caches, virtualenvs, OS cruft).
+DEFAULT_IGNORE_DIRS: frozenset[str] = frozenset({
+    ".git", ".hg", ".svn",
+    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    "node_modules", ".venv", "venv", "env",
+    ".idea", ".vscode",
+    "dist", "build", ".next", ".turbo",
+})
+DEFAULT_IGNORE_FILES: frozenset[str] = frozenset({
+    ".DS_Store", "Thumbs.db", ".gitignore",
+})
+
+
 # ── FileStore ──────────────────────────────────────────────────
 
 class FileStore:
@@ -28,14 +43,51 @@ class FileStore:
     def __init__(self):
         self.files: dict[str, dict] = {}  # path -> {content, state_ref}
 
-    def load_directory(self, dir_path: str):
-        """Load all .py files from a directory into the store."""
-        for root, _dirs, files in os.walk(dir_path):
+    def load_directory(
+        self,
+        dir_path: str,
+        ignore_dirs: frozenset[str] | set[str] | None = None,
+        ignore_files: frozenset[str] | set[str] | None = None,
+    ):
+        """Load all text files from a directory into the store.
+
+        Walks ``dir_path`` recursively and registers every text file it finds
+        as a shared resource. Binary files (anything that cannot be decoded as
+        UTF-8) are skipped with a warning — the MPAC protocol represents file
+        content as text, so binaries cannot participate in optimistic
+        concurrency control.
+
+        Parameters
+        ----------
+        dir_path:
+            Root directory to share. The caller can point this at any path;
+            nothing about the workspace is bundled with the MPAC package.
+        ignore_dirs / ignore_files:
+            Names to skip during the walk. Defaults to ``DEFAULT_IGNORE_DIRS``
+            and ``DEFAULT_IGNORE_FILES`` — VCS metadata, build caches,
+            virtualenvs, IDE configs, and OS cruft. Pass an empty set to load
+            literally everything.
+        """
+        ignore_dirs = DEFAULT_IGNORE_DIRS if ignore_dirs is None else ignore_dirs
+        ignore_files = DEFAULT_IGNORE_FILES if ignore_files is None else ignore_files
+
+        for root, dirs, files in os.walk(dir_path):
+            # Prune ignored subdirectories in-place so os.walk doesn't descend.
+            dirs[:] = [d for d in dirs if d not in ignore_dirs]
             for fname in files:
+                if fname in ignore_files:
+                    continue
                 fpath = os.path.join(root, fname)
                 rel = os.path.relpath(fpath, dir_path)
-                with open(fpath, "r") as f:
-                    content = f.read()
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        content = f.read()
+                except UnicodeDecodeError:
+                    log.warning(f"  Skipped (binary): {rel}")
+                    continue
+                except OSError as e:
+                    log.warning(f"  Skipped (read error): {rel}: {e}")
+                    continue
                 ref = "sha256:" + hashlib.sha256(content.encode()).hexdigest()[:16]
                 self.files[rel] = {"content": content, "state_ref": ref}
                 log.info(f"  Loaded: {rel} ({ref})")
