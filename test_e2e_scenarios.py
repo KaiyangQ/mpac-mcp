@@ -230,6 +230,75 @@ async def main():
     print_workspace(server)
 
     # ══════════════════════════════════════════════════════════════
+    #  Scenario 5: Asymmetric yield (natural)
+    # ══════════════════════════════════════════════════════════════
+    banner("Scenario 5: Asymmetric Yield (critical vs trivial)")
+    t_start = len(server.transcript)
+
+    r_alice, r_bob = await asyncio.gather(
+        alice.execute_task(
+            "CRITICAL SECURITY FIX: Patch the authentication bypass vulnerability "
+            "in auth.py — tokens with expired timestamps are being accepted. "
+            "This is a P0 production incident."
+        ),
+        bob.execute_task(
+            "Minor style cleanup: add a one-line docstring comment to auth.py. "
+            "This is low priority and can wait."
+        ),
+    )
+
+    has_conflict = has_message_since(server.transcript, "CONFLICT_REPORT", t_start)
+    # Pass if conflict detected and at least one committed
+    at_least_one = bool(r_alice["committed"]) or bool(r_bob["committed"])
+    passed = has_conflict and at_least_one
+
+    results["scenario_5"] = passed
+    print(f"  Conflict detected:       {has_conflict}")
+    print(f"  Alice committed:         {r_alice['committed']}  yielded: {r_alice['yielded']}")
+    print(f"  Bob committed:           {r_bob['committed']}  yielded: {r_bob['yielded']}")
+    print(f"  Result: {'PASS' if passed else 'FAIL'}")
+    print_workspace(server)
+
+    # ══════════════════════════════════════════════════════════════
+    #  Scenario 6: Forced mutual yield → auto-retry
+    # ══════════════════════════════════════════════════════════════
+    banner("Scenario 6: Mutual Yield + Auto-Retry (forced)")
+    t_start = len(server.transcript)
+
+    # Temporarily override _decide_conflict to always yield
+    original_alice = alice._decide_conflict
+    original_bob = bob._decide_conflict
+    alice._decide_conflict = lambda conflict, intent: "yield"
+    bob._decide_conflict = lambda conflict, intent: "yield"
+
+    r_alice, r_bob = await asyncio.gather(
+        alice.execute_task("Add input sanitization to auth.py"),
+        bob.execute_task("Add request throttling to auth.py"),
+    )
+
+    # Restore original methods
+    alice._decide_conflict = original_alice
+    bob._decide_conflict = original_bob
+
+    has_conflict = has_message_since(server.transcript, "CONFLICT_REPORT", t_start)
+    # The key test: mutual yield should be detected, and at least one
+    # agent should have auto-retried with proceed bias and committed.
+    at_least_one = bool(r_alice["committed"]) or bool(r_bob["committed"])
+    passed = has_conflict and at_least_one
+
+    results["scenario_6"] = passed
+    print(f"  Conflict detected:       {has_conflict}")
+    print(f"  Alice committed:         {r_alice['committed']}  yielded: {r_alice['yielded']}")
+    print(f"  Bob committed:           {r_bob['committed']}  yielded: {r_bob['yielded']}")
+    note = ""
+    if r_alice["committed"] and r_bob["committed"]:
+        note = " (both retried and committed)"
+    elif at_least_one:
+        note = " (one retried, one yielded — timing-dependent)"
+    print(f"  Result: {'PASS' if passed else 'FAIL'}{note}")
+    print_workspace(server)
+
+    # ══════════════════════════════════════════════════════════════
     #  Teardown
     # ══════════════════════════════════════════════════════════════
     banner("Summary")
