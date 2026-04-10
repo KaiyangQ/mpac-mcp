@@ -1,0 +1,731 @@
+[
+  {
+    "ts": 0.31874990463256836,
+    "direction": "inbound",
+    "from": "agent:Dad",
+    "message_type": "HELLO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "HELLO",
+      "message_id": "ace790c5-7a9e-4d29-9878-8ec0f99028e8",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Dad",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Dad:5e6d761b-65ca-4629-bf20-2e012546fcc1"
+      },
+      "ts": "2026-04-10T23:35:33.380883Z",
+      "payload": {
+        "display_name": "Dad",
+        "roles": [
+          "contributor"
+        ],
+        "capabilities": [
+          "intent.broadcast",
+          "op.propose",
+          "op.commit",
+          "intent.update",
+          "intent.withdraw",
+          "intent.claim",
+          "conflict.ack",
+          "conflict.escalate",
+          "governance.override"
+        ]
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 1
+      }
+    }
+  },
+  {
+    "ts": 0.31888318061828613,
+    "direction": "outbound",
+    "message_type": "SESSION_INFO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "SESSION_INFO",
+      "message_id": "8c475889-1bc6-481d-a136-a56ea23461f8",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "service:coordinator-ultimate-s2",
+        "principal_type": "service",
+        "sender_instance_id": "service:coordinator-ultimate-s2:epoch-1"
+      },
+      "ts": "2026-04-10T23:35:33.381284Z",
+      "payload": {
+        "session_id": "ultimate-s2",
+        "protocol_version": "0.1.13",
+        "security_profile": "open",
+        "compliance_profile": "core",
+        "watermark_kind": "lamport_clock",
+        "execution_model": "post_commit",
+        "state_ref_format": "sha256",
+        "governance_policy": {
+          "require_acknowledgment": true,
+          "intent_expiry_grace_sec": 30.0
+        },
+        "liveness_policy": {
+          "heartbeat_interval_sec": 30.0,
+          "unavailability_timeout_sec": 90.0,
+          "intent_claim_grace_period_sec": 0.0,
+          "resolution_timeout_sec": 300.0
+        },
+        "participant_count": 1,
+        "granted_roles": [
+          "contributor"
+        ],
+        "identity_verified": true,
+        "compatibility_errors": []
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      },
+      "coordinator_epoch": 1
+    }
+  },
+  {
+    "ts": 0.32155585289001465,
+    "direction": "inbound",
+    "from": "agent:Mom",
+    "message_type": "HELLO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "HELLO",
+      "message_id": "b619e203-0011-414e-905d-8d14e5036618",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Mom",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Mom:67c89bc6-1c3d-4a5d-b22c-82d09a598ea0"
+      },
+      "ts": "2026-04-10T23:35:33.383744Z",
+      "payload": {
+        "display_name": "Mom",
+        "roles": [
+          "contributor"
+        ],
+        "capabilities": [
+          "intent.broadcast",
+          "op.propose",
+          "op.commit",
+          "intent.update",
+          "intent.withdraw",
+          "intent.claim",
+          "conflict.ack",
+          "conflict.escalate",
+          "governance.override"
+        ]
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 1
+      }
+    }
+  },
+  {
+    "ts": 0.32167696952819824,
+    "direction": "outbound",
+    "message_type": "SESSION_INFO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "SESSION_INFO",
+      "message_id": "ca994f90-4b84-4e27-942a-3aea51d58d33",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "service:coordinator-ultimate-s2",
+        "principal_type": "service",
+        "sender_instance_id": "service:coordinator-ultimate-s2:epoch-1"
+      },
+      "ts": "2026-04-10T23:35:33.384083Z",
+      "payload": {
+        "session_id": "ultimate-s2",
+        "protocol_version": "0.1.13",
+        "security_profile": "open",
+        "compliance_profile": "core",
+        "watermark_kind": "lamport_clock",
+        "execution_model": "post_commit",
+        "state_ref_format": "sha256",
+        "governance_policy": {
+          "require_acknowledgment": true,
+          "intent_expiry_grace_sec": 30.0
+        },
+        "liveness_policy": {
+          "heartbeat_interval_sec": 30.0,
+          "unavailability_timeout_sec": 90.0,
+          "intent_claim_grace_period_sec": 0.0,
+          "resolution_timeout_sec": 300.0
+        },
+        "participant_count": 2,
+        "granted_roles": [
+          "contributor"
+        ],
+        "identity_verified": true,
+        "compatibility_errors": []
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 5
+      },
+      "coordinator_epoch": 1
+    }
+  },
+  {
+    "ts": 0.3241300582885742,
+    "direction": "inbound",
+    "from": "agent:Kid",
+    "message_type": "HELLO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "HELLO",
+      "message_id": "17c42770-f794-4c59-902a-cff1bbbfba5a",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Kid",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Kid:71ffff4e-7ee6-445b-9828-ff3be8694f84"
+      },
+      "ts": "2026-04-10T23:35:33.386357Z",
+      "payload": {
+        "display_name": "Kid",
+        "roles": [
+          "contributor"
+        ],
+        "capabilities": [
+          "intent.broadcast",
+          "op.propose",
+          "op.commit",
+          "intent.update",
+          "intent.withdraw",
+          "intent.claim",
+          "conflict.ack",
+          "conflict.escalate",
+          "governance.override"
+        ]
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 1
+      }
+    }
+  },
+  {
+    "ts": 0.3242180347442627,
+    "direction": "outbound",
+    "message_type": "SESSION_INFO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "SESSION_INFO",
+      "message_id": "3f97c356-83d5-4921-898c-d3c3c70c2ad0",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "service:coordinator-ultimate-s2",
+        "principal_type": "service",
+        "sender_instance_id": "service:coordinator-ultimate-s2:epoch-1"
+      },
+      "ts": "2026-04-10T23:35:33.386631Z",
+      "payload": {
+        "session_id": "ultimate-s2",
+        "protocol_version": "0.1.13",
+        "security_profile": "open",
+        "compliance_profile": "core",
+        "watermark_kind": "lamport_clock",
+        "execution_model": "post_commit",
+        "state_ref_format": "sha256",
+        "governance_policy": {
+          "require_acknowledgment": true,
+          "intent_expiry_grace_sec": 30.0
+        },
+        "liveness_policy": {
+          "heartbeat_interval_sec": 30.0,
+          "unavailability_timeout_sec": 90.0,
+          "intent_claim_grace_period_sec": 0.0,
+          "resolution_timeout_sec": 300.0
+        },
+        "participant_count": 3,
+        "granted_roles": [
+          "contributor"
+        ],
+        "identity_verified": true,
+        "compatibility_errors": []
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 7
+      },
+      "coordinator_epoch": 1
+    }
+  },
+  {
+    "ts": 0.6254358291625977,
+    "direction": "inbound",
+    "from": "agent:Dad",
+    "message_type": "INTENT_ANNOUNCE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "INTENT_ANNOUNCE",
+      "message_id": "3ed6d0e2-d8e9-41dd-b4ef-8823fe7c58ab",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Dad",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Dad:5e6d761b-65ca-4629-bf20-2e012546fcc1"
+      },
+      "ts": "2026-04-10T23:35:33.687379Z",
+      "payload": {
+        "intent_id": "intent-dad-73475b",
+        "objective": "Plan outdoor activities, driving routes, and camping for days 1, 2, 5",
+        "scope": {
+          "kind": "task_set",
+          "task_ids": [
+            "itinerary://day-1",
+            "itinerary://day-2",
+            "itinerary://day-5"
+          ]
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 2
+      }
+    }
+  },
+  {
+    "ts": 1.127243995666504,
+    "direction": "inbound",
+    "from": "agent:Mom",
+    "message_type": "INTENT_ANNOUNCE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "INTENT_ANNOUNCE",
+      "message_id": "88b858d7-09d1-41dc-bd35-f929ba8c4416",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Mom",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Mom:67c89bc6-1c3d-4a5d-b22c-82d09a598ea0"
+      },
+      "ts": "2026-04-10T23:35:34.188905Z",
+      "payload": {
+        "intent_id": "intent-mom-aadfef",
+        "objective": "Plan accommodation, restaurants, and cultural experiences for days 2, 3",
+        "scope": {
+          "kind": "task_set",
+          "task_ids": [
+            "itinerary://day-2",
+            "itinerary://day-3"
+          ]
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 2
+      }
+    }
+  },
+  {
+    "ts": 1.1284160614013672,
+    "direction": "outbound",
+    "message_type": "CONFLICT_REPORT",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "CONFLICT_REPORT",
+      "message_id": "80d506a8-c610-491b-97f8-338918fd0c2b",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "service:coordinator-ultimate-s2",
+        "principal_type": "service",
+        "sender_instance_id": "service:coordinator-ultimate-s2:epoch-1"
+      },
+      "ts": "2026-04-10T23:35:34.189902Z",
+      "payload": {
+        "conflict_id": "a530bceb-9e49-44c5-9d9a-895fb0459b71",
+        "category": "scope_overlap",
+        "severity": "medium",
+        "principal_a": "agent:Mom",
+        "principal_b": "agent:Dad",
+        "intent_a": "intent-mom-aadfef",
+        "intent_b": "intent-dad-73475b"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 10
+      },
+      "coordinator_epoch": 1
+    }
+  },
+  {
+    "ts": 1.6285769939422607,
+    "direction": "inbound",
+    "from": "agent:Kid",
+    "message_type": "INTENT_ANNOUNCE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "INTENT_ANNOUNCE",
+      "message_id": "82d168e1-78a7-45c8-9d55-5c859f6cda91",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Kid",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Kid:71ffff4e-7ee6-445b-9828-ff3be8694f84"
+      },
+      "ts": "2026-04-10T23:35:34.690506Z",
+      "payload": {
+        "intent_id": "intent-kid-e8ced5",
+        "objective": "Plan theme park visit and water activities for days 3, 4",
+        "scope": {
+          "kind": "task_set",
+          "task_ids": [
+            "itinerary://day-3",
+            "itinerary://day-4"
+          ]
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 2
+      }
+    }
+  },
+  {
+    "ts": 1.6293129920959473,
+    "direction": "outbound",
+    "message_type": "CONFLICT_REPORT",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "CONFLICT_REPORT",
+      "message_id": "d89e9656-5b40-45d2-8b19-db8f84dbbe7f",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "service:coordinator-ultimate-s2",
+        "principal_type": "service",
+        "sender_instance_id": "service:coordinator-ultimate-s2:epoch-1"
+      },
+      "ts": "2026-04-10T23:35:34.691178Z",
+      "payload": {
+        "conflict_id": "c57f93a8-1b6b-4207-b59e-849f34245dc4",
+        "category": "scope_overlap",
+        "severity": "medium",
+        "principal_a": "agent:Kid",
+        "principal_b": "agent:Mom",
+        "intent_a": "intent-kid-e8ced5",
+        "intent_b": "intent-mom-aadfef"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 12
+      },
+      "coordinator_epoch": 1
+    }
+  },
+  {
+    "ts": 13.136471033096313,
+    "direction": "inbound",
+    "from": "agent:Dad",
+    "message_type": "OP_COMMIT",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "OP_COMMIT",
+      "message_id": "fddfa30a-c555-4a64-961d-6d13a0e35308",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Dad",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Dad:5e6d761b-65ca-4629-bf20-2e012546fcc1"
+      },
+      "ts": "2026-04-10T23:35:46.197704Z",
+      "payload": {
+        "op_id": "op-dad-day-1",
+        "intent_id": "intent-dad-73475b",
+        "target": "itinerary://day-1",
+        "op_kind": "replace",
+        "state_ref_before": "sha256:2e1cfa82b035c26c",
+        "state_ref_after": "sha256:d849fd3882c6cae7"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      }
+    }
+  },
+  {
+    "ts": 13.437798976898193,
+    "direction": "inbound",
+    "from": "agent:Dad",
+    "message_type": "OP_COMMIT",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "OP_COMMIT",
+      "message_id": "8be7a4bf-f1a5-4c96-bea5-f6934798c5e5",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Dad",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Dad:5e6d761b-65ca-4629-bf20-2e012546fcc1"
+      },
+      "ts": "2026-04-10T23:35:46.499545Z",
+      "payload": {
+        "op_id": "op-dad-day-2",
+        "intent_id": "intent-dad-73475b",
+        "target": "itinerary://day-2",
+        "op_kind": "replace",
+        "state_ref_before": "sha256:2e1cfa82b035c26c",
+        "state_ref_after": "sha256:47d639bf544153a2"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 4
+      }
+    }
+  },
+  {
+    "ts": 13.739730834960938,
+    "direction": "inbound",
+    "from": "agent:Dad",
+    "message_type": "OP_COMMIT",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "OP_COMMIT",
+      "message_id": "d63715ca-873c-44b0-92ec-c407d69a386d",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Dad",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Dad:5e6d761b-65ca-4629-bf20-2e012546fcc1"
+      },
+      "ts": "2026-04-10T23:35:46.801258Z",
+      "payload": {
+        "op_id": "op-dad-day-5",
+        "intent_id": "intent-dad-73475b",
+        "target": "itinerary://day-5",
+        "op_kind": "replace",
+        "state_ref_before": "sha256:2e1cfa82b035c26c",
+        "state_ref_after": "sha256:44fb231c092ae1c5"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 5
+      }
+    }
+  },
+  {
+    "ts": 14.040766954421997,
+    "direction": "inbound",
+    "from": "agent:Mom",
+    "message_type": "OP_COMMIT",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "OP_COMMIT",
+      "message_id": "56847166-3f1f-4f7e-81c0-d7f7b9e0285c",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Mom",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Mom:67c89bc6-1c3d-4a5d-b22c-82d09a598ea0"
+      },
+      "ts": "2026-04-10T23:35:47.102530Z",
+      "payload": {
+        "op_id": "op-mom-day-2",
+        "intent_id": "intent-mom-aadfef",
+        "target": "itinerary://day-2",
+        "op_kind": "replace",
+        "state_ref_before": "sha256:47d639bf544153a2",
+        "state_ref_after": "sha256:13ea50b90e8d082b"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      }
+    }
+  },
+  {
+    "ts": 14.34244704246521,
+    "direction": "inbound",
+    "from": "agent:Mom",
+    "message_type": "OP_COMMIT",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "OP_COMMIT",
+      "message_id": "840715ef-2be7-4e32-b163-07469870406b",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Mom",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Mom:67c89bc6-1c3d-4a5d-b22c-82d09a598ea0"
+      },
+      "ts": "2026-04-10T23:35:47.404190Z",
+      "payload": {
+        "op_id": "op-mom-day-3",
+        "intent_id": "intent-mom-aadfef",
+        "target": "itinerary://day-3",
+        "op_kind": "replace",
+        "state_ref_before": "sha256:2e1cfa82b035c26c",
+        "state_ref_after": "sha256:6423f37bafe15138"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 4
+      }
+    }
+  },
+  {
+    "ts": 14.64423394203186,
+    "direction": "inbound",
+    "from": "agent:Kid",
+    "message_type": "OP_COMMIT",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "OP_COMMIT",
+      "message_id": "b9e25dd4-fc54-4a1a-b786-da41898f52a2",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Kid",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Kid:71ffff4e-7ee6-445b-9828-ff3be8694f84"
+      },
+      "ts": "2026-04-10T23:35:47.705849Z",
+      "payload": {
+        "op_id": "op-kid-day-3",
+        "intent_id": "intent-kid-e8ced5",
+        "target": "itinerary://day-3",
+        "op_kind": "replace",
+        "state_ref_before": "sha256:6423f37bafe15138",
+        "state_ref_after": "sha256:4cbb2fbc61e017ec"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      }
+    }
+  },
+  {
+    "ts": 14.946403980255127,
+    "direction": "inbound",
+    "from": "agent:Kid",
+    "message_type": "OP_COMMIT",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "OP_COMMIT",
+      "message_id": "889f6337-f506-4fb3-8c1c-e2a5fa6b1a30",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Kid",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Kid:71ffff4e-7ee6-445b-9828-ff3be8694f84"
+      },
+      "ts": "2026-04-10T23:35:48.007650Z",
+      "payload": {
+        "op_id": "op-kid-day-4",
+        "intent_id": "intent-kid-e8ced5",
+        "target": "itinerary://day-4",
+        "op_kind": "replace",
+        "state_ref_before": "sha256:2e1cfa82b035c26c",
+        "state_ref_after": "sha256:a1c7ad636d8b7ee0"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 4
+      }
+    }
+  },
+  {
+    "ts": 15.249016046524048,
+    "direction": "inbound",
+    "from": "agent:Dad",
+    "message_type": "GOODBYE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "GOODBYE",
+      "message_id": "d19ccca8-a25c-460c-a384-718c7d5d3f45",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Dad",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Dad:5e6d761b-65ca-4629-bf20-2e012546fcc1"
+      },
+      "ts": "2026-04-10T23:35:48.310531Z",
+      "payload": {
+        "reason": "completed",
+        "intent_disposition": "withdraw"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 6
+      }
+    }
+  },
+  {
+    "ts": 15.25003695487976,
+    "direction": "inbound",
+    "from": "agent:Mom",
+    "message_type": "GOODBYE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "GOODBYE",
+      "message_id": "1d5ced5f-5c99-43e4-b309-9ad34bf09e74",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Mom",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Mom:67c89bc6-1c3d-4a5d-b22c-82d09a598ea0"
+      },
+      "ts": "2026-04-10T23:35:48.312029Z",
+      "payload": {
+        "reason": "completed",
+        "intent_disposition": "withdraw"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 5
+      }
+    }
+  },
+  {
+    "ts": 15.250683784484863,
+    "direction": "inbound",
+    "from": "agent:Kid",
+    "message_type": "GOODBYE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "GOODBYE",
+      "message_id": "cdaf9370-eb26-4729-a3d9-cd5e507c20b4",
+      "session_id": "ultimate-s2",
+      "sender": {
+        "principal_id": "agent:Kid",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Kid:71ffff4e-7ee6-445b-9828-ff3be8694f84"
+      },
+      "ts": "2026-04-10T23:35:48.312775Z",
+      "payload": {
+        "reason": "completed",
+        "intent_disposition": "withdraw"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 5
+      }
+    }
+  }
+]

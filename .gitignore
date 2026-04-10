@@ -27,7 +27,6 @@ test_site_A/config.json
 test_site_A/output/
 test_site_B/.venv/
 test_site_B/config.json
-test_output/
 
 # Starter kit build dir (but keep the zip for distribution)
 mpac-starter-kit/

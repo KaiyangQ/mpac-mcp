@@ -93,8 +93,12 @@ async def setup_server(session_id, port, workspace_dir=None, **kwargs):
     return server, ws_server, heartbeat_task
 
 
-async def teardown(ws_server, heartbeat_task, agents):
-    """Cleanly shutdown agents and server."""
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "test_output", "ultimate")
+
+
+async def teardown(ws_server, heartbeat_task, agents,
+                   server=None, scenario_name=None):
+    """Cleanly shutdown agents and server. Save transcript if server provided."""
     for agent in agents:
         try:
             await agent._do_goodbye()
@@ -104,6 +108,15 @@ async def teardown(ws_server, heartbeat_task, agents):
             await agent.close()
         except Exception:
             pass
+
+    # Save transcript and workspace state before stopping server
+    if server and scenario_name:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        server.save_transcript(
+            os.path.join(OUTPUT_DIR, f"{scenario_name}_transcript.json"))
+        workspace_dir = os.path.join(OUTPUT_DIR, scenario_name)
+        server.file_store.save_to_directory(workspace_dir)
+
     heartbeat_task.cancel()
     ws_server.close()
     await ws_server.wait_closed()
@@ -164,7 +177,7 @@ async def scenario_1_code_collaboration():
         print(f"  Both committed (rebase worked)")
     print(f"  Result: {'PASS' if passed else 'FAIL'}")
 
-    await teardown(ws, hb, [alice, bob])
+    await teardown(ws, hb, [alice, bob], server, "s1_code_collab")
     return passed
 
 
@@ -282,7 +295,7 @@ async def scenario_2_family_trip():
     print(f"  Committed: {committed}")
     print(f"  Result: {'PASS' if passed else 'FAIL'}")
 
-    await teardown(ws, hb, agents)
+    await teardown(ws, hb, agents, server, "s2_family_trip")
     return passed
 
 
@@ -351,7 +364,7 @@ async def scenario_3_doc_editing():
     print(f"  State chain valid:        {chain_ok}")
     print(f"  Result: {'PASS' if passed else 'FAIL'}")
 
-    await teardown(ws, hb, agents)
+    await teardown(ws, hb, agents, server, "s3_doc_editing")
     return passed
 
 
@@ -543,7 +556,7 @@ async def scenario_4_precommit_recovery():
     print(f"  Claim committed:     {results['claim_committed']}")
     print(f"  Result: {'PASS' if passed else 'FAIL'}")
 
-    await teardown(ws, hb, [bob, charlie])  # alice already closed
+    await teardown(ws, hb, [bob, charlie], server, "s4_precommit")  # alice already closed
     return passed
 
 
@@ -613,7 +626,7 @@ async def scenario_5_escalation():
     if not conflict_id:
         print("  ERROR: No conflict detected despite overlapping scopes")
         print(f"  Result: FAIL")
-        await teardown(ws, hb, agents)
+        await teardown(ws, hb, agents, server, "s5_escalation")
         return False
 
     print(f"  [Phase A] Conflict detected: {conflict_id[:30]}...")
@@ -751,7 +764,7 @@ Pick one approach. Reply with ONLY a JSON:
     print(f"  Winner committed:    {results['winner_committed']}")
     print(f"  Result: {'PASS' if passed else 'FAIL'}")
 
-    await teardown(ws, hb, agents)
+    await teardown(ws, hb, agents, server, "s5_escalation")
     return passed
 
 
@@ -806,6 +819,20 @@ async def main():
     print()
     print(f"  Elapsed: {elapsed:.1f}s")
     print(f"  Overall: {'ALL PASSED' if all_passed else 'SOME FAILED'}")
+    print()
+
+    # Save summary
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    summary = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "elapsed_sec": round(elapsed, 1),
+        "all_passed": all_passed,
+        "results": {k: "PASS" if v else "FAIL" for k, v in results.items()},
+    }
+    summary_path = os.path.join(OUTPUT_DIR, "summary.json")
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"  Transcripts saved to: {OUTPUT_DIR}/")
     print()
 
     return 0 if all_passed else 1

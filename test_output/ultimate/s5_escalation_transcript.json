@@ -1,0 +1,630 @@
+[
+  {
+    "ts": 0.3180699348449707,
+    "direction": "inbound",
+    "from": "agent:Alice",
+    "message_type": "HELLO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "HELLO",
+      "message_id": "e5192f97-0722-4be9-a09e-824a3af4c292",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Alice:cf0716f8-9b60-46d0-bfd0-94767facff41"
+      },
+      "ts": "2026-04-10T23:36:51.846551Z",
+      "payload": {
+        "display_name": "Alice",
+        "roles": [
+          "owner"
+        ],
+        "capabilities": [
+          "intent.broadcast",
+          "op.propose",
+          "op.commit",
+          "intent.update",
+          "intent.withdraw",
+          "intent.claim",
+          "conflict.ack",
+          "conflict.escalate",
+          "governance.override"
+        ]
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 1
+      }
+    }
+  },
+  {
+    "ts": 0.318178653717041,
+    "direction": "outbound",
+    "message_type": "SESSION_INFO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "SESSION_INFO",
+      "message_id": "50987d52-8972-4f6d-a84b-b9643254af05",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "service:coordinator-ultimate-s5",
+        "principal_type": "service",
+        "sender_instance_id": "service:coordinator-ultimate-s5:epoch-1"
+      },
+      "ts": "2026-04-10T23:36:51.846891Z",
+      "payload": {
+        "session_id": "ultimate-s5",
+        "protocol_version": "0.1.13",
+        "security_profile": "open",
+        "compliance_profile": "governance",
+        "watermark_kind": "lamport_clock",
+        "execution_model": "post_commit",
+        "state_ref_format": "sha256",
+        "governance_policy": {
+          "require_acknowledgment": true,
+          "intent_expiry_grace_sec": 30.0
+        },
+        "liveness_policy": {
+          "heartbeat_interval_sec": 30.0,
+          "unavailability_timeout_sec": 90.0,
+          "intent_claim_grace_period_sec": 0.0,
+          "resolution_timeout_sec": 300.0
+        },
+        "participant_count": 1,
+        "granted_roles": [
+          "owner"
+        ],
+        "identity_verified": true,
+        "compatibility_errors": []
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      },
+      "coordinator_epoch": 1
+    }
+  },
+  {
+    "ts": 0.32031989097595215,
+    "direction": "inbound",
+    "from": "agent:Bob",
+    "message_type": "HELLO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "HELLO",
+      "message_id": "9fa1ec24-72b5-4e7e-b3a2-3bf07b4857a4",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "agent:Bob",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Bob:28294eac-b16f-4100-8702-aaca9c5c4b2c"
+      },
+      "ts": "2026-04-10T23:36:51.848880Z",
+      "payload": {
+        "display_name": "Bob",
+        "roles": [
+          "owner"
+        ],
+        "capabilities": [
+          "intent.broadcast",
+          "op.propose",
+          "op.commit",
+          "intent.update",
+          "intent.withdraw",
+          "intent.claim",
+          "conflict.ack",
+          "conflict.escalate",
+          "governance.override"
+        ]
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 1
+      }
+    }
+  },
+  {
+    "ts": 0.3204038143157959,
+    "direction": "outbound",
+    "message_type": "SESSION_INFO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "SESSION_INFO",
+      "message_id": "9f380801-6af0-4da9-b426-378596835e49",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "service:coordinator-ultimate-s5",
+        "principal_type": "service",
+        "sender_instance_id": "service:coordinator-ultimate-s5:epoch-1"
+      },
+      "ts": "2026-04-10T23:36:51.849124Z",
+      "payload": {
+        "session_id": "ultimate-s5",
+        "protocol_version": "0.1.13",
+        "security_profile": "open",
+        "compliance_profile": "governance",
+        "watermark_kind": "lamport_clock",
+        "execution_model": "post_commit",
+        "state_ref_format": "sha256",
+        "governance_policy": {
+          "require_acknowledgment": true,
+          "intent_expiry_grace_sec": 30.0
+        },
+        "liveness_policy": {
+          "heartbeat_interval_sec": 30.0,
+          "unavailability_timeout_sec": 90.0,
+          "intent_claim_grace_period_sec": 0.0,
+          "resolution_timeout_sec": 300.0
+        },
+        "participant_count": 2,
+        "granted_roles": [
+          "owner"
+        ],
+        "identity_verified": true,
+        "compatibility_errors": []
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 5
+      },
+      "coordinator_epoch": 1
+    }
+  },
+  {
+    "ts": 0.32264089584350586,
+    "direction": "inbound",
+    "from": "human:arbiter",
+    "message_type": "HELLO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "HELLO",
+      "message_id": "9f239ca1-ed1f-411c-b581-3720d4a88cfc",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "human:arbiter",
+        "principal_type": "agent",
+        "sender_instance_id": "human:arbiter:7012de7d-db9b-4990-a7dd-0193a2b5f778"
+      },
+      "ts": "2026-04-10T23:36:51.851151Z",
+      "payload": {
+        "display_name": "Arbiter",
+        "roles": [
+          "arbiter"
+        ],
+        "capabilities": [
+          "intent.broadcast",
+          "op.propose",
+          "op.commit",
+          "intent.update",
+          "intent.withdraw",
+          "intent.claim",
+          "conflict.ack",
+          "conflict.escalate",
+          "governance.override"
+        ]
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 1
+      }
+    }
+  },
+  {
+    "ts": 0.3227529525756836,
+    "direction": "outbound",
+    "message_type": "SESSION_INFO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "SESSION_INFO",
+      "message_id": "e454d6b1-4b77-45c0-b46f-a262e74a86f6",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "service:coordinator-ultimate-s5",
+        "principal_type": "service",
+        "sender_instance_id": "service:coordinator-ultimate-s5:epoch-1"
+      },
+      "ts": "2026-04-10T23:36:51.851465Z",
+      "payload": {
+        "session_id": "ultimate-s5",
+        "protocol_version": "0.1.13",
+        "security_profile": "open",
+        "compliance_profile": "governance",
+        "watermark_kind": "lamport_clock",
+        "execution_model": "post_commit",
+        "state_ref_format": "sha256",
+        "governance_policy": {
+          "require_acknowledgment": true,
+          "intent_expiry_grace_sec": 30.0
+        },
+        "liveness_policy": {
+          "heartbeat_interval_sec": 30.0,
+          "unavailability_timeout_sec": 90.0,
+          "intent_claim_grace_period_sec": 0.0,
+          "resolution_timeout_sec": 300.0
+        },
+        "participant_count": 3,
+        "granted_roles": [
+          "arbiter"
+        ],
+        "identity_verified": true,
+        "compatibility_errors": []
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 7
+      },
+      "coordinator_epoch": 1
+    }
+  },
+  {
+    "ts": 0.6260700225830078,
+    "direction": "inbound",
+    "from": "agent:Alice",
+    "message_type": "INTENT_ANNOUNCE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "INTENT_ANNOUNCE",
+      "message_id": "9cc3cfb0-478a-483c-aa55-4ac1a9c89d31",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Alice:cf0716f8-9b60-46d0-bfd0-94767facff41"
+      },
+      "ts": "2026-04-10T23:36:52.154095Z",
+      "payload": {
+        "intent_id": "intent-alice-c91303",
+        "objective": "Redesign auth.py as a modular authentication framework",
+        "scope": {
+          "kind": "file_set",
+          "resources": [
+            "auth.py",
+            "utils.py"
+          ]
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 2
+      }
+    }
+  },
+  {
+    "ts": 1.1285197734832764,
+    "direction": "inbound",
+    "from": "agent:Bob",
+    "message_type": "INTENT_ANNOUNCE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "INTENT_ANNOUNCE",
+      "message_id": "a816f145-bdb4-4627-bf1f-c075a65108d1",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "agent:Bob",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Bob:28294eac-b16f-4100-8702-aaca9c5c4b2c"
+      },
+      "ts": "2026-04-10T23:36:52.656694Z",
+      "payload": {
+        "intent_id": "intent-bob-18ffdd",
+        "objective": "Refactor auth.py into minimal stateless token validation",
+        "scope": {
+          "kind": "file_set",
+          "resources": [
+            "auth.py",
+            "api.py"
+          ]
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 2
+      }
+    }
+  },
+  {
+    "ts": 1.1292228698730469,
+    "direction": "outbound",
+    "message_type": "CONFLICT_REPORT",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "CONFLICT_REPORT",
+      "message_id": "a3cfe58c-fb44-49b0-9e54-b8ce8f2a345f",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "service:coordinator-ultimate-s5",
+        "principal_type": "service",
+        "sender_instance_id": "service:coordinator-ultimate-s5:epoch-1"
+      },
+      "ts": "2026-04-10T23:36:52.657432Z",
+      "payload": {
+        "conflict_id": "5d47fd87-48be-45a4-9a7a-81eac3835e60",
+        "category": "scope_overlap",
+        "severity": "medium",
+        "principal_a": "agent:Bob",
+        "principal_b": "agent:Alice",
+        "intent_a": "intent-bob-18ffdd",
+        "intent_b": "intent-alice-c91303"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 10
+      },
+      "coordinator_epoch": 1
+    }
+  },
+  {
+    "ts": 10.634596824645996,
+    "direction": "inbound",
+    "from": "agent:Alice",
+    "message_type": "CONFLICT_ACK",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "CONFLICT_ACK",
+      "message_id": "ea1440b4-76b8-4528-92fc-e81cb120dc66",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Alice:cf0716f8-9b60-46d0-bfd0-94767facff41"
+      },
+      "ts": "2026-04-10T23:37:02.162836Z",
+      "payload": {
+        "conflict_id": "5d47fd87-48be-45a4-9a7a-81eac3835e60",
+        "ack_type": "disputed"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      }
+    }
+  },
+  {
+    "ts": 10.93742060661316,
+    "direction": "inbound",
+    "from": "agent:Bob",
+    "message_type": "CONFLICT_ACK",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "CONFLICT_ACK",
+      "message_id": "e6de2890-2454-47f9-98ca-9e21e0cbf9d2",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "agent:Bob",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Bob:28294eac-b16f-4100-8702-aaca9c5c4b2c"
+      },
+      "ts": "2026-04-10T23:37:02.465390Z",
+      "payload": {
+        "conflict_id": "5d47fd87-48be-45a4-9a7a-81eac3835e60",
+        "ack_type": "disputed"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      }
+    }
+  },
+  {
+    "ts": 11.739313840866089,
+    "direction": "inbound",
+    "from": "agent:Alice",
+    "message_type": "CONFLICT_ESCALATE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "CONFLICT_ESCALATE",
+      "message_id": "9c78a3f9-4bc9-4ad9-8676-3ed2eda8b42d",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Alice:cf0716f8-9b60-46d0-bfd0-94767facff41"
+      },
+      "ts": "2026-04-10T23:37:03.267446Z",
+      "payload": {
+        "conflict_id": "5d47fd87-48be-45a4-9a7a-81eac3835e60",
+        "escalate_to": "human:arbiter",
+        "reason": "Both owners dispute; need arbiter decision",
+        "context": "Alice wants modular framework; Bob wants minimal stateless design"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 4
+      }
+    }
+  },
+  {
+    "ts": 14.999828815460205,
+    "direction": "inbound",
+    "from": "human:arbiter",
+    "message_type": "RESOLUTION",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "RESOLUTION",
+      "message_id": "2d922a80-f636-4bfd-99e5-a90436cf1d70",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "human:arbiter",
+        "principal_type": "agent",
+        "sender_instance_id": "human:arbiter:7012de7d-db9b-4990-a7dd-0193a2b5f778"
+      },
+      "ts": "2026-04-10T23:37:06.527868Z",
+      "payload": {
+        "conflict_id": "5d47fd87-48be-45a4-9a7a-81eac3835e60",
+        "decision": "human_override",
+        "rationale": "Minimal stateless token validation reduces complexity and attack surface while meeting core authentication needs without over-engineering.",
+        "outcome": {
+          "accepted": [
+            "intent-bob-18ffdd"
+          ],
+          "rejected": [
+            "intent-alice-c91303"
+          ]
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 2
+      }
+    }
+  },
+  {
+    "ts": 16.004786729812622,
+    "direction": "inbound",
+    "from": "agent:Alice",
+    "message_type": "INTENT_WITHDRAW",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "INTENT_WITHDRAW",
+      "message_id": "2a7d3ab5-9761-44a9-9544-816e1ec6de88",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Alice:cf0716f8-9b60-46d0-bfd0-94767facff41"
+      },
+      "ts": "2026-04-10T23:37:07.532869Z",
+      "payload": {
+        "intent_id": "intent-alice-c91303",
+        "reason": "Arbiter ruled in favor of Bob"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 5
+      }
+    }
+  },
+  {
+    "ts": 19.812026739120483,
+    "direction": "inbound",
+    "from": "agent:Bob",
+    "message_type": "OP_COMMIT",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "OP_COMMIT",
+      "message_id": "5e4339f7-9e1a-4d03-afeb-2c03b70ebd0f",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "agent:Bob",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Bob:28294eac-b16f-4100-8702-aaca9c5c4b2c"
+      },
+      "ts": "2026-04-10T23:37:11.339993Z",
+      "payload": {
+        "op_id": "op-bob-auth-12a2fb",
+        "intent_id": "intent-bob-18ffdd",
+        "target": "auth.py",
+        "op_kind": "replace",
+        "state_ref_before": "sha256:76ad893bc83047a7",
+        "state_ref_after": "sha256:26393956448e003f",
+        "file_changes": {
+          "auth.py": {
+            "content": "\"\"\"Authentication module — minimal stateless token validation\"\"\"\nimport hashlib\nimport time\nimport json\nimport base64\n\n\ndef validate_token(token: str) -> dict:\n    \"\"\"Validate a bearer token and return user info.\"\"\"\n    parts = token.split(\".\")\n    if len(parts) != 3:\n        raise ValueError(\"Invalid token format\")\n\n    header, payload, signature = parts\n\n    expected_sig = hashlib.sha256(f\"{header}.{payload}\".encode()).hexdigest()[:16]\n    if signature != expected_sig:\n        raise ValueError(\"Invalid signature\")\n\n    data = json.loads(base64.b64decode(payload + \"==\"))\n    \n    if data.get('exp', 0) < time.time():\n        raise ValueError(\"Token expired\")\n    \n    return data",
+            "state_ref_before": "sha256:76ad893bc83047a7"
+          }
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 4
+      }
+    }
+  },
+  {
+    "ts": 20.81502366065979,
+    "direction": "inbound",
+    "from": "agent:Alice",
+    "message_type": "GOODBYE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "GOODBYE",
+      "message_id": "1ecfb206-580a-49db-8eec-dbd61d17196e",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Alice:cf0716f8-9b60-46d0-bfd0-94767facff41"
+      },
+      "ts": "2026-04-10T23:37:12.342578Z",
+      "payload": {
+        "reason": "completed",
+        "intent_disposition": "withdraw"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 6
+      }
+    }
+  },
+  {
+    "ts": 20.816800832748413,
+    "direction": "inbound",
+    "from": "agent:Bob",
+    "message_type": "GOODBYE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "GOODBYE",
+      "message_id": "06496937-b8bb-4997-ae3c-be92b5825cc3",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "agent:Bob",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Bob:28294eac-b16f-4100-8702-aaca9c5c4b2c"
+      },
+      "ts": "2026-04-10T23:37:12.344672Z",
+      "payload": {
+        "reason": "completed",
+        "intent_disposition": "withdraw"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 5
+      }
+    }
+  },
+  {
+    "ts": 20.817595720291138,
+    "direction": "inbound",
+    "from": "human:arbiter",
+    "message_type": "GOODBYE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "GOODBYE",
+      "message_id": "3adffb2e-d48c-4a7b-9d2e-63df07baf28a",
+      "session_id": "ultimate-s5",
+      "sender": {
+        "principal_id": "human:arbiter",
+        "principal_type": "agent",
+        "sender_instance_id": "human:arbiter:7012de7d-db9b-4990-a7dd-0193a2b5f778"
+      },
+      "ts": "2026-04-10T23:37:12.345927Z",
+      "payload": {
+        "reason": "completed",
+        "intent_disposition": "withdraw"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      }
+    }
+  }
+]

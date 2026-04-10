@@ -1,0 +1,421 @@
+[
+  {
+    "ts": 0.339205265045166,
+    "direction": "inbound",
+    "from": "agent:Alice",
+    "message_type": "HELLO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "HELLO",
+      "message_id": "586966a9-6269-4ed9-956e-e21334db9556",
+      "session_id": "ultimate-s1",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Alice:d225dd5f-fc3a-4d14-a641-188f2d8b9f58"
+      },
+      "ts": "2026-04-10T23:35:12.595427Z",
+      "payload": {
+        "display_name": "Alice",
+        "roles": [
+          "contributor"
+        ],
+        "capabilities": [
+          "intent.broadcast",
+          "op.propose",
+          "op.commit",
+          "intent.update",
+          "intent.withdraw",
+          "intent.claim",
+          "conflict.ack",
+          "conflict.escalate",
+          "governance.override"
+        ]
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 1
+      }
+    }
+  },
+  {
+    "ts": 0.33933329582214355,
+    "direction": "outbound",
+    "message_type": "SESSION_INFO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "SESSION_INFO",
+      "message_id": "8c520461-b5af-4f3a-a91b-3f3787018325",
+      "session_id": "ultimate-s1",
+      "sender": {
+        "principal_id": "service:coordinator-ultimate-s1",
+        "principal_type": "service",
+        "sender_instance_id": "service:coordinator-ultimate-s1:epoch-1"
+      },
+      "ts": "2026-04-10T23:35:12.595747Z",
+      "payload": {
+        "session_id": "ultimate-s1",
+        "protocol_version": "0.1.13",
+        "security_profile": "open",
+        "compliance_profile": "core",
+        "watermark_kind": "lamport_clock",
+        "execution_model": "post_commit",
+        "state_ref_format": "sha256",
+        "governance_policy": {
+          "require_acknowledgment": true,
+          "intent_expiry_grace_sec": 30.0
+        },
+        "liveness_policy": {
+          "heartbeat_interval_sec": 30.0,
+          "unavailability_timeout_sec": 90.0,
+          "intent_claim_grace_period_sec": 0.0,
+          "resolution_timeout_sec": 300.0
+        },
+        "participant_count": 1,
+        "granted_roles": [
+          "contributor"
+        ],
+        "identity_verified": true,
+        "compatibility_errors": []
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      },
+      "coordinator_epoch": 1
+    }
+  },
+  {
+    "ts": 0.3396942615509033,
+    "direction": "inbound",
+    "from": "agent:Bob",
+    "message_type": "HELLO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "HELLO",
+      "message_id": "bf5552d3-8c8a-425c-8477-f51171972f9e",
+      "session_id": "ultimate-s1",
+      "sender": {
+        "principal_id": "agent:Bob",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Bob:d89ff944-95e1-4ba3-b9ce-f6af7781ca8d"
+      },
+      "ts": "2026-04-10T23:35:12.596007Z",
+      "payload": {
+        "display_name": "Bob",
+        "roles": [
+          "contributor"
+        ],
+        "capabilities": [
+          "intent.broadcast",
+          "op.propose",
+          "op.commit",
+          "intent.update",
+          "intent.withdraw",
+          "intent.claim",
+          "conflict.ack",
+          "conflict.escalate",
+          "governance.override"
+        ]
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 1
+      }
+    }
+  },
+  {
+    "ts": 0.3397512435913086,
+    "direction": "outbound",
+    "message_type": "SESSION_INFO",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "SESSION_INFO",
+      "message_id": "8be59fdb-460e-4bf9-8c80-59dac6866a19",
+      "session_id": "ultimate-s1",
+      "sender": {
+        "principal_id": "service:coordinator-ultimate-s1",
+        "principal_type": "service",
+        "sender_instance_id": "service:coordinator-ultimate-s1:epoch-1"
+      },
+      "ts": "2026-04-10T23:35:12.596176Z",
+      "payload": {
+        "session_id": "ultimate-s1",
+        "protocol_version": "0.1.13",
+        "security_profile": "open",
+        "compliance_profile": "core",
+        "watermark_kind": "lamport_clock",
+        "execution_model": "post_commit",
+        "state_ref_format": "sha256",
+        "governance_policy": {
+          "require_acknowledgment": true,
+          "intent_expiry_grace_sec": 30.0
+        },
+        "liveness_policy": {
+          "heartbeat_interval_sec": 30.0,
+          "unavailability_timeout_sec": 90.0,
+          "intent_claim_grace_period_sec": 0.0,
+          "resolution_timeout_sec": 300.0
+        },
+        "participant_count": 2,
+        "granted_roles": [
+          "contributor"
+        ],
+        "identity_verified": true,
+        "compatibility_errors": []
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 5
+      },
+      "coordinator_epoch": 1
+    }
+  },
+  {
+    "ts": 2.411679983139038,
+    "direction": "inbound",
+    "from": "agent:Bob",
+    "message_type": "INTENT_ANNOUNCE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "INTENT_ANNOUNCE",
+      "message_id": "c6bed2b6-cb63-449c-8688-5f2b770f25ba",
+      "session_id": "ultimate-s1",
+      "sender": {
+        "principal_id": "agent:Bob",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Bob:d89ff944-95e1-4ba3-b9ce-f6af7781ca8d"
+      },
+      "ts": "2026-04-10T23:35:14.667770Z",
+      "payload": {
+        "intent_id": "intent-bob-auth-validation",
+        "objective": "Add comprehensive input validation and error logging to the authentication module",
+        "scope": {
+          "kind": "file_set",
+          "resources": [
+            "auth.py"
+          ]
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 2
+      }
+    }
+  },
+  {
+    "ts": 2.856823205947876,
+    "direction": "inbound",
+    "from": "agent:Alice",
+    "message_type": "INTENT_ANNOUNCE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "INTENT_ANNOUNCE",
+      "message_id": "1690b39e-d742-42b2-b831-4bf30810d475",
+      "session_id": "ultimate-s1",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Alice:d225dd5f-fc3a-4d14-a641-188f2d8b9f58"
+      },
+      "ts": "2026-04-10T23:35:15.113000Z",
+      "payload": {
+        "intent_id": "intent-alice-auth-security-fixes",
+        "objective": "Fix authentication security vulnerabilities by adding token expiry validation and eliminating timing side-channel attacks in auth.py",
+        "scope": {
+          "kind": "file_set",
+          "resources": [
+            "auth.py"
+          ]
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 2
+      }
+    }
+  },
+  {
+    "ts": 2.8572211265563965,
+    "direction": "outbound",
+    "message_type": "CONFLICT_REPORT",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "CONFLICT_REPORT",
+      "message_id": "c8591994-5a64-4f45-b6c9-26136adafaa8",
+      "session_id": "ultimate-s1",
+      "sender": {
+        "principal_id": "service:coordinator-ultimate-s1",
+        "principal_type": "service",
+        "sender_instance_id": "service:coordinator-ultimate-s1:epoch-1"
+      },
+      "ts": "2026-04-10T23:35:15.113406Z",
+      "payload": {
+        "conflict_id": "80c7e4b9-faeb-4602-8ad4-c7c9843f0f26",
+        "category": "scope_overlap",
+        "severity": "medium",
+        "principal_a": "agent:Alice",
+        "principal_b": "agent:Bob",
+        "intent_a": "intent-alice-auth-security-fixes",
+        "intent_b": "intent-bob-auth-validation"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 8
+      },
+      "coordinator_epoch": 1
+    }
+  },
+  {
+    "ts": 11.562177181243896,
+    "direction": "inbound",
+    "from": "agent:Bob",
+    "message_type": "INTENT_WITHDRAW",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "INTENT_WITHDRAW",
+      "message_id": "168f6d59-f830-437b-a8e0-011d28a4a308",
+      "session_id": "ultimate-s1",
+      "sender": {
+        "principal_id": "agent:Bob",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Bob:d89ff944-95e1-4ba3-b9ce-f6af7781ca8d"
+      },
+      "ts": "2026-04-10T23:35:23.818083Z",
+      "payload": {
+        "intent_id": "intent-bob-auth-validation",
+        "reason": "yielded"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      }
+    }
+  },
+  {
+    "ts": 19.792150020599365,
+    "direction": "inbound",
+    "from": "agent:Alice",
+    "message_type": "OP_COMMIT",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "OP_COMMIT",
+      "message_id": "69be5489-99bf-4a45-8bc9-4859b6969de6",
+      "session_id": "ultimate-s1",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Alice:d225dd5f-fc3a-4d14-a641-188f2d8b9f58"
+      },
+      "ts": "2026-04-10T23:35:32.047942Z",
+      "payload": {
+        "op_id": "op-alice-auth-py-3bbc99",
+        "intent_id": "intent-alice-auth-security-fixes",
+        "target": "auth.py",
+        "op_kind": "replace",
+        "state_ref_before": "sha256:76ad893bc83047a7",
+        "state_ref_after": "sha256:a1adc56706674d06",
+        "file_changes": {
+          "auth.py": {
+            "content": "\"\"\"Authentication module — has several known bugs for testing.\"\"\"\nimport hashlib\nimport time\nimport hmac\n\n\n# FIXED: Added token expiry validation\ndef validate_token(token: str) -> dict:\n    \"\"\"Validate a bearer token and return user info.\"\"\"\n    parts = token.split(\".\")\n    if len(parts) != 3:\n        raise ValueError(\"Invalid token format\")\n\n    header, payload, signature = parts\n\n    expected_sig = hashlib.sha256(f\"{header}.{payload}\".encode()).hexdigest()[:16]\n    if signature != expected_sig:\n        raise ValueError(\"Invalid signature\")\n\n    # FIXED: Now checking if token is expired\n    import json, base64\n    data = json.loads(base64.b64decode(payload + \"==\"))\n    \n    if 'exp' in data and data['exp'] < time.time():\n        raise ValueError(\"Token expired\")\n    \n    return data\n\n\n# FIXED: Timing side-channel — constant-time comparison\ndef authenticate(username: str, password: str, user_db: dict) -> bool:\n    \"\"\"Authenticate user against database.\"\"\"\n    # Always compute hash to prevent timing attacks\n    input_hash = hashlib.sha256(password.encode()).hexdigest()\n    \n    if username not in user_db:\n        # Perform dummy comparison with constant timing\n        dummy_hash = \"0\" * 64\n        hmac.compare_digest(input_hash, dummy_hash)\n        return False\n\n    stored_hash = user_db[username][\"password_hash\"]\n    \n    # FIXED: Use constant-time comparison\n    return hmac.compare_digest(stored_hash, input_hash)\n\n\ndef create_token(user_id: str, username: str, ttl_seconds: int = 3600) -> str:\n    \"\"\"Create a new bearer token.\"\"\"\n    import json, base64\n    header = base64.b64encode(json.dumps({\"alg\": \"sha256\"}).encode()).decode().rstrip(\"=\")\n    payload = base64.b64encode(json.dumps({\n        \"user_id\": user_id, \"username\": username,\n        \"exp\": int(time.time()) + ttl_seconds,\n    }).encode()).decode().rstrip(\"=\")\n    signature = hashlib.sha256(f\"{header}.{payload}\".encode()).hexdigest()[:16]\n    return f\"{header}.{payload}.{signature}\"",
+            "state_ref_before": "sha256:76ad893bc83047a7"
+          }
+        }
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 3
+      }
+    }
+  },
+  {
+    "ts": 20.794584035873413,
+    "direction": "inbound",
+    "from": "agent:Alice",
+    "message_type": "INTENT_WITHDRAW",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "INTENT_WITHDRAW",
+      "message_id": "734f1e85-a2d5-40ed-8e1b-f350518d2f73",
+      "session_id": "ultimate-s1",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Alice:d225dd5f-fc3a-4d14-a641-188f2d8b9f58"
+      },
+      "ts": "2026-04-10T23:35:33.049943Z",
+      "payload": {
+        "intent_id": "intent-alice-auth-security-fixes",
+        "reason": "task_completed"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 4
+      }
+    }
+  },
+  {
+    "ts": 20.79540991783142,
+    "direction": "inbound",
+    "from": "agent:Alice",
+    "message_type": "GOODBYE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "GOODBYE",
+      "message_id": "eaa31361-b626-426c-afb1-dbb9d5c0a927",
+      "session_id": "ultimate-s1",
+      "sender": {
+        "principal_id": "agent:Alice",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Alice:d225dd5f-fc3a-4d14-a641-188f2d8b9f58"
+      },
+      "ts": "2026-04-10T23:35:33.050610Z",
+      "payload": {
+        "reason": "completed",
+        "intent_disposition": "withdraw"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 5
+      }
+    }
+  },
+  {
+    "ts": 20.79654622077942,
+    "direction": "inbound",
+    "from": "agent:Bob",
+    "message_type": "GOODBYE",
+    "envelope": {
+      "protocol": "MPAC",
+      "version": "0.1.13",
+      "message_type": "GOODBYE",
+      "message_id": "b19381a4-8512-4112-b857-3c5952f8d0dc",
+      "session_id": "ultimate-s1",
+      "sender": {
+        "principal_id": "agent:Bob",
+        "principal_type": "agent",
+        "sender_instance_id": "agent:Bob:d89ff944-95e1-4ba3-b9ce-f6af7781ca8d"
+      },
+      "ts": "2026-04-10T23:35:33.052425Z",
+      "payload": {
+        "reason": "completed",
+        "intent_disposition": "withdraw"
+      },
+      "watermark": {
+        "kind": "lamport_clock",
+        "value": 4
+      }
+    }
+  }
+]
