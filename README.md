@@ -51,6 +51,8 @@ ref-impl/
     README.md                    ← Demo guide: purpose, protocol coverage, and architecture
 mpac-package/                    ← Pip-installable package (pip install ./mpac-package)
 mpac-starter-kit.zip             ← Self-contained kit to send to collaborators
+test_e2e_scenarios.py            ← 6-scenario E2E test (long-lived connections, mutual yield)
+test_ultimate.py                 ← 5-scenario ultimate test (pre-commit, claim, escalation, task_set)
 test_site_A/                     ← Host site: coordinator + workspace + Agent Alice
 test_site_B/                     ← Join site: Agent Bob connects to remote coordinator
     run_interop.sh               ← Cross-language interoperability test
@@ -230,6 +232,47 @@ Or send `mpac-starter-kit.zip` to the collaborator — it contains the `.whl`, `
 Both users get an interactive CLI where they can view workspace files, give tasks to their agent, and see color-coded diffs of changes. Real-time notifications show when the other agent commits changes. The coordinator holds all files in memory; agents read/write through WebSocket — no shared filesystem needed.
 
 For cross-network collaboration (different WiFi), use [ngrok](https://ngrok.com): `ngrok http 8766` creates a public URL.
+
+### MPACAgent API
+
+The pip package exposes the full MPAC protocol through `MPACAgent`:
+
+| Method | Protocol Feature |
+|--------|-----------------|
+| `execute_task(task)` | Full autonomous workflow: intent → conflict check → fix → commit |
+| `do_propose(intent_id, op_id, target)` | Pre-commit authorization (OP_PROPOSE → COORDINATOR_STATUS) |
+| `propose_and_commit(...)` | Complete pre-commit flow (propose → auth → commit) |
+| `do_claim_intent(...)` | Fault recovery: take over a crashed agent's suspended intent |
+| `do_escalate_conflict(...)` | Escalate a dispute to a designated arbiter |
+| `do_resolve_conflict(...)` | Arbiter renders a binding resolution |
+| `do_ack_conflict(...)` | Acknowledge or dispute a conflict |
+
+Agents support custom `roles` (owner, arbiter, contributor) and content-agnostic operation (code, documents, config files, or any text).
+
+### Automated Tests (pip package)
+
+Two test suites validate the pip package end-to-end with live Claude API calls:
+
+**6-scenario E2E test** — two agents with long-lived connections:
+```bash
+source test_site_A/.venv/bin/activate
+python test_e2e_scenarios.py
+```
+Covers: no-conflict, conflict detection, dependency chains, conflict + rebase, asymmetric yield, and mutual yield auto-retry.
+
+**5-scenario ultimate test** — multi-agent, multi-scope-type, multi-execution-model:
+```bash
+source test_site_A/.venv/bin/activate
+python test_ultimate.py
+```
+
+| Scenario | Scope | Execution Model | Key Features |
+|----------|-------|-----------------|-------------|
+| Code collaboration | file_set | post_commit | Conflict + rebase |
+| Family trip planning | task_set | post_commit | 3-agent conflict + resolution |
+| Document co-editing | file_set | post_commit | Agent generalization (.md files) |
+| Pre-commit governance | file_set | pre_commit | OP_PROPOSE + INTENT_CLAIM fault recovery |
+| Conflict escalation | file_set | governance | CONFLICT_ESCALATE + arbiter RESOLUTION |
 
 ---
 
