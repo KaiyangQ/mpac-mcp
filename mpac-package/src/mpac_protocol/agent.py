@@ -115,6 +115,7 @@ class MPACAgent:
         self._listener_task = None
         self._event_printer_task = None
         self.conflicts_received: list[dict] = []
+        self._recent_withdraws: list[dict] = []
         self.log = logging.getLogger(f"mpac.agent.{name}")
 
     # ── WebSocket communication ────────────────────────────────
@@ -173,6 +174,14 @@ class MPACAgent:
             principal = payload.get("principal", {})
             name = principal.get("display_name", sender)
             print(f"\n  >> {name} joined the session")
+        elif mt == "INTENT_WITHDRAW":
+            reason = payload.get("reason", "?")
+            intent_id = payload.get("intent_id", "?")
+            print(f"\n  >> {sender} withdrew intent ({reason})")
+            # Track for mutual-yield detection
+            self._recent_withdraws.append({
+                "sender": sender, "intent_id": intent_id, "reason": reason,
+            })
         elif mt == "GOODBYE":
             print(f"\n  >> {sender} left the session")
 
@@ -498,10 +507,11 @@ Return the complete updated file."""
         print(f"\n  {self.name} leaving session...")
         await self._do_goodbye()
 
-    async def _run_task_interactive(self, task: str, files: list[dict]):
+    async def _run_task_interactive(self, task: str, files: list[dict],
+                                    _is_retry: bool = False):
         """Run a task with full visual feedback."""
 
-        _header(f"Task: {task}")
+        _header(f"Task: {task}{' (retry — will proceed on conflict)' if _is_retry else ''}")
 
         # Clear any stale conflicts from previous tasks
         self.conflicts_received = []
@@ -536,6 +546,8 @@ Return the complete updated file."""
         print("         Waiting for other agents (5 seconds)...")
         await self._drain_conflicts(5.0)
 
+        self._recent_withdraws = []
+
         if self.conflicts_received:
             print(f"\n  CONFLICT with another agent!")
             for c in self.conflicts_received:
@@ -543,16 +555,31 @@ Return the complete updated file."""
                 print(f"    Category: {cp.get('category', '?')}")
                 print(f"    Between: {cp.get('intent_a', '?')} vs {cp.get('intent_b', '?')}")
 
-                decision = await asyncio.get_event_loop().run_in_executor(
-                    None, self._decide_conflict, cp, intent
-                )
-                print(f"    Decision: {decision}")
+                if _is_retry:
+                    decision = "proceed"
+                    print(f"    Decision: proceed (retry after mutual yield)")
+                else:
+                    decision = await asyncio.get_event_loop().run_in_executor(
+                        None, self._decide_conflict, cp, intent
+                    )
+                    print(f"    Decision: {decision}")
                 if decision == "yield":
                     print("  Yielding to other agent. Task cancelled.")
                     msg = self.participant.withdraw_intent(
                         self.session_id, intent["intent_id"], "yielded"
                     )
                     await self._send(msg)
+
+                    # Detect mutual yield
+                    if not _is_retry:
+                        print("  Checking if other agent also yielded...")
+                        await asyncio.sleep(3.0)
+                        if self._recent_withdraws:
+                            print("  Both agents yielded! Retrying with proceed...")
+                            self.conflicts_received = []
+                            return await self._run_task_interactive(
+                                task, files, _is_retry=True)
+
                     return
             print("  Proceeding — coordinator will resolve.")
         else:
@@ -626,7 +653,7 @@ Return the complete updated file."""
 
     # ── Original autonomous workflow (still available) ─────────
 
-    async def execute_task(self, task: str) -> dict:
+    async def execute_task(self, task: str, _is_retry: bool = False) -> dict:
         """Execute a single task within an established session (no HELLO/GOODBYE).
 
         Returns a result dict with keys: committed (list of files), yielded (bool),
@@ -636,6 +663,7 @@ Return the complete updated file."""
         result = {"committed": [], "yielded": False, "conflict_detected": False}
 
         self.log.info(f"--- {self.name} task: {task} ---")
+        self._recent_withdraws = []
 
         files = await self.list_files()
 
@@ -652,15 +680,30 @@ Return the complete updated file."""
             result["conflict_detected"] = True
             self.log.info(f"  {len(self.conflicts_received)} conflict(s) detected!")
             for c in self.conflicts_received:
-                decision = await asyncio.get_event_loop().run_in_executor(
-                    None, self._decide_conflict, c.get("payload", {}), intent
-                )
-                self.log.info(f"  Decision: {decision}")
+                # On retry after mutual yield, bias toward proceed
+                if _is_retry:
+                    decision = "proceed"
+                    self.log.info("  Decision: proceed (retry after mutual yield)")
+                else:
+                    decision = await asyncio.get_event_loop().run_in_executor(
+                        None, self._decide_conflict, c.get("payload", {}), intent
+                    )
+                    self.log.info(f"  Decision: {decision}")
                 if decision == "yield":
                     msg = self.participant.withdraw_intent(
                         self.session_id, intent["intent_id"], "yielded"
                     )
                     await self._send(msg)
+
+                    # Detect mutual yield: wait briefly for the other agent's withdraw
+                    if not _is_retry:
+                        self.log.info("  Waiting to check for mutual yield...")
+                        await asyncio.sleep(3.0)
+                        if self._recent_withdraws:
+                            self.log.info("  Mutual yield detected — retrying with proceed bias")
+                            self.conflicts_received = []
+                            return await self.execute_task(task, _is_retry=True)
+
                     result["yielded"] = True
                     self.conflicts_received = []
                     return result
