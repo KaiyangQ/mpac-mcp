@@ -1,5 +1,9 @@
 # MPAC — Multi-Principal Agent Coordination Protocol
 
+[![arXiv](https://img.shields.io/badge/arXiv-2604.09744-b31b1b.svg)](https://arxiv.org/abs/2604.09744)
+
+📄 **Paper:** [MPAC: A Multi-Principal Agent Coordination Protocol for Interoperable Multi-Agent Collaboration](https://arxiv.org/abs/2604.09744) (arXiv:2604.09744)
+
 > **External users:** this is the active development branch. For the curated public release — protocol spec, reference implementations, pip package, and a worked two-machine collaboration example — see the [`opensource` branch](https://github.com/KaiyangQ/Agent_talking/tree/opensource) or check out tag [`v0.1.13`](https://github.com/KaiyangQ/Agent_talking/releases/tag/v0.1.13).
 
 **When multiple AI agents — serving different people — need to work together, who coordinates them?**
