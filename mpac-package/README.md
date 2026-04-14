@@ -25,7 +25,7 @@ from the specification.
 ## Install
 
 ```bash
-pip install mpac-protocol
+pip install mpac
 ```
 
 Python 3.9+ required. The package depends on `websockets` and
