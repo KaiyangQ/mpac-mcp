@@ -11,7 +11,7 @@ import sys
 import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-    "test_site_A", ".venv", "lib", "python3.9", "site-packages"))
+    "examples/two_machine_demo/host", ".venv", "lib", "python3.9", "site-packages"))
 
 from mpac_protocol import MPACServer, MPACAgent
 
@@ -22,12 +22,12 @@ logging.basicConfig(
 )
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-with open(os.path.join(SCRIPT_DIR, "test_site_A", "config.json")) as f:
+with open(os.path.join(SCRIPT_DIR, "examples/two_machine_demo/host", "config.json")) as f:
     cfg = json.load(f)["anthropic"]
 
 SESSION_ID = "interactive-test-001"
 PORT = 8767
-WORKSPACE = os.path.join(SCRIPT_DIR, "test_site_A", "workspace")
+WORKSPACE = os.path.join(SCRIPT_DIR, "examples/two_machine_demo/host", "workspace")
 
 
 async def simulate_agent(agent, commands):

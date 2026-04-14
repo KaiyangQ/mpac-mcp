@@ -57,8 +57,10 @@ mpac-package/                    ← Pip-installable package (pip install ./mpac
 mpac-starter-kit.zip             ← Self-contained kit to send to collaborators
 test_e2e_scenarios.py            ← 6-scenario E2E test (long-lived connections, mutual yield)
 test_ultimate.py                 ← 5-scenario ultimate test (pre-commit, claim, escalation, task_set)
-test_site_A/                     ← Host site: coordinator + workspace + Agent Alice
-test_site_B/                     ← Join site: Agent Bob connects to remote coordinator
+examples/
+  two_machine_demo/
+    host/                        ← Host site: coordinator + workspace + Agent Alice
+    guest/                       ← Join site: Agent Bob connects to remote coordinator
     run_interop.sh               ← Cross-language interoperability test
     run_ai_agents.py             ← AI agent demo (2 Claude agents coordinating via MPAC)
     ai_demo_transcript.json      ← Full protocol transcript from the AI demo
@@ -219,8 +221,8 @@ MPAC is available as a pip-installable Python package. Two people on different c
 
 **Host (starts coordinator + workspace):**
 ```bash
-cd test_site_A
-pip install ../mpac-package
+cd examples/two_machine_demo/host
+pip install ../../../mpac-package
 python run.py
 # Shows: ws://your-ip:8766 — share this with collaborator
 ```
@@ -259,14 +261,14 @@ Two test suites validate the pip package end-to-end with live Claude API calls:
 
 **6-scenario E2E test** — two agents with long-lived connections:
 ```bash
-source test_site_A/.venv/bin/activate
+source examples/two_machine_demo/host/.venv/bin/activate
 python test_e2e_scenarios.py
 ```
 Covers: no-conflict, conflict detection, dependency chains, conflict + rebase, asymmetric yield, and mutual yield auto-retry.
 
 **5-scenario ultimate test** — multi-agent, multi-scope-type, multi-execution-model:
 ```bash
-source test_site_A/.venv/bin/activate
+source examples/two_machine_demo/host/.venv/bin/activate
 python test_ultimate.py
 ```
 

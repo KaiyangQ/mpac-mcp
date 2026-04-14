@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Site A: Start MPAC coordinator with workspace + interactive Agent Alice.
+Host site: Start MPAC coordinator with workspace + interactive Agent Alice.
 
 Usage:
-    cd test_site_A
-    pip install ../mpac-package
+    cd examples/two_machine_demo/host
+    pip install ../../../mpac-package
     python run.py
 """
 import asyncio

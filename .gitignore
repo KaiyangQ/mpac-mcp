@@ -23,12 +23,12 @@ mpac-package/build/
 mpac-package/dist/
 mpac-package/src/*.egg-info/
 
-# Test site venvs, configs with API keys, and output
-test_site_A/.venv/
-test_site_A/config.json
-test_site_A/output/
-test_site_B/.venv/
-test_site_B/config.json
+# Two-machine demo: local venvs, configs with API keys, and output
+examples/two_machine_demo/host/.venv/
+examples/two_machine_demo/host/config.json
+examples/two_machine_demo/host/output/
+examples/two_machine_demo/guest/.venv/
+examples/two_machine_demo/guest/config.json
 
 # Starter kit build dir (but keep the zip for distribution)
 mpac-starter-kit/
@@ -42,4 +42,4 @@ mpac-mcp/.pytest_cache/
 
 # Local scratch test outputs
 test_output/
-test_site_A/workspace/meeting-notes.md
+examples/two_machine_demo/host/workspace/meeting-notes.md

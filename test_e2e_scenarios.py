@@ -13,10 +13,10 @@ Scenarios:
   4. Conflict + rebase: both → auth.py, both proceed (concurrent)
 
 Usage:
-    source test_site_A/.venv/bin/activate
+    source examples/two_machine_demo/host/.venv/bin/activate
     python test_e2e_scenarios.py
 
-Requires: Anthropic API key in test_site_A/config.json
+Requires: Anthropic API key in examples/two_machine_demo/host/config.json
 """
 import asyncio
 import json
@@ -25,7 +25,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-    "test_site_A", ".venv", "lib", "python3.9", "site-packages"))
+    "examples/two_machine_demo/host", ".venv", "lib", "python3.9", "site-packages"))
 
 from mpac_protocol import MPACServer, MPACAgent
 
@@ -37,12 +37,12 @@ logging.basicConfig(
 log = logging.getLogger("scenarios")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-with open(os.path.join(SCRIPT_DIR, "test_site_A", "config.json")) as f:
+with open(os.path.join(SCRIPT_DIR, "examples/two_machine_demo/host", "config.json")) as f:
     cfg = json.load(f)["anthropic"]
 
 SESSION_ID = "scenario-test-001"
 PORT = 8767  # Different port to avoid conflict with running coordinator
-WORKSPACE = os.path.join(SCRIPT_DIR, "test_site_A", "workspace")
+WORKSPACE = os.path.join(SCRIPT_DIR, "examples/two_machine_demo/host", "workspace")
 
 
 def banner(title: str):

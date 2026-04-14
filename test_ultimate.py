@@ -14,10 +14,10 @@ capabilities:
 Each scenario is self-contained (own server, agents, teardown).
 
 Usage:
-    source test_site_A/.venv/bin/activate
+    source examples/two_machine_demo/host/.venv/bin/activate
     python test_ultimate.py
 
-Requires: Anthropic API key in test_site_A/config.json
+Requires: Anthropic API key in examples/two_machine_demo/host/config.json
 """
 import asyncio
 import json
@@ -30,7 +30,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-    "test_site_A", ".venv", "lib", "python3.9", "site-packages"))
+    "examples/two_machine_demo/host", ".venv", "lib", "python3.9", "site-packages"))
 
 from mpac_protocol import MPACServer, MPACAgent
 from mpac_protocol.core.models import Scope
@@ -43,12 +43,12 @@ logging.basicConfig(
 log = logging.getLogger("ultimate")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-with open(os.path.join(SCRIPT_DIR, "test_site_A", "config.json")) as f:
+with open(os.path.join(SCRIPT_DIR, "examples/two_machine_demo/host", "config.json")) as f:
     cfg = json.load(f)["anthropic"]
 
 API_KEY = cfg["api_key"]
 MODEL = cfg.get("model", "claude-sonnet-4-6")
-WORKSPACE = os.path.join(SCRIPT_DIR, "test_site_A", "workspace")
+WORKSPACE = os.path.join(SCRIPT_DIR, "examples/two_machine_demo/host", "workspace")
 
 
 # ── Helpers ────────────────────────────────────────────────────

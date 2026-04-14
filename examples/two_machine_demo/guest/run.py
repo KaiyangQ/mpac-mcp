@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Site B: Agent Bob joins an existing MPAC session (interactive).
+Guest site: Agent Bob joins an existing MPAC session (interactive).
 
 Usage:
-    cd test_site_B
-    pip install ../mpac-package
+    cd examples/two_machine_demo/guest
+    pip install ../../../mpac-package
     python run.py [coordinator_uri]
 
 Default: ws://localhost:8766
