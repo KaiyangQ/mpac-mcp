@@ -7,7 +7,7 @@ name = "mpac-mcp"
 version = "0.1.0"
 description = "MCP bridge for MPAC: coordinate coding agents working on the same repository"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Kaiyang Qian", email = "kaiyang.2.qian@ucdenver.edu"},
@@ -26,6 +26,7 @@ mpac-mcp-smoke-tools = "mpac_mcp.smoke_tools:main"
 mpac-mcp-smoke-commit = "mpac_mcp.smoke_commit:main"
 mpac-mcp-smoke-governance = "mpac_mcp.smoke_governance:main"
 mpac-mcp-smoke-takeover = "mpac_mcp.smoke_takeover:main"
+mpac-mcp-smoke-remote = "mpac_mcp.smoke_remote:main"
 mpac-mcp-claude-setup = "mpac_mcp.claude_setup:main"
 
 [tool.setuptools.packages.find]

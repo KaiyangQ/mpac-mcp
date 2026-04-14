@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 DEFAULT_SIDECAR_HOST = "127.0.0.1"
@@ -15,16 +16,34 @@ DEFAULT_PORT_SPAN = 2000
 
 @dataclass(frozen=True)
 class BridgeConfig:
-    """Resolved local sidecar configuration for a repository."""
+    """Resolved coordinator configuration for one MCP bridge session.
+
+    Two shapes:
+    - **local** (default): an auto-started sidecar bound to 127.0.0.1 on a
+      workspace-derived port. ``uri_override`` is None and ``auth_token`` is
+      None.
+    - **remote**: a pre-existing hosted coordinator reached via
+      ``uri_override`` (set through ``MPAC_COORDINATOR_URL``). The bridge must
+      not try to spawn a local sidecar in this mode.
+    """
 
     workspace_dir: Path
     session_id: str
     host: str
     port: int
+    uri_override: str | None = None
+    auth_token: str | None = None
+    session_id_pinned: bool = True
 
     @property
     def uri(self) -> str:
+        if self.uri_override:
+            return self.uri_override
         return f"ws://{self.host}:{self.port}"
+
+    @property
+    def is_remote(self) -> bool:
+        return self.uri_override is not None
 
 
 def detect_workspace_dir(start: str | Path | None = None) -> Path:
@@ -60,13 +79,50 @@ def derive_sidecar_port(workspace_dir: str | Path) -> int:
     return DEFAULT_PORT_BASE + offset
 
 
+def _extract_session_id_from_url(url: str) -> str | None:
+    """Parse a session id from the path of a remote coordinator URL.
+
+    Accepts ``wss://host/session/<id>`` and returns ``<id>``. Returns None
+    for any other shape so the caller can fall back to env or derived values.
+    """
+    parsed = urlparse(url)
+    segments = [seg for seg in parsed.path.split("/") if seg]
+    if len(segments) >= 2 and segments[0] == "session":
+        return segments[1]
+    return None
+
+
 def build_bridge_config(start: str | Path | None = None) -> BridgeConfig:
-    """Build a complete bridge configuration for the current workspace."""
+    """Build a coordinator configuration for the current workspace.
+
+    When ``MPAC_COORDINATOR_URL`` is set, builds a remote config pointing at
+    a hosted coordinator. Otherwise builds a local-sidecar config using the
+    workspace-derived host/port, preserving the original behaviour.
+    """
     workspace = detect_workspace_dir(start)
+    remote_url = os.environ.get("MPAC_COORDINATOR_URL")
+
+    if remote_url:
+        explicit_session = os.environ.get("MPAC_SESSION_ID")
+        url_session = _extract_session_id_from_url(remote_url)
+        session_id = explicit_session or url_session or derive_session_id(workspace)
+        pinned = bool(explicit_session or url_session)
+        parsed = urlparse(remote_url)
+        host = parsed.hostname or DEFAULT_SIDECAR_HOST
+        port = parsed.port or (443 if parsed.scheme == "wss" else 80)
+        return BridgeConfig(
+            workspace_dir=workspace,
+            session_id=session_id,
+            host=host,
+            port=port,
+            uri_override=remote_url,
+            auth_token=os.environ.get("MPAC_COORDINATOR_TOKEN"),
+            session_id_pinned=pinned,
+        )
+
     return BridgeConfig(
         workspace_dir=workspace,
         session_id=derive_session_id(workspace),
         host=os.environ.get("MPAC_SIDECAR_HOST", DEFAULT_SIDECAR_HOST),
         port=derive_sidecar_port(workspace),
     )
-

@@ -70,27 +70,34 @@ def _bridge_cache_key(config: BridgeConfig) -> str:
     return f"{config.workspace_dir}::{principal_id}::{role_slug}"
 
 
+def _ws_connect_kwargs(config: BridgeConfig) -> dict[str, Any]:
+    """Build websockets.connect kwargs, injecting auth headers when present."""
+    if not config.auth_token:
+        return {}
+    return {"extra_headers": [("Authorization", f"Bearer {config.auth_token}")]}
+
+
 async def fetch_session_summary(config: BridgeConfig) -> dict[str, Any]:
-    """Query the local sidecar for a compact session summary."""
+    """Query the coordinator for a compact session summary."""
     try:
-        async with websockets.connect(config.uri) as ws:
+        async with websockets.connect(config.uri, **_ws_connect_kwargs(config)) as ws:
             await ws.send(json.dumps({"type": "SESSION_SUMMARY"}))
             raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
     except Exception as exc:  # pragma: no cover - network failure surface
-        raise SidecarError(f"Failed to query sidecar at {config.uri}: {exc}") from exc
+        raise SidecarError(f"Failed to query coordinator at {config.uri}: {exc}") from exc
 
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise SidecarError(f"Sidecar returned non-JSON payload: {raw!r}") from exc
+        raise SidecarError(f"Coordinator returned non-JSON payload: {raw!r}") from exc
 
     if payload.get("type") != "SESSION_SUMMARY_RESPONSE":
-        raise SidecarError(f"Unexpected sidecar response: {payload}")
+        raise SidecarError(f"Unexpected coordinator response: {payload}")
 
     summary = payload.get("session", {})
-    if summary.get("session_id") != config.session_id:
+    if config.session_id_pinned and summary.get("session_id") != config.session_id:
         raise SidecarError(
-            f"Sidecar session mismatch on {config.uri}: "
+            f"Coordinator session mismatch on {config.uri}: "
             f"expected {config.session_id}, got {summary.get('session_id')}"
         )
     return summary
@@ -139,6 +146,11 @@ async def launch_ephemeral_sidecar(
 ) -> tuple[BridgeConfig, subprocess.Popen]:
     """Launch a new sidecar process and return both config and process handle."""
     config = build_bridge_config(start)
+    if config.is_remote:
+        raise SidecarError(
+            "Cannot launch an ephemeral sidecar in remote mode "
+            f"(MPAC_COORDINATOR_URL={config.uri})"
+        )
     summary = await probe_sidecar(config)
     if summary is not None:
         raise SidecarError(
@@ -182,11 +194,21 @@ async def ensure_sidecar(
     *,
     startup_timeout_sec: float = 5.0,
 ) -> BridgeConfig:
-    """Ensure the local sidecar is running for the resolved workspace."""
+    """Ensure a coordinator is reachable for the resolved workspace.
+
+    In remote mode (``MPAC_COORDINATOR_URL`` set) this only probes the
+    pre-existing hosted coordinator and never spawns a local process.
+    """
     config = build_bridge_config(start)
     summary = await probe_sidecar(config)
     if summary is not None:
         return config
+
+    if config.is_remote:
+        raise SidecarError(
+            f"Remote coordinator at {config.uri} is not reachable. "
+            f"Check MPAC_COORDINATOR_URL / MPAC_COORDINATOR_TOKEN."
+        )
 
     process = start_sidecar(config)
     deadline = time.time() + startup_timeout_sec
@@ -258,7 +280,7 @@ class LocalParticipantBridge:
         if self._connected and self.ws is not None:
             return
 
-        self.ws = await websockets.connect(self.config.uri)
+        self.ws = await websockets.connect(self.config.uri, **_ws_connect_kwargs(self.config))
         self._listener_task = asyncio.create_task(self._listen())
         await self._send(self.participant.hello(self.config.session_id))
         await self._wait_for("SESSION_INFO", timeout=2.0)
@@ -570,9 +592,9 @@ def _sha_ref(content: str) -> str:
 
 
 async def fetch_file_state(config: BridgeConfig, path: str) -> dict[str, Any] | None:
-    """Read one file from the sidecar workspace using a temporary connection."""
+    """Read one file from the coordinator workspace using a temporary connection."""
     try:
-        async with websockets.connect(config.uri) as ws:
+        async with websockets.connect(config.uri, **_ws_connect_kwargs(config)) as ws:
             await ws.send(json.dumps({"type": "FILE_READ", "path": path}))
             raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
     except Exception as exc:  # pragma: no cover - network failure surface
