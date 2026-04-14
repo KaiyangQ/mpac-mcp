@@ -30,3 +30,14 @@ test_site_B/config.json
 
 # Starter kit build dir (but keep the zip for distribution)
 mpac-starter-kit/
+
+# mpac-mcp local venv and pytest cache
+mpac-mcp/.venv/
+mpac-mcp/.pytest_cache/
+
+# Local Claude Code MCP config (use claude_setup.py to regenerate)
+.mcp.json
+
+# Local scratch test outputs
+test_output/
+test_site_A/workspace/meeting-notes.md

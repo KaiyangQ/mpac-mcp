@@ -143,6 +143,7 @@ class MPACServer:
         self.session_id = session_id
         self.host = host
         self.port = port
+        self.workspace_dir = workspace_dir
         self.coordinator = SessionCoordinator(
             session_id,
             execution_model=kwargs.get("execution_model", "post_commit"),
@@ -185,6 +186,14 @@ class MPACServer:
                     else:
                         resp = {"type": "FILE_ERROR", "path": data["path"],
                                 "error": "File not found"}
+                    await websocket.send(json.dumps(resp, ensure_ascii=False))
+                    continue
+
+                if data.get("type") == "SESSION_SUMMARY":
+                    resp = {
+                        "type": "SESSION_SUMMARY_RESPONSE",
+                        "session": self.session_summary(),
+                    }
                     await websocket.send(json.dumps(resp, ensure_ascii=False))
                     continue
 
@@ -354,3 +363,59 @@ class MPACServer:
         log.info("=== Workspace State ===")
         for path, info in sorted(self.file_store.files.items()):
             log.info(f"  {path}: {info['state_ref']} ({len(info['content'])} bytes)")
+
+    def session_summary(self) -> dict:
+        """Return a compact session snapshot for sidecar-style local queries."""
+        snapshot = self.coordinator.snapshot()
+        active_intent_states = {"ANNOUNCED", "ACTIVE", "SUSPENDED"}
+        open_conflict_states = {"OPEN", "ACKED", "ESCALATED"}
+
+        participants = [
+            {
+                "principal_id": participant["principal_id"],
+                "display_name": participant["display_name"],
+                "roles": participant.get("roles", []),
+                "status": participant.get("status"),
+                "is_available": participant.get("is_available", False),
+                "last_seen": participant.get("last_seen"),
+            }
+            for participant in snapshot.get("participants", [])
+        ]
+        active_intents = [
+            {
+                "intent_id": intent["intent_id"],
+                "principal_id": intent["principal_id"],
+                "objective": intent["objective"],
+                "state": intent["state"],
+                "scope": intent.get("scope", {}),
+                "claimed_by": intent.get("claimed_by"),
+            }
+            for intent in snapshot.get("intents", [])
+            if intent.get("state") in active_intent_states
+        ]
+        open_conflicts = [
+            {
+                "conflict_id": conflict["conflict_id"],
+                "category": conflict["category"],
+                "severity": conflict["severity"],
+                "state": conflict["state"],
+                "principal_a": conflict["principal_a"],
+                "principal_b": conflict["principal_b"],
+                "intent_a": conflict["intent_a"],
+                "intent_b": conflict["intent_b"],
+            }
+            for conflict in snapshot.get("conflicts", [])
+            if conflict.get("state") in open_conflict_states
+        ]
+
+        return {
+            "session_id": self.session_id,
+            "workspace_dir": self.workspace_dir,
+            "captured_at": snapshot.get("captured_at"),
+            "participant_count": len(participants),
+            "active_intent_count": len(active_intents),
+            "open_conflict_count": len(open_conflicts),
+            "participants": participants,
+            "active_intents": active_intents,
+            "open_conflicts": open_conflicts,
+        }
