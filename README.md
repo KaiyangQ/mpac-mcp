@@ -55,8 +55,11 @@ ref-impl/
     README.md                    ← Demo guide: purpose, protocol coverage, and architecture
 mpac-package/                    ← Pip-installable package (pip install ./mpac-package)
 mpac-starter-kit.zip             ← Self-contained kit to send to collaborators
-test_e2e_scenarios.py            ← 6-scenario E2E test (long-lived connections, mutual yield)
-test_ultimate.py                 ← 5-scenario ultimate test (pre-commit, claim, escalation, task_set)
+tests/                           ← E2E and multi-scenario test scripts
+  test_e2e.py                    ← Basic two-agent E2E test
+  test_e2e_scenarios.py          ← 6-scenario E2E test (long-lived connections, mutual yield)
+  test_interactive.py            ← Interactive agent flow test
+  test_ultimate.py               ← 5-scenario ultimate test (pre-commit, claim, escalation, task_set)
 examples/
   two_machine_demo/
     host/                        ← Host site: coordinator + workspace + Agent Alice
@@ -262,14 +265,14 @@ Two test suites validate the pip package end-to-end with live Claude API calls:
 **6-scenario E2E test** — two agents with long-lived connections:
 ```bash
 source examples/two_machine_demo/host/.venv/bin/activate
-python test_e2e_scenarios.py
+python tests/test_e2e_scenarios.py
 ```
 Covers: no-conflict, conflict detection, dependency chains, conflict + rebase, asymmetric yield, and mutual yield auto-retry.
 
 **5-scenario ultimate test** — multi-agent, multi-scope-type, multi-execution-model:
 ```bash
 source examples/two_machine_demo/host/.venv/bin/activate
-python test_ultimate.py
+python tests/test_ultimate.py
 ```
 
 | Scenario | Scope | Execution Model | Key Features |

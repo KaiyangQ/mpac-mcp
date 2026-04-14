@@ -11,8 +11,11 @@ import logging
 import os
 import sys
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+
 # Add examples/two_machine_demo/host's venv to path (both have the same package)
-sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+sys.path.insert(0, os.path.join(REPO_ROOT,
     "examples/two_machine_demo/host", ".venv", "lib", "python3.9", "site-packages"))
 
 from mpac_protocol import MPACServer, MPACAgent
@@ -23,13 +26,12 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-with open(os.path.join(SCRIPT_DIR, "examples/two_machine_demo/host", "config.json")) as f:
+with open(os.path.join(REPO_ROOT, "examples/two_machine_demo/host", "config.json")) as f:
     cfg = json.load(f)["anthropic"]
 
 SESSION_ID = "e2e-test-001"
 PORT = 8766
-WORKSPACE = os.path.join(SCRIPT_DIR, "examples/two_machine_demo/host", "workspace")
+WORKSPACE = os.path.join(REPO_ROOT, "examples/two_machine_demo/host", "workspace")
 
 
 async def main():
@@ -108,7 +110,7 @@ async def main():
         print()
 
     # ── 7. Save results ──
-    output_dir = os.path.join(SCRIPT_DIR, "test_output")
+    output_dir = os.path.join(REPO_ROOT, "test_output")
     os.makedirs(output_dir, exist_ok=True)
     server.file_store.save_to_directory(output_dir)
     server.save_transcript(os.path.join(output_dir, "transcript.json"))

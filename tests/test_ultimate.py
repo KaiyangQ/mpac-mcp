@@ -29,7 +29,10 @@ import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+
+sys.path.insert(0, os.path.join(REPO_ROOT,
     "examples/two_machine_demo/host", ".venv", "lib", "python3.9", "site-packages"))
 
 from mpac_protocol import MPACServer, MPACAgent
@@ -42,13 +45,12 @@ logging.basicConfig(
 )
 log = logging.getLogger("ultimate")
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-with open(os.path.join(SCRIPT_DIR, "examples/two_machine_demo/host", "config.json")) as f:
+with open(os.path.join(REPO_ROOT, "examples/two_machine_demo/host", "config.json")) as f:
     cfg = json.load(f)["anthropic"]
 
 API_KEY = cfg["api_key"]
 MODEL = cfg.get("model", "claude-sonnet-4-6")
-WORKSPACE = os.path.join(SCRIPT_DIR, "examples/two_machine_demo/host", "workspace")
+WORKSPACE = os.path.join(REPO_ROOT, "examples/two_machine_demo/host", "workspace")
 
 
 # ── Helpers ────────────────────────────────────────────────────
@@ -93,7 +95,7 @@ async def setup_server(session_id, port, workspace_dir=None, **kwargs):
     return server, ws_server, heartbeat_task
 
 
-OUTPUT_DIR = os.path.join(SCRIPT_DIR, "test_output", "ultimate")
+OUTPUT_DIR = os.path.join(REPO_ROOT, "test_output", "ultimate")
 
 
 async def teardown(ws_server, heartbeat_task, agents,

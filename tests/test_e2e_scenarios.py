@@ -24,7 +24,10 @@ import logging
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+
+sys.path.insert(0, os.path.join(REPO_ROOT,
     "examples/two_machine_demo/host", ".venv", "lib", "python3.9", "site-packages"))
 
 from mpac_protocol import MPACServer, MPACAgent
@@ -36,13 +39,12 @@ logging.basicConfig(
 )
 log = logging.getLogger("scenarios")
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-with open(os.path.join(SCRIPT_DIR, "examples/two_machine_demo/host", "config.json")) as f:
+with open(os.path.join(REPO_ROOT, "examples/two_machine_demo/host", "config.json")) as f:
     cfg = json.load(f)["anthropic"]
 
 SESSION_ID = "scenario-test-001"
 PORT = 8767  # Different port to avoid conflict with running coordinator
-WORKSPACE = os.path.join(SCRIPT_DIR, "examples/two_machine_demo/host", "workspace")
+WORKSPACE = os.path.join(REPO_ROOT, "examples/two_machine_demo/host", "workspace")
 
 
 def banner(title: str):
@@ -309,7 +311,7 @@ async def main():
     await bob.close()
 
     # Save transcript
-    output_dir = os.path.join(SCRIPT_DIR, "test_output")
+    output_dir = os.path.join(REPO_ROOT, "test_output")
     os.makedirs(output_dir, exist_ok=True)
     server.file_store.save_to_directory(output_dir)
     server.save_transcript(os.path.join(output_dir, "scenarios_transcript.json"))
