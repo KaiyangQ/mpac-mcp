@@ -17,6 +17,7 @@ ref-impl/demo/distributed/test_project/workdir/
 
 # Claude Code session config
 .claude/
+CLAUDE.md
 
 # MPAC package build artifacts
 mpac-package/build/
