@@ -212,6 +212,32 @@ infrastructure automation are engineering concerns outside the protocol
 boundary; MPAC intentionally stays silent on them so that implementers
 are free to make their own trade-offs.
 
+## Authenticated Profile (multi-tenant)
+
+mpac 0.2.0 adds opt-in support for the **Authenticated security profile** (Section 23.1.4 of the MPAC spec):
+
+- **`VerifyResult` + `CredentialVerifier`**: Pluggable credential verification hook on `SessionCoordinator`. Verifiers inspect the `credential` field in HELLO messages and return `VerifyResult.accept(granted_roles=[...])` or `VerifyResult.reject(reason)`.
+- **`MPACServer(multi_session=True)`**: Serve multiple isolated sessions from a single WebSocket port. Sessions are created lazily from the URL path `/session/<id>`. Each session gets its own `SessionCoordinator`, `FileStore`, and connection pool — no cross-session data leakage.
+
+```python
+from mpac_protocol.core.coordinator import VerifyResult
+
+def my_verifier(credential, session_id):
+    if credential.get("value") == "secret-tok" and session_id == "proj-alpha":
+        return VerifyResult.accept(granted_roles=["contributor"])
+    return VerifyResult.reject("not authorized")
+
+server = MPACServer(
+    multi_session=True,
+    host="0.0.0.0",
+    port=8766,
+    credential_verifier=my_verifier,
+    security_profile="authenticated",
+)
+```
+
+Single-session mode (`MPACServer(session_id="demo")`) is fully backward compatible with mpac 0.1.x — no code changes needed for existing callers.
+
 ## Status
 
 **Draft / experimental.** The protocol is at v0.1.13. This package is
