@@ -1,12 +1,16 @@
-# Caddy config for the hosted MPAC coordinator.
+# Caddy config for the hosted MPAC coordinator — Authenticated profile edition.
 #
-# Responsibilities (TLS is done by fly-proxy, NOT here):
-#   1. Terminate the `Authorization: Bearer <token>` check.
-#   2. Only forward paths under /session/* to the sidecar.
-#   3. Forward WebSocket upgrades transparently (Caddy v2 handles this by default).
+# Responsibilities:
+#   1. Listen on :8080 (TLS is done by fly-proxy, not here)
+#   2. Only forward /session/* paths to the sidecar (type filter, not auth;
+#      keeps drive-by scans for /wp-admin / /.env / etc. out of sidecar logs)
+#   3. Forward WebSocket upgrades transparently (Caddy v2 handles this
+#      automatically on reverse_proxy routes)
 #
-# MPAC_TOKEN is injected via `fly secrets set MPAC_TOKEN=...` and substituted
-# at Caddy startup via the `{$VAR}` env-var syntax.
+# NOTE: Authentication is NOT done at this layer anymore. The sidecar runs
+# in Authenticated profile (Section 23.1.4) and its credential_verifier
+# enforces per-token -> per-session authorization via MPAC_TOKEN_TABLE.
+# Single source of truth for auth = one fewer token to manage = better UX.
 
 {
     admin off
@@ -15,14 +19,11 @@
 }
 
 :8080 {
-    @authorized {
-        header Authorization "Bearer {$MPAC_TOKEN}"
-        path /session/*
-    }
-    handle @authorized {
+    @session path /session/*
+    handle @session {
         reverse_proxy 127.0.0.1:8766
     }
     handle {
-        respond "unauthorized or not found" 401
+        respond "not found — expected /session/<id>" 404
     }
 }

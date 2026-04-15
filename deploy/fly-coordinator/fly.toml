@@ -1,5 +1,9 @@
 # fly.io app config for the hosted MPAC coordinator.
 #
+# Multi-session + Authenticated profile edition. The sidecar creates
+# sessions on demand from URL paths like /session/<id>, and authorizes
+# each HELLO via a per-token table stored in the MPAC_TOKEN_TABLE secret.
+#
 # Deploy from the REPO ROOT so that the Docker build context includes
 # mpac-package/ and mpac-mcp/:
 #
@@ -9,14 +13,14 @@
 # Prerequisites (one-time):
 #     fly apps create mpac-demo
 #     fly volumes create mpac_data --region dfw --size 1 --app mpac-demo
-#     fly secrets set MPAC_TOKEN=<long-random-string> --app mpac-demo
+#     # MPAC_TOKEN_TABLE is a JSON object mapping tokens to allowed sessions:
+#     #   {"<tok>": {"allowed_sessions": ["proj-alpha"], "roles": ["contributor"]}}
+#     fly secrets set MPAC_TOKEN_TABLE='<json>' --app mpac-demo
 
 app             = "mpac-demo"
 primary_region  = "dfw"
 
 [env]
-  MPAC_SESSION_ID  = "demo-room"
-  MPAC_WORKSPACE   = "/data"
   MPAC_SIDECAR_PORT = "8766"
 
 [http_service]
