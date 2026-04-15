@@ -129,6 +129,24 @@ mpac.example.com {
 
 This keeps the `mpac` core package auth-free and lets you rotate tokens, add rate limits, and log access using standard proxy features.
 
+### Authenticated profile with per-project tokens
+
+Set `MPAC_TOKEN_TABLE` (JSON) to enable per-token session authorization:
+
+```bash
+export MPAC_TOKEN_TABLE='{"tok-alice": {"allowed_sessions": ["proj-alpha"], "roles": ["contributor"]}}'
+mpac-mcp-sidecar --multi-session --host 0.0.0.0 --port 8766 --tls
+```
+
+The sidecar's `auth.py` module parses `MPAC_TOKEN_TABLE` at startup and builds a `CredentialVerifier` that checks each HELLO's `credential.value` against the table. Tokens with `"allowed_sessions": ["*"]` can join any session (operator/debug use).
+
+Clients must include the token in their HELLO payload's `credential` field:
+```json
+{"type": "bearer_token", "value": "tok-alice"}
+```
+
+The `LocalParticipantBridge` does this automatically when `MPAC_COORDINATOR_TOKEN` is set.
+
 ### Verifying the link
 
 Run the bundled remote smoke against your hosted coordinator (it spawns a 127.0.0.1 sidecar locally and drives the bridge through a `ws://...` URL — no network involved, just the remote-mode code path):

@@ -272,12 +272,19 @@ class LocalParticipantBridge:
             f"agent:mpac-mcp:{os.getpid()}",
         )
         self.roles = _bridge_roles_from_env()
+        # Surface the bearer token in the HELLO payload's `credential` field
+        # (Section 23.1.4) so Authenticated-profile coordinators can verify it
+        # in addition to the transport-layer Authorization header.
+        credential = None
+        if config.auth_token:
+            credential = {"type": "bearer_token", "value": config.auth_token}
         self.participant = Participant(
             principal_id=self.principal_id,
             principal_type="agent",
             display_name=self.name,
             roles=self.roles,
             capabilities=_bridge_capabilities_from_env(),
+            credential=credential,
         )
         self.ws = None
         self.protocol_inbox: asyncio.Queue = asyncio.Queue()

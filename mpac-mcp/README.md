@@ -37,6 +37,32 @@ This initial scaffold focuses on the shortest end-to-end path:
 - an end-to-end smoke script for "ack -> escalate -> resolve"
 - an end-to-end smoke script for "suspend -> claim -> take over"
 
+## Multi-tenant Hosted Mode (Authenticated Profile)
+
+When deploying a hosted coordinator for multiple projects/teams:
+
+1. Set `MPAC_TOKEN_TABLE` as a JSON env var mapping bearer tokens to allowed sessions:
+   ```json
+   {
+     "<token-for-alice>": {"allowed_sessions": ["proj-alpha"], "roles": ["contributor"]},
+     "<token-for-bob>":   {"allowed_sessions": ["proj-beta"],  "roles": ["contributor"]}
+   }
+   ```
+
+2. Start the sidecar in multi-session mode:
+   ```bash
+   mpac-mcp-sidecar --multi-session --host 0.0.0.0 --port 8766 --tls
+   ```
+   The sidecar auto-detects `MPAC_TOKEN_TABLE` and switches to `security_profile=authenticated`.
+
+3. Clients connect with their token in the HELLO credential field:
+   ```
+   wss://your-host/session/proj-alpha
+   ```
+   Tokens bound to `proj-alpha` can only join `proj-alpha` — cross-session access returns `CREDENTIAL_REJECTED`.
+
+See `deploy/fly-coordinator/` for a complete Docker + Caddy + fly.io deployment recipe.
+
 ## Development status
 
 This directory is the start of the `mpac-mcp` product entry point. It is
