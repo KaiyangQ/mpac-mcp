@@ -70,11 +70,21 @@ def _bridge_cache_key(config: BridgeConfig) -> str:
     return f"{config.workspace_dir}::{principal_id}::{role_slug}"
 
 
+# websockets v14 renamed the header kwarg from `extra_headers` to
+# `additional_headers`. Pick whichever the installed version supports so we
+# stay compatible across v12/13 (old name) and v14+ (new name).
+try:
+    _ws_major_version = int(websockets.__version__.split(".")[0])
+except (AttributeError, ValueError):
+    _ws_major_version = 0
+_WS_HEADER_KWARG = "additional_headers" if _ws_major_version >= 14 else "extra_headers"
+
+
 def _ws_connect_kwargs(config: BridgeConfig) -> dict[str, Any]:
     """Build websockets.connect kwargs, injecting auth headers when present."""
     if not config.auth_token:
         return {}
-    return {"extra_headers": [("Authorization", f"Bearer {config.auth_token}")]}
+    return {_WS_HEADER_KWARG: [("Authorization", f"Bearer {config.auth_token}")]}
 
 
 async def fetch_session_summary(config: BridgeConfig) -> dict[str, Any]:
