@@ -1,0 +1,37 @@
+# fly.io app config for the hosted MPAC coordinator.
+#
+# Deploy from the REPO ROOT so that the Docker build context includes
+# mpac-package/ and mpac-mcp/:
+#
+#     fly deploy --config deploy/fly-coordinator/fly.toml \
+#                --dockerfile deploy/fly-coordinator/Dockerfile
+#
+# Prerequisites (one-time):
+#     fly apps create mpac-demo
+#     fly volumes create mpac_data --region dfw --size 1 --app mpac-demo
+#     fly secrets set MPAC_TOKEN=<long-random-string> --app mpac-demo
+
+app             = "mpac-demo"
+primary_region  = "dfw"
+
+[env]
+  MPAC_SESSION_ID  = "demo-room"
+  MPAC_WORKSPACE   = "/data"
+  MPAC_SIDECAR_PORT = "8766"
+
+[http_service]
+  internal_port         = 8080
+  force_https           = true
+  auto_stop_machines    = "stop"
+  auto_start_machines   = true
+  # Keep at least one machine warm so WebSocket sessions don't die during
+  # auto-scale events. For a demo app 1 is enough.
+  min_machines_running  = 1
+
+[[mounts]]
+  source      = "mpac_data"
+  destination = "/data"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "256mb"

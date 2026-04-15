@@ -1,0 +1,28 @@
+# Caddy config for the hosted MPAC coordinator.
+#
+# Responsibilities (TLS is done by fly-proxy, NOT here):
+#   1. Terminate the `Authorization: Bearer <token>` check.
+#   2. Only forward paths under /session/* to the sidecar.
+#   3. Forward WebSocket upgrades transparently (Caddy v2 handles this by default).
+#
+# MPAC_TOKEN is injected via `fly secrets set MPAC_TOKEN=...` and substituted
+# at Caddy startup via the `{$VAR}` env-var syntax.
+
+{
+    admin off
+    auto_https off
+    persist_config off
+}
+
+:8080 {
+    @authorized {
+        header Authorization "Bearer {$MPAC_TOKEN}"
+        path /session/*
+    }
+    handle @authorized {
+        reverse_proxy 127.0.0.1:8766
+    }
+    handle {
+        respond "unauthorized or not found" 401
+    }
+}

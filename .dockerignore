@@ -1,0 +1,35 @@
+# .dockerignore — keep fly.io build contexts small.
+#
+# Strategy: exclude everything, then whitelist the three trees the hosted
+# coordinator Dockerfile needs. If you add a new deploy/ target that needs
+# different files, add its whitelist lines below.
+
+# --- exclude everything by default ---
+*
+
+# --- whitelist the trees Dockerfiles under deploy/ actually COPY ---
+!mpac-package/
+!mpac-mcp/
+!deploy/
+
+# --- re-exclude build / cache / venv noise inside the whitelisted trees ---
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/pytest-cache-files-*/
+**/.venv/
+**/venv/
+**/node_modules/
+**/.git/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.DS_Store
+
+# wheel / sdist build artifacts (Dockerfile installs from source, not dist)
+mpac-mcp/dist/
+mpac-mcp/build/
+mpac-mcp/*.egg-info/
+mpac-package/dist/
+mpac-package/build/
+mpac-package/*.egg-info/
