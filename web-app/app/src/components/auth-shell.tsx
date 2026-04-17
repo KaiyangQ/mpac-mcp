@@ -63,7 +63,7 @@ export function AuthShell({
 function PitchPanel() {
   return (
     <aside
-      className="hidden lg:flex flex-col justify-between relative overflow-hidden px-10 py-10 xl:px-12 xl:py-12 border-r border-[var(--border)]"
+      className="hidden lg:block relative overflow-hidden border-r border-[var(--border)]"
       style={{
         // A richer gradient than the page's ambient — tied to primary + a
         // warm purple so the two halves feel distinct but related.
@@ -83,10 +83,15 @@ function PitchPanel() {
         }}
       />
 
-      <div className="relative">
+      {/* Centered content column — all three sections (logo, pitch, footer)
+          share this single max-w-md mx-auto wrapper so they sit on the same
+          left edge and the whole column is horizontally centered in the panel.
+          `flex flex-col justify-between` pins logo to top, footer to bottom,
+          pitch in the middle. */}
+      <div className="relative mx-auto flex h-full w-full max-w-md flex-col justify-between px-6 py-10 xl:py-12">
         <Link
           href="/"
-          className="inline-flex items-center gap-3 group"
+          className="inline-flex items-center gap-3 group self-start"
         >
           <span
             className="w-10 h-10 rounded-xl flex items-center justify-center text-base font-semibold text-white shadow-lg shadow-[#58a6ff]/20 ring-1 ring-white/10"
@@ -97,80 +102,78 @@ function PitchPanel() {
           >
             M
           </span>
-          <span className="text-lg font-semibold tracking-tight">
-            MPAC
-          </span>
+          <span className="text-lg font-semibold tracking-tight">MPAC</span>
         </Link>
-      </div>
 
-      <div className="relative max-w-md">
-        <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-secondary)]/60 backdrop-blur px-3 py-1 text-xs text-[var(--text-secondary)] mb-4">
-          <Sparkles className="size-3 text-[#a371f7]" />
-          Semi-public beta · invite-only
+        <div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-secondary)]/60 backdrop-blur px-3 py-1 text-xs text-[var(--text-secondary)] mb-4">
+            <Sparkles className="size-3 text-[#a371f7]" />
+            Semi-public beta · invite-only
+          </div>
+          <h2 className="text-3xl font-bold leading-tight tracking-tight mb-3">
+            Coordinate humans and{" "}
+            <span
+              className="bg-clip-text text-transparent"
+              style={{
+                backgroundImage:
+                  "linear-gradient(120deg, #58a6ff 0%, #a371f7 100%)",
+              }}
+            >
+              AI agents
+            </span>{" "}
+            in the same editor.
+          </h2>
+          <p className="text-[var(--text-secondary)] leading-relaxed text-sm">
+            MPAC is a protocol for multi-principal collaboration — so
+            Claude can edit alongside your team without overwriting your
+            work or hiding what it&apos;s doing.
+          </p>
+
+          <ul className="mt-6 space-y-3.5">
+            <PitchBullet
+              icon={<Users className="size-4" />}
+              title="Real-time presence"
+            >
+              See which teammate (or which agent) is editing what, with
+              live intent announcements on every file.
+            </PitchBullet>
+            <PitchBullet
+              icon={<Zap className="size-4" />}
+              title="Intent-first workflow"
+            >
+              Claim a file before you edit; conflicts surface as
+              negotiations, never as silent overwrites.
+            </PitchBullet>
+            <PitchBullet
+              icon={<Sparkles className="size-4" />}
+              title="AI as a first-class peer"
+            >
+              Claude joins the session as a named participant — you see
+              its plan, its intent, and when it leaves.
+            </PitchBullet>
+          </ul>
         </div>
-        <h2 className="text-3xl font-bold leading-tight tracking-tight mb-3">
-          Coordinate humans and{" "}
-          <span
-            className="bg-clip-text text-transparent"
-            style={{
-              backgroundImage:
-                "linear-gradient(120deg, #58a6ff 0%, #a371f7 100%)",
-            }}
-          >
-            AI agents
-          </span>{" "}
-          in the same editor.
-        </h2>
-        <p className="text-[var(--text-secondary)] leading-relaxed text-sm">
-          MPAC is a protocol for multi-principal collaboration — so
-          Claude can edit alongside your team without overwriting your
-          work or hiding what it&apos;s doing.
-        </p>
 
-        <ul className="mt-6 space-y-3.5">
-          <PitchBullet
-            icon={<Users className="size-4" />}
-            title="Real-time presence"
+        <div className="flex items-center gap-4 text-xs text-[var(--text-secondary)]">
+          <a
+            href="https://github.com/KaiyangQ/mpac-protocol"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 hover:text-[var(--text-primary)] transition-colors"
           >
-            See which teammate (or which agent) is editing what, with
-            live intent announcements on every file.
-          </PitchBullet>
-          <PitchBullet
-            icon={<Zap className="size-4" />}
-            title="Intent-first workflow"
+            <Code2 className="size-3.5" />
+            mpac-protocol on GitHub
+          </a>
+          <span className="text-[var(--border)]">·</span>
+          <a
+            href="https://pypi.org/project/mpac/"
+            target="_blank"
+            rel="noreferrer"
+            className="hover:text-[var(--text-primary)] transition-colors"
           >
-            Claim a file before you edit; conflicts surface as
-            negotiations, never as silent overwrites.
-          </PitchBullet>
-          <PitchBullet
-            icon={<Sparkles className="size-4" />}
-            title="AI as a first-class peer"
-          >
-            Claude joins the session as a named participant — you see
-            its plan, its intent, and when it leaves.
-          </PitchBullet>
-        </ul>
-      </div>
-
-      <div className="relative flex items-center gap-4 text-xs text-[var(--text-secondary)]">
-        <a
-          href="https://github.com/KaiyangQ/mpac-protocol"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1.5 hover:text-[var(--text-primary)] transition-colors"
-        >
-          <Code2 className="size-3.5" />
-          mpac-protocol on GitHub
-        </a>
-        <span className="text-[var(--border)]">·</span>
-        <a
-          href="https://pypi.org/project/mpac/"
-          target="_blank"
-          rel="noreferrer"
-          className="hover:text-[var(--text-primary)] transition-colors"
-        >
-          pip install mpac
-        </a>
+            pip install mpac
+          </a>
+        </div>
       </div>
     </aside>
   );
@@ -241,7 +244,7 @@ function FormPanel({
         <span className="font-semibold tracking-tight">MPAC</span>
       </Link>
 
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-md">
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)] mb-2">
           {title}
         </h1>

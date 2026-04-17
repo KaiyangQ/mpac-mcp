@@ -65,10 +65,13 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-* {
+/* Universal box-sizing — Tailwind v4's preflight already does this, but we
+   keep the rule explicit for clarity. DO NOT add `margin: 0; padding: 0`
+   here: the `*` selector is unlayered and cascade-layer rules (all of
+   Tailwind's `m-*` / `p-*` utilities live in @layer utilities) lose to
+   unlayered rules, which silently breaks `mx-auto` / `p-*` site-wide. */
+*, *::before, *::after {
   box-sizing: border-box;
-  margin: 0;
-  padding: 0;
 }
 
 body {
