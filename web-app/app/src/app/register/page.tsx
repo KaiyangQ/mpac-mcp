@@ -103,7 +103,7 @@ function RegisterForm() {
             value={displayName}
             autoFocus={!!presetInvite}
             onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="Kaiyang"
+            placeholder="Ada Lovelace"
             className="h-10"
           />
         </div>

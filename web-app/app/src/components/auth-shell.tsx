@@ -45,7 +45,10 @@ export function AuthShell({
         }}
       />
 
-      <div className="relative z-10 grid min-h-full lg:grid-cols-2">
+      {/* Cap the split layout at 1280px on wide screens and center it — without
+          this the two panels each sprawl to ~50% of a 2K monitor and the
+          content feels lost in empty padding. */}
+      <div className="relative z-10 grid min-h-full lg:grid-cols-2 lg:max-w-7xl lg:mx-auto lg:w-full">
         {pitch && <PitchPanel />}
         <FormPanel title={title} subtitle={subtitle} footer={footer}>
           {children}
@@ -60,7 +63,7 @@ export function AuthShell({
 function PitchPanel() {
   return (
     <aside
-      className="hidden lg:flex flex-col justify-between relative overflow-hidden px-12 py-14 border-r border-[var(--border)]"
+      className="hidden lg:flex flex-col justify-between relative overflow-hidden px-10 py-10 xl:px-12 xl:py-12 border-r border-[var(--border)]"
       style={{
         // A richer gradient than the page's ambient — tied to primary + a
         // warm purple so the two halves feel distinct but related.
@@ -101,11 +104,11 @@ function PitchPanel() {
       </div>
 
       <div className="relative max-w-md">
-        <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-secondary)]/60 backdrop-blur px-3 py-1 text-xs text-[var(--text-secondary)] mb-5">
+        <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-secondary)]/60 backdrop-blur px-3 py-1 text-xs text-[var(--text-secondary)] mb-4">
           <Sparkles className="size-3 text-[#a371f7]" />
           Semi-public beta · invite-only
         </div>
-        <h2 className="text-3xl xl:text-4xl font-bold leading-tight tracking-tight mb-4">
+        <h2 className="text-3xl font-bold leading-tight tracking-tight mb-3">
           Coordinate humans and{" "}
           <span
             className="bg-clip-text text-transparent"
@@ -118,13 +121,13 @@ function PitchPanel() {
           </span>{" "}
           in the same editor.
         </h2>
-        <p className="text-[var(--text-secondary)] leading-relaxed text-sm xl:text-base">
+        <p className="text-[var(--text-secondary)] leading-relaxed text-sm">
           MPAC is a protocol for multi-principal collaboration — so
           Claude can edit alongside your team without overwriting your
           work or hiding what it&apos;s doing.
         </p>
 
-        <ul className="mt-7 space-y-4">
+        <ul className="mt-6 space-y-3.5">
           <PitchBullet
             icon={<Users className="size-4" />}
             title="Real-time presence"
@@ -269,8 +272,10 @@ export const labelClass =
 
 // Primary CTA: blue → purple gradient matching the brand mark + pitch accents.
 // Used by <Button className={primaryBtnClass}>. Replaces the old GitHub-green.
+// Small top-margin (`mt-2`) and lighter shadow (`shadow-md` instead of
+// `shadow-lg`) keep the glow from visually crowding the last input field.
 export const primaryBtnClass =
-  "w-full h-10 text-white font-medium shadow-lg shadow-[#58a6ff]/20 " +
+  "w-full h-10 mt-2 text-white font-medium shadow-md shadow-[#58a6ff]/20 " +
   "bg-gradient-to-r from-[#58a6ff] to-[#a371f7] " +
   "hover:from-[#4b97f5] hover:to-[#9460e8] " +
   "disabled:opacity-60 disabled:cursor-not-allowed";
