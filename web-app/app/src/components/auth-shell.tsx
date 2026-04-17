@@ -63,16 +63,12 @@ export function AuthShell({
 function PitchPanel() {
   return (
     <aside
+      // No background of its own — the ambient radial glow on the outer
+      // container wraps both halves, so any aside-only gradient would end
+      // at `border-r` and read as a distinct "panel skin" pasted onto the
+      // page. Keep just the border as the visual divider between pitch
+      // and form.
       className="hidden lg:block relative overflow-hidden border-r border-[var(--border)]"
-      style={{
-        // Subtle blue → purple wash so the left half feels distinct from the
-        // right without competing with the form for attention. No grid / mesh
-        // texture — the `border-r` would clip any pattern to a rectangle and
-        // it ends up looking like a separate "panel skin" instead of an
-        // ambient background.
-        backgroundImage:
-          "linear-gradient(135deg, rgba(88,166,255,0.08) 0%, rgba(163,113,247,0.06) 45%, rgba(13,17,23,0) 100%)",
-      }}
     >
       {/* Centered content column — all three sections (logo, pitch, footer)
           share this single max-w-md mx-auto wrapper so they sit on the same
