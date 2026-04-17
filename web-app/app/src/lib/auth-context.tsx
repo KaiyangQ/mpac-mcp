@@ -22,7 +22,12 @@ type AuthState = {
 
 type AuthActions = {
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, displayName: string) => Promise<void>;
+  register: (
+    email: string,
+    password: string,
+    displayName: string,
+    inviteCode: string,
+  ) => Promise<void>;
   logout: () => void;
   /** Force a re-fetch of /me, e.g. after changing display_name. */
   refresh: () => Promise<void>;
@@ -70,8 +75,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const register = useCallback(
-    async (email: string, password: string, displayName: string) => {
-      const res = await api.register({ email, password, display_name: displayName });
+    async (
+      email: string,
+      password: string,
+      displayName: string,
+      inviteCode: string,
+    ) => {
+      const res = await api.register({
+        email,
+        password,
+        display_name: displayName,
+        invite_code: inviteCode,
+      });
       setStoredJwt(res.token);
       setHasToken(true);
       setUser({ user_id: res.user_id, email: res.email, display_name: res.display_name });

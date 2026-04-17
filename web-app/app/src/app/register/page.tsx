@@ -16,24 +16,36 @@ function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") || "/projects";
+  // Allow prefilling invite code via ?invite=... — makes sharing links easy.
+  const presetInvite = searchParams.get("invite") || "";
   useRedirectIfAuthed(next);
 
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState(presetInvite);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
+    if (!inviteCode.trim()) {
+      setErr("An invite code is required for the beta");
+      return;
+    }
     if (password.length < 6) {
       setErr("Password must be at least 6 characters");
       return;
     }
     setBusy(true);
     try {
-      await register(email, password, displayName.trim() || email.split("@")[0]);
+      await register(
+        email,
+        password,
+        displayName.trim() || email.split("@")[0],
+        inviteCode.trim(),
+      );
       router.replace(next);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Registration failed");
@@ -45,7 +57,7 @@ function RegisterForm() {
   return (
     <AuthShell
       title="Create your account"
-      subtitle="Collaborate with humans and AI agents in shared projects"
+      subtitle="Semi-public beta — you need an invite code from Kaiyang to sign up."
       footer={
         <>
           Already have an account?{" "}
@@ -65,11 +77,22 @@ function RegisterForm() {
       )}
       <form onSubmit={onSubmit} className="space-y-4">
         <div>
+          <label className={labelClass}>Invite code</label>
+          <Input
+            type="text"
+            required
+            value={inviteCode}
+            autoFocus={!presetInvite}
+            onChange={(e) => setInviteCode(e.target.value)}
+            placeholder="mpac-beta-xxxx"
+          />
+        </div>
+        <div>
           <label className={labelClass}>Display name</label>
           <Input
             type="text"
             value={displayName}
-            autoFocus
+            autoFocus={!!presetInvite}
             onChange={(e) => setDisplayName(e.target.value)}
             placeholder="Kaiyang"
           />

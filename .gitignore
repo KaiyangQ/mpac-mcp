@@ -57,3 +57,7 @@ mpac-mcp/build/
 mpac-mcp/dist/
 mpac-mcp/src/*.egg-info/
 .build-venv/
+
+# Semi-public beta deploy state (generated invite codes — never commit)
+deploy/scripts/.invite-codes.txt
+deploy/scripts/.env

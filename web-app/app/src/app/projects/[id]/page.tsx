@@ -632,6 +632,9 @@ type ChatTurn = {
   content: string;
   pending?: boolean;
   error?: boolean;
+  /** True when the API returned 402 Payment Required — i.e. this user
+   * hasn't added a BYOK Anthropic key yet. We render a link to /settings. */
+  needsApiKey?: boolean;
 };
 
 function AiChat({
@@ -684,10 +687,17 @@ function AiChat({
     } catch (err) {
       const message =
         err instanceof ApiError ? err.message : "Chat request failed";
+      const needsApiKey = err instanceof ApiError && err.status === 402;
       setTurns((prev) =>
         prev.map((t) =>
           t.id === pendingTurn.id
-            ? { ...t, content: message, pending: false, error: true }
+            ? {
+                ...t,
+                content: message,
+                pending: false,
+                error: true,
+                needsApiKey,
+              }
             : t,
         ),
       );
@@ -756,11 +766,21 @@ function AiChat({
                     </span>
                   </div>
                 ) : (
-                  t.content.split("\n").map((line, i) => (
-                    <p key={i} className={line === "" ? "h-2" : "mb-0.5 whitespace-pre-wrap break-words"}>
-                      {line}
-                    </p>
-                  ))
+                  <>
+                    {t.content.split("\n").map((line, i) => (
+                      <p key={i} className={line === "" ? "h-2" : "mb-0.5 whitespace-pre-wrap break-words"}>
+                        {line}
+                      </p>
+                    ))}
+                    {t.needsApiKey && (
+                      <Link
+                        href="/settings"
+                        className="inline-block mt-2 text-[11px] px-2 py-1 rounded bg-[var(--accent)]/10 text-[var(--accent)] ring-1 ring-[var(--accent)]/30 hover:bg-[var(--accent)]/20 transition-colors"
+                      >
+                        Add API key in Settings →
+                      </Link>
+                    )}
+                  </>
                 )}
               </div>
             </div>

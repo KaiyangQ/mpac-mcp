@@ -10,6 +10,7 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     display_name: str
+    invite_code: str  # Semi-public beta: must match an unused SignupCode row.
 
 class LoginRequest(BaseModel):
     email: str
@@ -71,6 +72,17 @@ class InvitePreview(BaseModel):
 
 class InviteAccept(BaseModel):
     invite_code: str
+
+
+# ── Settings (BYOK Anthropic key) ──
+
+class AnthropicKeyStatus(BaseModel):
+    """Never returns the key itself — just whether one is on file."""
+    has_key: bool
+    key_preview: Optional[str] = None  # e.g. "sk-ant-...1234" for confirmation
+
+class AnthropicKeyUpdate(BaseModel):
+    api_key: str
 
 
 # ── Chat ──

@@ -29,7 +29,7 @@ import secrets
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..config import ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDE_MODEL
+from ..config import ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDE_MODEL, IS_PRODUCTION
 from ..mpac_bridge import (
     ProjectSession,
     SessionRegistry,
@@ -45,37 +45,46 @@ from .prompts import SYSTEM_PROMPT
 log = logging.getLogger("mpac.agent")
 
 
-# ── Anthropic client (lazy — only used if API key is configured) ─────
+# ── Anthropic client (per-user, BYOK) ─────────────────────────────────
+#
+# Before the semi-public beta we cached a single AsyncAnthropic client at
+# module level, keyed off the platform-wide ANTHROPIC_API_KEY. Now each
+# request builds its own client from the calling user's stored key
+# (decrypted in routes/chat.py and passed in via ClaudeAgent.api_key).
+# We don't cache — different users ⇒ different keys ⇒ different clients.
+#
+# In development (MPAC_WEB_ENV != production) we still honour the legacy
+# platform ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN env vars as a fallback,
+# so `uvicorn` against a local DB keeps working without a fresh BYOK setup.
 
-_async_client = None  # populated on first use
 
+def _get_client(user_api_key: str | None):
+    """Construct an AsyncAnthropic client for this request.
 
-def _get_client():
-    """Lazily construct the shared AsyncAnthropic client.
-
-    Supports two auth modes:
-      * ``ANTHROPIC_API_KEY`` — standard api-key auth (``x-api-key`` header).
-      * ``ANTHROPIC_AUTH_TOKEN`` — Bearer auth, for Claude Code OAuth tokens
-        or any other Bearer credential scoped to ``user:inference``.
-    If both are set, the api-key wins (explicit > inferred).
+    Priority: user's BYOK key → dev platform api-key → dev platform bearer.
+    In production the platform fallbacks are off (we never read them), so
+    a user without a key gets ``None`` and the caller returns a 402.
     """
-    global _async_client
-    if _async_client is not None:
-        return _async_client
-    if not ANTHROPIC_API_KEY and not ANTHROPIC_AUTH_TOKEN:
-        return None
     try:
         from anthropic import AsyncAnthropic  # noqa: WPS433 — local import is fine
     except ImportError:
         log.warning("anthropic SDK not installed; falling back to canned replies")
         return None
+
+    if user_api_key:
+        return AsyncAnthropic(api_key=user_api_key)
+
+    if IS_PRODUCTION:
+        # No platform fallback in prod — caller must have provided a key.
+        return None
+
     if ANTHROPIC_API_KEY:
-        _async_client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-        log.info("Claude agent using api-key auth")
-    else:
-        _async_client = AsyncAnthropic(auth_token=ANTHROPIC_AUTH_TOKEN)
-        log.info("Claude agent using Bearer auth (OAuth token)")
-    return _async_client
+        log.info("Claude agent falling back to dev platform ANTHROPIC_API_KEY")
+        return AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+    if ANTHROPIC_AUTH_TOKEN:
+        log.info("Claude agent falling back to dev platform ANTHROPIC_AUTH_TOKEN")
+        return AsyncAnthropic(auth_token=ANTHROPIC_AUTH_TOKEN)
+    return None
 
 
 # ── Tool schema (forced single-call) ─────────────────────────────────
@@ -203,10 +212,13 @@ class ClaudeAgent:
         project: Project,
         registry: SessionRegistry,
         db,  # SQLAlchemy Session
+        api_key: str | None = None,
     ) -> None:
         self.project = project
         self.registry = registry
         self.db = db
+        # BYOK: caller (chat route) hands us the decrypted user key.
+        self.api_key = api_key
 
         # Each agent instance (one per chat turn) gets its own principal_id
         # suffix so it doesn't collide with a previous turn's lingering
@@ -273,7 +285,7 @@ class ClaudeAgent:
 
         from mpac_protocol.core.models import Scope
 
-        client = _get_client()
+        client = _get_client(self.api_key)
         if client is None:
             # Fallback path: no API key → use canned plan. Keep the announce /
             # withdraw dance so the collaboration panel still demos.

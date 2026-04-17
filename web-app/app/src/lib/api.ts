@@ -56,6 +56,11 @@ export type InvitePreview = {
   used: boolean;
 };
 
+export type AnthropicKeyStatus = {
+  has_key: boolean;
+  key_preview?: string | null;
+};
+
 // ── Storage helpers ───────────────────────────────────────
 
 export function getStoredJwt(): string | null {
@@ -119,7 +124,12 @@ async function request<T>(
 // ── Auth ──────────────────────────────────────────────────
 
 export const api = {
-  register: (payload: { email: string; password: string; display_name: string }) =>
+  register: (payload: {
+    email: string;
+    password: string;
+    display_name: string;
+    invite_code: string;
+  }) =>
     request<AuthResponse>("POST", "/api/register", payload, { auth: false }),
 
   login: (payload: { email: string; password: string }) =>
@@ -152,6 +162,19 @@ export const api = {
 
   acceptInvite: (code: string) =>
     request<TokenResponse>("POST", "/api/invites/accept", { invite_code: code }),
+
+  // ── Settings: BYOK Anthropic key ────────────────────────
+
+  getAnthropicKey: () =>
+    request<AnthropicKeyStatus>("GET", "/api/settings/anthropic-key"),
+
+  setAnthropicKey: (apiKey: string) =>
+    request<AnthropicKeyStatus>("PUT", "/api/settings/anthropic-key", {
+      api_key: apiKey,
+    }),
+
+  deleteAnthropicKey: () =>
+    request<AnthropicKeyStatus>("DELETE", "/api/settings/anthropic-key"),
 
   // ── Chat (Phase E) ──────────────────────────────────────
 

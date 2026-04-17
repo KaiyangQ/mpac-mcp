@@ -1,0 +1,39 @@
+# fly.io app config for the MPAC Web App FastAPI backend.
+#
+# Deploy from repo root:
+#     fly deploy --config deploy/fly-webapi/fly.toml \
+#                --dockerfile deploy/fly-webapi/Dockerfile
+#
+# Prerequisites (one-time):
+#     fly apps create mpac-web-api
+#     fly volumes create webapi_data --region dfw --size 1 --app mpac-web-api
+#     # See deploy/scripts/seed-webapi-secrets.sh for secret bootstrap.
+
+app             = "mpac-web-api"
+primary_region  = "dfw"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  MPAC_WEB_ENV      = "production"
+  MPAC_WEB_DB_DIR   = "/data"
+  MPAC_LOG_LEVEL    = "INFO"
+
+[http_service]
+  internal_port         = 8001
+  force_https           = true
+  # Don't stop machines automatically — the FastAPI process holds the
+  # in-process MPAC coordinator's live session state. Cold starts would
+  # drop every active collaboration session.
+  auto_stop_machines    = "off"
+  auto_start_machines   = true
+  min_machines_running  = 1
+
+[[mounts]]
+  source      = "webapi_data"
+  destination = "/data"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "512mb"

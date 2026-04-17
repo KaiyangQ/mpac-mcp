@@ -35,6 +35,12 @@ export function TopNav({ title, children }: { title?: string; children?: React.R
         {children}
         {user && (
           <div className="flex items-center gap-2 pl-3 ml-1 border-l border-[var(--border)]">
+            <Link
+              href="/settings"
+              className="text-xs px-2 py-1 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+            >
+              Settings
+            </Link>
             <div
               className="w-7 h-7 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center text-xs font-medium text-[var(--text-primary)]"
               title={user.email}

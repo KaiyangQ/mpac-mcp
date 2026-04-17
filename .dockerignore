@@ -1,7 +1,7 @@
 # .dockerignore — keep fly.io build contexts small.
 #
-# Strategy: exclude everything, then whitelist the three trees the hosted
-# coordinator Dockerfile needs. If you add a new deploy/ target that needs
+# Strategy: exclude everything, then whitelist the trees Dockerfiles under
+# deploy/ actually COPY. If you add a new deploy/ target that needs
 # different files, add its whitelist lines below.
 
 # --- exclude everything by default ---
@@ -11,6 +11,8 @@
 !mpac-package/
 !mpac-mcp/
 !deploy/
+# Web-app split: fly-webapi copies web-app/api/, fly-webapp copies web-app/app/.
+!web-app/
 
 # --- re-exclude build / cache / venv noise inside the whitelisted trees ---
 **/__pycache__/
@@ -33,3 +35,10 @@ mpac-mcp/*.egg-info/
 mpac-package/dist/
 mpac-package/build/
 mpac-package/*.egg-info/
+
+# Next.js / web-app noise (Docker build runs its own `npm ci` + `next build`)
+web-app/app/.next/
+web-app/app/node_modules/
+web-app/api/mpac_web.db
+web-app/api/smoke.db
+web-app/api/*.db

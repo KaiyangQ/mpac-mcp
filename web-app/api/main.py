@@ -18,7 +18,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from .auth import decode_jwt
+from .config import ALLOWED_ORIGINS, INVITE_CODES, IS_PRODUCTION
 from .database import SessionLocal, init_db, get_db
+from .models import SignupCode, User
 from .mpac_bridge import (
     browser_action_to_envelope,
     build_verifier_for_project,
@@ -28,15 +30,47 @@ from .mpac_bridge import (
     registry,
     unregister_and_goodbye,
 )
-from .models import User
 
 log = logging.getLogger("mpac.web")
 
 
+def _seed_signup_codes() -> None:
+    """Insert configured invite codes that don't yet exist in the DB.
+
+    We never delete rows here — a code that's been burned (used_by_id set)
+    must stay in the DB even if it's dropped from the env var, so a redeploy
+    can't accidentally resurrect it. Similarly, we don't touch `used_by_id`
+    on existing rows, so reseeding is idempotent.
+    """
+    if not INVITE_CODES:
+        return
+    db = SessionLocal()
+    try:
+        existing = {
+            row.code for row in db.query(SignupCode).filter(
+                SignupCode.code.in_(INVITE_CODES)
+            ).all()
+        }
+        inserted = 0
+        for code in INVITE_CODES:
+            if code not in existing:
+                db.add(SignupCode(code=code))
+                inserted += 1
+        if inserted:
+            db.commit()
+            log.info("Seeded %d new signup code(s); %d already present",
+                     inserted, len(existing))
+        else:
+            log.info("Signup codes already seeded (%d in DB)", len(existing))
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Create DB tables on startup."""
+    """Create DB tables on startup + seed signup codes."""
     init_db()
+    _seed_signup_codes()
     yield
 
 
@@ -46,26 +80,45 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow the Next.js dev server (any localhost port in dev) and prod frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):\d+$",
-    allow_origins=[
-        "https://mpac-web.fly.dev",
-        "https://mpac-web.vercel.app",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS — dev allows any localhost port; prod reads an explicit allowlist
+# from MPAC_WEB_ALLOWED_ORIGINS. We keep `allow_credentials=True` because
+# the future cookie-based refresh flow needs it; today's JWT-in-localStorage
+# setup works either way.
+if IS_PRODUCTION:
+    if not ALLOWED_ORIGINS:
+        log.warning(
+            "MPAC_WEB_ALLOWED_ORIGINS is empty in production — all browsers "
+            "will be refused by CORS. Set it to the deployed frontend URL."
+        )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):\d+$",
+        # Extra prod-style origins allowed in dev too, so a local API + hosted
+        # frontend combo works for smoke-testing.
+        allow_origins=ALLOWED_ORIGINS or [
+            "https://mpac-web-app.fly.dev",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # Import and include routers
-from .routes import users, projects, tokens, chat  # noqa: E402
+from .routes import users, projects, tokens, chat, settings  # noqa: E402
 
 app.include_router(users.router, prefix="/api", tags=["auth"])
 app.include_router(projects.router, prefix="/api", tags=["projects"])
 app.include_router(tokens.router, prefix="/api", tags=["tokens"])
 app.include_router(chat.router, prefix="/api", tags=["chat"])
+app.include_router(settings.router, prefix="/api", tags=["settings"])
 
 
 @app.get("/health")
@@ -74,6 +127,26 @@ async def health():
 
 
 # ── WebSocket: Browser ↔ MPAC coordinator bridge ─────────────────────
+
+def _origin_allowed(origin: str | None) -> bool:
+    """Check a WebSocket upgrade's Origin header against our CORS allowlist.
+
+    Browsers send ``Origin`` on WS handshakes but the server has to validate
+    it explicitly — FastAPI/Starlette's ``CORSMiddleware`` only covers HTTP.
+    In dev we accept missing origin (curl / wscat) so local manual testing
+    keeps working.
+    """
+    if not origin:
+        return not IS_PRODUCTION
+    if origin in ALLOWED_ORIGINS:
+        return True
+    if not IS_PRODUCTION and (
+        origin.startswith("http://localhost:")
+        or origin.startswith("http://127.0.0.1:")
+    ):
+        return True
+    return False
+
 
 @app.websocket("/ws/session/{project_id}")
 async def ws_session(ws: WebSocket, project_id: int, token: str = ""):
@@ -89,6 +162,13 @@ async def ws_session(ws: WebSocket, project_id: int, token: str = ""):
         (see ``browser_action_to_envelope`` for the vocabulary).
       - Receives raw MPAC envelopes — frontend matches on ``message_type``.
     """
+    # 0. Origin pin — reject cross-site WebSocket attempts before doing any work.
+    origin = ws.headers.get("origin") or ws.headers.get("Origin")
+    if not _origin_allowed(origin):
+        log.warning("Rejecting WS handshake from disallowed origin=%r", origin)
+        await ws.close(code=4403, reason="origin not allowed")
+        return
+
     # 1. JWT → user
     payload = decode_jwt(token) if token else None
     if not payload:

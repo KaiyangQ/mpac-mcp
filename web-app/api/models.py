@@ -18,6 +18,9 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     display_name = Column(String(128), nullable=False)
+    # Per-user Anthropic API key, encrypted with Fernet (see api/crypto.py).
+    # NULL = user hasn't brought their own key yet ⇒ /api/chat will 402.
+    anthropic_api_key_encrypted = Column(Text, nullable=True)
     created_at = Column(DateTime, default=_utcnow)
 
     # Relationships
@@ -73,4 +76,22 @@ class Invite(Base):
     # Relationships
     project = relationship("Project", back_populates="invites")
     created_by = relationship("User", foreign_keys=[created_by_id])
+    used_by = relationship("User", foreign_keys=[used_by_id])
+
+
+class SignupCode(Base):
+    """Single-use invite codes that gate /api/register for the semi-public beta.
+
+    Seeded at startup from ``MPAC_WEB_INVITE_CODES`` — we only insert rows that
+    don't already exist, so a code that's been marked used never gets resurrected
+    by a deploy that still has it in the env var.
+    """
+    __tablename__ = "signup_codes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(64), unique=True, nullable=False, index=True)
+    used_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
     used_by = relationship("User", foreign_keys=[used_by_id])
