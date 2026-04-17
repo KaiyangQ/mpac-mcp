@@ -4,6 +4,7 @@ import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
+import { Group, Panel, Separator } from "react-resizable-panels";
 import { api, ApiError, type Project, type TokenResponse } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { useRequireAuth } from "@/lib/redirect-hooks";
@@ -666,7 +667,7 @@ function AiChat({
   }
 
   return (
-    <div className="flex flex-col h-full border-t border-[var(--border)]">
+    <div className="flex flex-col h-full">
       <div className="px-3 py-2 border-b border-[var(--border)] flex items-center gap-2 flex-shrink-0">
         <span className="text-sm">🤖</span>
         <span className="text-[11px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider">
@@ -760,6 +761,69 @@ function AiChat({
   );
 }
 
+// ── Resize handles for react-resizable-panels v4 Group ────────────────
+// The Separator itself is 4px wide/tall (easy to grab on a trackpad) with
+// a visible 1px line rendered via ::before down its center.
+//
+// v4 sets `data-separator="inactive" | "active"` on the root (active = being
+// dragged). Hover feedback uses a plain `:hover` selector; drag feedback
+// uses the `data-[separator=active]` attribute selector.
+
+function VSplit() {
+  return (
+    <Separator
+      className={
+        "relative w-1 cursor-col-resize shrink-0 " +
+        "before:content-[''] before:absolute before:inset-y-0 " +
+        "before:left-1/2 before:-translate-x-1/2 before:w-px " +
+        "before:bg-[var(--border)] before:transition-colors " +
+        "hover:before:bg-[var(--accent)] " +
+        "data-[separator=active]:before:bg-[var(--accent)] " +
+        "data-[separator=active]:before:w-[2px]"
+      }
+    />
+  );
+}
+
+function HSplit() {
+  return (
+    <Separator
+      className={
+        "relative h-1 cursor-row-resize shrink-0 " +
+        "before:content-[''] before:absolute before:inset-x-0 " +
+        "before:top-1/2 before:-translate-y-1/2 before:h-px " +
+        "before:bg-[var(--border)] before:transition-colors " +
+        "hover:before:bg-[var(--accent)] " +
+        "data-[separator=active]:before:bg-[var(--accent)] " +
+        "data-[separator=active]:before:h-[2px]"
+      }
+    />
+  );
+}
+
+// Persist a Group's layout to localStorage under `storageKey`.
+// Hook returns the saved layout (if any) and an `onLayoutChanged` callback.
+function useStoredLayout(storageKey: string) {
+  const [layout, setLayout] = useState<Record<string, number> | undefined>(() => {
+    if (typeof window === "undefined") return undefined;
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      return raw ? JSON.parse(raw) : undefined;
+    } catch {
+      return undefined;
+    }
+  });
+  const save = (next: Record<string, number>) => {
+    setLayout(next);
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {
+      /* quota / disabled — ignore */
+    }
+  };
+  return { layout, save };
+}
+
 // ── Main Page ──────────────────────────────────────────────────────────
 
 export default function WorkspacePage({
@@ -781,6 +845,10 @@ export default function WorkspacePage({
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
   const [activePath, setActivePath] = useState<string | null>("src/auth.py");
+
+  // Persisted drag-to-resize layout
+  const colsLayout = useStoredLayout("mpac.workspace.cols");
+  const rowsLayout = useStoredLayout("mpac.workspace.sidebar-rows");
 
   useEffect(() => {
     if (!user) return;
@@ -935,9 +1003,17 @@ export default function WorkspacePage({
         </div>
       </header>
 
-      {/* Three-Column Layout */}
-      <div className="flex flex-1 overflow-hidden">
-        <aside className="w-56 bg-[var(--bg-secondary)] border-r border-[var(--border)] flex flex-col flex-shrink-0">
+      {/* Three-Column Layout — drag the 1px dividers to resize.
+          Layout percentages persist per-browser via useStoredLayout. */}
+      <Group
+        orientation="horizontal"
+        defaultLayout={colsLayout.layout}
+        onLayoutChanged={colsLayout.save}
+        className="flex-1 overflow-hidden"
+      >
+        {/* Left: file tree */}
+        <Panel id="files" defaultSize="15%" minSize="8%" maxSize="30%" collapsible
+               className="bg-[var(--bg-secondary)] flex flex-col">
           <div className="px-3 py-2 border-b border-[var(--border)]">
             <span className="text-[11px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider">
               Files
@@ -953,15 +1029,19 @@ export default function WorkspacePage({
               onSelect={setActivePath}
             />
           </div>
-        </aside>
+        </Panel>
 
-        <main className="flex-1 flex flex-col min-w-0">
+        <VSplit />
+
+        {/* Center: editor */}
+        <Panel id="editor" defaultSize="60%" minSize="25%"
+               className="flex flex-col bg-[var(--bg-primary)]">
           <div className="h-9 bg-[var(--bg-secondary)] border-b border-[var(--border)] flex items-center px-2 gap-0.5 flex-shrink-0">
             <div className="flex items-center gap-1.5 px-3 py-1 bg-[var(--bg-primary)] rounded-t border border-[var(--border)] border-b-transparent text-xs">
               <span className="text-[#e6edf3]">{activePath ?? "(no file)"}</span>
             </div>
           </div>
-          <div className="flex-1">
+          <div className="flex-1 min-h-0">
             <Editor
               height="100%"
               language={activePath?.endsWith(".md") ? "markdown" : "python"}
@@ -979,29 +1059,43 @@ export default function WorkspacePage({
               }}
             />
           </div>
-        </main>
+        </Panel>
 
-        <aside className="w-72 bg-[var(--bg-secondary)] border-l border-[var(--border)] flex flex-col flex-shrink-0">
-          <div className="flex-[3] overflow-hidden">
-            <CollabPanel
-              participants={session.participants}
-              conflicts={session.conflicts}
-              selfPrincipalId={selfPrincipalId}
-              myIntents={session.myIntents}
-              onAck={session.ackConflict}
-              onYield={session.yieldTask}
-            />
-          </div>
-          <div className="flex-[2] flex flex-col min-h-0">
-            <AiChat
-              projectId={project.id}
-              userInitial={
-                user.display_name[0]?.toUpperCase() ?? "?"
-              }
-            />
-          </div>
-        </aside>
-      </div>
+        <VSplit />
+
+        {/* Right: collab panel + AI chat, vertically resizable */}
+        <Panel id="sidebar" defaultSize="25%" minSize="15%" maxSize="50%" collapsible
+               className="bg-[var(--bg-secondary)]">
+          <Group
+            orientation="vertical"
+            defaultLayout={rowsLayout.layout}
+            onLayoutChanged={rowsLayout.save}
+            className="h-full"
+          >
+            <Panel id="collab" defaultSize="60%" minSize="20%" className="overflow-hidden">
+              <CollabPanel
+                participants={session.participants}
+                conflicts={session.conflicts}
+                selfPrincipalId={selfPrincipalId}
+                myIntents={session.myIntents}
+                onAck={session.ackConflict}
+                onYield={session.yieldTask}
+              />
+            </Panel>
+
+            <HSplit />
+
+            <Panel id="chat" defaultSize="40%" minSize="15%" className="flex flex-col min-h-0">
+              <AiChat
+                projectId={project.id}
+                userInitial={
+                  user.display_name[0]?.toUpperCase() ?? "?"
+                }
+              />
+            </Panel>
+          </Group>
+        </Panel>
+      </Group>
 
       {/* Status Bar */}
       <footer className="h-6 bg-[var(--bg-secondary)] border-t border-[var(--border)] flex items-center px-3 text-[11px] text-[var(--text-secondary)] gap-3 flex-shrink-0">
