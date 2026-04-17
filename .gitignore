@@ -44,3 +44,15 @@ mpac-mcp/.pytest_cache/
 # Local scratch test outputs
 test_output/
 examples/two_machine_demo/host/workspace/meeting-notes.md
+
+# Web app: local dev artifacts
+web-app/.venv/
+web-app/api/mpac_web.db
+web-app/app/.next/
+web-app/app/.env.local
+# (node_modules already covered by top-level rule)
+
+# mpac-mcp build artifacts
+mpac-mcp/build/
+mpac-mcp/dist/
+mpac-mcp/src/*.egg-info/

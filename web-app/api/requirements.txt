@@ -7,3 +7,7 @@ pyjwt>=2.8
 anthropic>=0.40.0
 websockets>=14.0
 python-multipart>=0.0.9
+# MPAC protocol core — during dev install editable from local source:
+#   pip install -e ../mpac-package
+# Once `mpac 0.2.0` is on PyPI this becomes a normal pin below.
+# mpac>=0.2.0

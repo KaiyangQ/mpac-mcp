@@ -21,6 +21,11 @@ class AuthResponse(BaseModel):
     email: str
     display_name: str
 
+class MeResponse(BaseModel):
+    user_id: int
+    email: str
+    display_name: str
+
 
 # ── Projects ──
 
@@ -56,6 +61,14 @@ class InviteResponse(BaseModel):
     project_name: str
     session_id: str
 
+class InvitePreview(BaseModel):
+    """Read-only lookup so /invite/[code] can show project info before accept."""
+    invite_code: str
+    project_name: str
+    session_id: str
+    invited_by: str
+    used: bool
+
 class InviteAccept(BaseModel):
     invite_code: str
 
@@ -67,3 +80,6 @@ class ChatMessage(BaseModel):
     project_id: int
     file_context: Optional[str] = None  # current file content for AI context
     file_path: Optional[str] = None     # current file path
+
+class ChatReply(BaseModel):
+    reply: str

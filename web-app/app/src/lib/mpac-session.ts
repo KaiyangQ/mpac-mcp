@@ -1,0 +1,460 @@
+"use client";
+// React hook that manages a single browser's connection to the MPAC
+// coordinator via our FastAPI bridge. Owns the WebSocket lifecycle,
+// parses incoming MPAC envelopes, and exposes a typed surface the
+// workspace page consumes.
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type BrowserAction,
+  type ConflictReportPayload,
+  type IntentAnnouncePayload,
+  type IntentWithdrawPayload,
+  type MpacEnvelope,
+  type ParticipantUpdatePayload,
+  type ProtocolErrorPayload,
+  type SessionInfoPayload,
+} from "./envelope-types";
+import { API_URL, getStoredJwt } from "./api";
+
+export type ConnectionStatus =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "closed"
+  | "error";
+
+export type LiveParticipant = {
+  principal_id: string;
+  display_name: string;
+  principal_type: "human" | "agent" | string;
+  is_agent: boolean;
+  is_you: boolean;
+  online: boolean;
+  roles: string[];
+  /** Current intent they've announced, if any. */
+  active_intent?: IntentAnnouncePayload;
+};
+
+export type LiveConflict = {
+  conflict_id: string;
+  category: string;
+  severity?: string;
+  principal_a: string;
+  principal_b: string;
+  intent_a: string;
+  intent_b: string;
+};
+
+export type MpacSessionState = {
+  status: ConnectionStatus;
+  participants: LiveParticipant[];
+  conflicts: LiveConflict[];
+  /** Intents we ourselves have open, keyed by intent_id. */
+  myIntents: Record<string, IntentAnnouncePayload>;
+  /** Last protocol-level error, if any. */
+  lastError?: ProtocolErrorPayload;
+  /** True once SESSION_INFO landed — actions are safe to send. */
+  joined: boolean;
+};
+
+export type MpacSessionActions = {
+  /** Start an intent on the given files. Returns the generated intent_id. */
+  beginTask: (files: string[], objective?: string) => string | null;
+  /** End a prior intent. */
+  yieldTask: (intentId: string, reason?: string) => void;
+  /** Acknowledge a detected conflict. */
+  ackConflict: (conflictId: string) => void;
+};
+
+export type UseMpacSessionOpts = {
+  projectId: number;
+  selfPrincipalId: string;
+  /** Pass the logged-in user's display_name so we can tag "(you)" client-side. */
+  selfDisplayName: string;
+  enabled?: boolean;
+};
+
+const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 15000];
+
+function randomId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  }
+  return Math.random().toString(36).slice(2, 14);
+}
+
+function wsUrlFromApi(apiUrl: string): string {
+  // API_URL is e.g. http://127.0.0.1:8001 — translate scheme to ws/wss.
+  if (apiUrl.startsWith("https://")) return "wss://" + apiUrl.slice(8);
+  if (apiUrl.startsWith("http://")) return "ws://" + apiUrl.slice(7);
+  return apiUrl;
+}
+
+export function useMpacSession({
+  projectId,
+  selfPrincipalId,
+  selfDisplayName,
+  enabled = true,
+}: UseMpacSessionOpts): MpacSessionState & MpacSessionActions {
+  const [status, setStatus] = useState<ConnectionStatus>("idle");
+  const [participants, setParticipants] = useState<LiveParticipant[]>([]);
+  const [conflicts, setConflicts] = useState<LiveConflict[]>([]);
+  const [myIntents, setMyIntents] = useState<Record<string, IntentAnnouncePayload>>({});
+  const [lastError, setLastError] = useState<ProtocolErrorPayload | undefined>();
+  const [joined, setJoined] = useState(false);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const attemptRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closedByUserRef = useRef(false);
+  // Stable refs so send() doesn't stale-close.
+  const selfPrincipalRef = useRef(selfPrincipalId);
+  useEffect(() => {
+    selfPrincipalRef.current = selfPrincipalId;
+  }, [selfPrincipalId]);
+  const selfNameRef = useRef(selfDisplayName);
+  useEffect(() => {
+    selfNameRef.current = selfDisplayName;
+  }, [selfDisplayName]);
+
+  // ─── Participant table helpers ──────────────────────────
+
+  const upsertParticipants = useCallback(
+    (
+      incoming: Array<Partial<LiveParticipant> & { principal_id: string }>,
+    ) => {
+      setParticipants((prev) => {
+        const map = new Map(prev.map((p) => [p.principal_id, p]));
+        for (const raw of incoming) {
+          const existing = map.get(raw.principal_id);
+          const merged: LiveParticipant = {
+            principal_id: raw.principal_id,
+            display_name:
+              raw.display_name ?? existing?.display_name ?? raw.principal_id,
+            principal_type:
+              raw.principal_type ?? existing?.principal_type ?? "human",
+            is_agent:
+              raw.is_agent ??
+              existing?.is_agent ??
+              (raw.principal_type === "agent"),
+            is_you: raw.principal_id === selfPrincipalRef.current,
+            online: raw.online ?? existing?.online ?? true,
+            roles: raw.roles ?? existing?.roles ?? [],
+            active_intent: raw.active_intent ?? existing?.active_intent,
+          };
+          map.set(raw.principal_id, merged);
+        }
+        return Array.from(map.values());
+      });
+    },
+    [],
+  );
+
+  const updateParticipantIntent = useCallback(
+    (principalId: string, intent: IntentAnnouncePayload | undefined) => {
+      setParticipants((prev) =>
+        prev.map((p) =>
+          p.principal_id === principalId ? { ...p, active_intent: intent } : p,
+        ),
+      );
+    },
+    [],
+  );
+
+  const markParticipantOffline = useCallback((principalId: string) => {
+    setParticipants((prev) => {
+      const existing = prev.find((p) => p.principal_id === principalId);
+      // Agents are ephemeral — when they leave, they're gone; keep the
+      // panel tidy by dropping them entirely instead of piling up as
+      // "offline" on every chat turn (each turn uses a fresh principal_id).
+      if (existing?.is_agent) {
+        return prev.filter((p) => p.principal_id !== principalId);
+      }
+      // Humans stay as offline so teammates can see "was here recently".
+      return prev.map((p) =>
+        p.principal_id === principalId
+          ? { ...p, online: false, active_intent: undefined }
+          : p,
+      );
+    });
+  }, []);
+
+  // ─── Envelope dispatch ──────────────────────────────────
+
+  const handleEnvelope = useCallback(
+    (env: MpacEnvelope) => {
+      switch (env.message_type) {
+        case "SESSION_INFO": {
+          const p = env.payload as SessionInfoPayload;
+          if (p.participants) {
+            upsertParticipants(
+              p.participants.map((pp) => ({
+                principal_id: pp.principal_id,
+                display_name: pp.display_name,
+                principal_type: pp.principal_type,
+                is_agent: pp.principal_type === "agent",
+                online: true,
+                roles: pp.roles ?? [],
+              })),
+            );
+          }
+          // Also make sure *we* appear immediately.
+          upsertParticipants([
+            {
+              principal_id: selfPrincipalRef.current,
+              display_name: selfNameRef.current,
+              principal_type: "human",
+              is_agent: false,
+              online: true,
+            },
+          ]);
+          setJoined(true);
+          break;
+        }
+        case "PARTICIPANT_UPDATE": {
+          const p = env.payload as ParticipantUpdatePayload;
+          if (p.status === "offline") {
+            // Offline notice — delegate to the shared handler so agents get
+            // dropped while humans stay as "offline".
+            markParticipantOffline(p.principal_id);
+          } else {
+            upsertParticipants([
+              {
+                principal_id: p.principal_id,
+                display_name: p.display_name,
+                principal_type: p.principal_type,
+                is_agent: p.principal_type === "agent",
+                online: true,
+                roles: p.roles,
+              },
+            ]);
+          }
+          break;
+        }
+        case "INTENT_ANNOUNCE": {
+          const p = env.payload as IntentAnnouncePayload;
+          const pid = env.sender.principal_id;
+          // Don't pass display_name here — if we already have one (from
+          // SESSION_INFO or a prior PARTICIPANT_UPDATE) the upsert keeps it;
+          // otherwise it falls back to principal_id until PARTICIPANT_UPDATE
+          // arrives. Passing a value would clobber the real display name.
+          upsertParticipants([
+            {
+              principal_id: pid,
+              principal_type: env.sender.principal_type,
+              is_agent: env.sender.principal_type === "agent",
+              online: true,
+            },
+          ]);
+          updateParticipantIntent(pid, p);
+          if (pid === selfPrincipalRef.current) {
+            setMyIntents((prev) => ({ ...prev, [p.intent_id]: p }));
+          }
+          break;
+        }
+        case "INTENT_WITHDRAW": {
+          const p = env.payload as IntentWithdrawPayload;
+          const pid = env.sender.principal_id;
+          updateParticipantIntent(pid, undefined);
+          // Drop any conflicts that referenced this intent.
+          setConflicts((prev) =>
+            prev.filter(
+              (c) => c.intent_a !== p.intent_id && c.intent_b !== p.intent_id,
+            ),
+          );
+          if (pid === selfPrincipalRef.current) {
+            setMyIntents((prev) => {
+              const next = { ...prev };
+              delete next[p.intent_id];
+              return next;
+            });
+          }
+          break;
+        }
+        case "CONFLICT_REPORT": {
+          const p = env.payload as ConflictReportPayload;
+          if (!p.conflict_id) break;
+          setConflicts((prev) => {
+            if (prev.some((c) => c.conflict_id === p.conflict_id)) return prev;
+            return [
+              ...prev,
+              {
+                conflict_id: p.conflict_id,
+                category: p.category ?? "unknown",
+                severity: p.severity,
+                principal_a: p.principal_a ?? "",
+                principal_b: p.principal_b ?? "",
+                intent_a: p.intent_a ?? "",
+                intent_b: p.intent_b ?? "",
+              },
+            ];
+          });
+          break;
+        }
+        case "CONFLICT_ACK":
+        case "RESOLUTION": {
+          const cid = (env.payload as { conflict_id?: string }).conflict_id;
+          if (cid) {
+            setConflicts((prev) =>
+              prev.filter((c) => c.conflict_id !== cid),
+            );
+          }
+          break;
+        }
+        case "GOODBYE": {
+          markParticipantOffline(env.sender.principal_id);
+          break;
+        }
+        case "PROTOCOL_ERROR": {
+          setLastError(env.payload as ProtocolErrorPayload);
+          break;
+        }
+        default:
+          // Ignore HEARTBEAT echoes etc.
+          break;
+      }
+    },
+    [markParticipantOffline, updateParticipantIntent, upsertParticipants],
+  );
+
+  // ─── Connection management ──────────────────────────────
+
+  const connect = useCallback(() => {
+    if (!enabled) return;
+    const jwt = getStoredJwt();
+    if (!jwt) return;
+
+    const url = `${wsUrlFromApi(API_URL)}/ws/session/${projectId}?token=${encodeURIComponent(jwt)}`;
+    setStatus(attemptRef.current === 0 ? "connecting" : "reconnecting");
+
+    const ws = new WebSocket(url);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      attemptRef.current = 0;
+      setStatus("connected");
+    };
+    ws.onmessage = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.data) as MpacEnvelope;
+        handleEnvelope(parsed);
+      } catch {
+        /* non-JSON frame — ignore */
+      }
+    };
+    ws.onerror = () => {
+      setStatus("error");
+    };
+    ws.onclose = () => {
+      wsRef.current = null;
+      setJoined(false);
+      if (closedByUserRef.current) {
+        setStatus("closed");
+        return;
+      }
+      // Exponential-ish backoff reconnect.
+      const delay =
+        RECONNECT_DELAYS_MS[
+          Math.min(attemptRef.current, RECONNECT_DELAYS_MS.length - 1)
+        ];
+      attemptRef.current += 1;
+      setStatus("reconnecting");
+      reconnectTimerRef.current = setTimeout(connect, delay);
+    };
+  }, [enabled, projectId, handleEnvelope]);
+
+  useEffect(() => {
+    closedByUserRef.current = false;
+    connect();
+    return () => {
+      closedByUserRef.current = true;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      wsRef.current?.close();
+      wsRef.current = null;
+    };
+  }, [connect]);
+
+  // ─── Outbound actions ───────────────────────────────────
+
+  const send = useCallback((action: BrowserAction) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify(action));
+    return true;
+  }, []);
+
+  const beginTask = useCallback(
+    (files: string[], objective?: string): string | null => {
+      if (files.length === 0) return null;
+      const intent_id = `intent-${randomId()}`;
+      // Optimistically add to my intents so UI can reflect immediately.
+      const optimistic: IntentAnnouncePayload = {
+        intent_id,
+        objective,
+        scope: { kind: "file_set", resources: files },
+      };
+      setMyIntents((prev) => ({ ...prev, [intent_id]: optimistic }));
+      updateParticipantIntent(selfPrincipalRef.current, optimistic);
+      const ok = send({
+        action: "begin_task",
+        intent_id,
+        objective,
+        files,
+      });
+      return ok ? intent_id : null;
+    },
+    [send, updateParticipantIntent],
+  );
+
+  const yieldTask = useCallback(
+    (intentId: string, reason?: string) => {
+      // Optimistic local clear.
+      setMyIntents((prev) => {
+        const next = { ...prev };
+        delete next[intentId];
+        return next;
+      });
+      updateParticipantIntent(selfPrincipalRef.current, undefined);
+      setConflicts((prev) =>
+        prev.filter(
+          (c) => c.intent_a !== intentId && c.intent_b !== intentId,
+        ),
+      );
+      send({ action: "yield_task", intent_id: intentId, reason });
+    },
+    [send, updateParticipantIntent],
+  );
+
+  const ackConflict = useCallback(
+    (conflictId: string) => {
+      setConflicts((prev) =>
+        prev.filter((c) => c.conflict_id !== conflictId),
+      );
+      send({ action: "ack_conflict", conflict_id: conflictId });
+    },
+    [send],
+  );
+
+  return useMemo(
+    () => ({
+      status,
+      participants,
+      conflicts,
+      myIntents,
+      lastError,
+      joined,
+      beginTask,
+      yieldTask,
+      ackConflict,
+    }),
+    [
+      status, participants, conflicts, myIntents, lastError, joined,
+      beginTask, yieldTask, ackConflict,
+    ],
+  );
+}
