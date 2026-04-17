@@ -1,6 +1,16 @@
 # mpac-mcp
 
-`mpac-mcp` is the MCP-facing bridge for MPAC.
+[![arXiv](https://img.shields.io/badge/arXiv-2604.09744-b31b1b.svg)](https://arxiv.org/abs/2604.09744)
+[![PyPI](https://img.shields.io/pypi/v/mpac-mcp.svg)](https://pypi.org/project/mpac-mcp/)
+
+📄 **Paper:** [MPAC: A Multi-Principal Agent Coordination Protocol for Interoperable Multi-Agent Collaboration](https://arxiv.org/abs/2604.09744) (arXiv:2604.09744)
+
+`mpac-mcp` is the MCP-facing bridge for MPAC — it lets MCP-aware coding
+clients (Claude Code, Cursor, any MCP host) participate in an MPAC
+coordination session without re-implementing the protocol themselves.
+The underlying protocol and reference runtime live in
+[`mpac-protocol`](https://github.com/KaiyangQ/mpac-protocol) / the
+[`mpac`](https://pypi.org/project/mpac/) package.
 
 It does not re-implement the coordination protocol. Instead it:
 

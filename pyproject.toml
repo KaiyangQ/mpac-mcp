@@ -37,6 +37,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/KaiyangQ/mpac-mcp"
 Repository = "https://github.com/KaiyangQ/mpac-mcp"
+Paper = "https://arxiv.org/abs/2604.09744"
 "MPAC Protocol" = "https://github.com/KaiyangQ/mpac-protocol"
 Issues = "https://github.com/KaiyangQ/mpac-mcp/issues"
 
