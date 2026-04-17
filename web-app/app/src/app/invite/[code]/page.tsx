@@ -5,11 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, ApiError, type InvitePreview } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import {
-  AuthShell,
-  primaryBtnClass,
-  errorClass,
-} from "@/components/auth-shell";
+import { AuthShell, greenBtnClass } from "@/components/auth-shell";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 export default function InviteAcceptPage({
   params,
@@ -58,7 +56,6 @@ export default function InviteAcceptPage({
     try {
       const tokenRes = await api.acceptInvite(code);
       // Find the project via session_id lookup in /projects list.
-      // Simpler: list → match → route.
       const list = await api.listProjects();
       const match = list.projects.find(
         (p) => p.session_id === tokenRes.session_id,
@@ -66,7 +63,6 @@ export default function InviteAcceptPage({
       if (match) {
         router.replace(`/projects/${match.id}`);
       } else {
-        // Shouldn't happen, but fall back to projects list.
         router.replace("/projects");
       }
     } catch (e) {
@@ -84,7 +80,9 @@ export default function InviteAcceptPage({
   if (previewError || !preview) {
     return (
       <AuthShell title="Invite not found" subtitle="This link may have been revoked or mistyped.">
-        <div className={errorClass}>{previewError ?? "Unknown error"}</div>
+        <Alert variant="destructive" className="mb-3">
+          <AlertDescription>{previewError ?? "Unknown error"}</AlertDescription>
+        </Alert>
         <Link
           href="/"
           className="block text-center text-sm text-[var(--accent)] hover:underline"
@@ -128,18 +126,16 @@ export default function InviteAcceptPage({
         }
       >
         <div className="space-y-3">
-          <Link
-            href={`/register?next=${encodeURIComponent(nextPath)}`}
-            className="block w-full py-2 bg-[#238636] hover:bg-[#2ea043] text-white text-sm font-medium rounded-md text-center transition-colors"
-          >
-            Create account to join
-          </Link>
-          <Link
-            href={`/login?next=${encodeURIComponent(nextPath)}`}
-            className="block w-full py-2 bg-[var(--bg-tertiary)] hover:bg-[var(--border)] border border-[var(--border)] text-[var(--text-primary)] text-sm font-medium rounded-md text-center transition-colors"
-          >
-            Sign in to join
-          </Link>
+          <Button asChild className={greenBtnClass}>
+            <Link href={`/register?next=${encodeURIComponent(nextPath)}`}>
+              Create account to join
+            </Link>
+          </Button>
+          <Button asChild variant="outline" className="w-full">
+            <Link href={`/login?next=${encodeURIComponent(nextPath)}`}>
+              Sign in to join
+            </Link>
+          </Button>
         </div>
       </AuthShell>
     );
@@ -151,7 +147,11 @@ export default function InviteAcceptPage({
       title={`Join ${preview.project_name}`}
       subtitle={`Invited by ${preview.invited_by}. You'll get a token scoped to this project only.`}
     >
-      {acceptError && <div className={errorClass}>{acceptError}</div>}
+      {acceptError && (
+        <Alert variant="destructive" className="mb-3">
+          <AlertDescription>{acceptError}</AlertDescription>
+        </Alert>
+      )}
       <div className="bg-[var(--bg-primary)] border border-[var(--border)] rounded-md p-3 mb-4 text-xs">
         <div className="flex justify-between text-[var(--text-secondary)]">
           <span>Project</span>
@@ -166,13 +166,9 @@ export default function InviteAcceptPage({
           <span className="text-[var(--text-primary)]">{user.display_name}</span>
         </div>
       </div>
-      <button
-        onClick={onAccept}
-        disabled={accepting}
-        className={primaryBtnClass}
-      >
+      <Button onClick={onAccept} disabled={accepting} className={greenBtnClass}>
         {accepting ? "Joining…" : "Accept invite"}
-      </button>
+      </Button>
     </AuthShell>
   );
 }

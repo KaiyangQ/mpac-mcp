@@ -6,13 +6,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useRedirectIfAuthed } from "@/lib/redirect-hooks";
 import { ApiError } from "@/lib/api";
-import {
-  AuthShell,
-  inputClass,
-  labelClass,
-  primaryBtnClass,
-  errorClass,
-} from "@/components/auth-shell";
+import { AuthShell, labelClass, greenBtnClass } from "@/components/auth-shell";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 function LoginForm() {
   const { login } = useAuth();
@@ -56,34 +53,36 @@ function LoginForm() {
         </>
       }
     >
-      {err && <div className={errorClass}>{err}</div>}
+      {err && (
+        <Alert variant="destructive" className="mb-3">
+          <AlertDescription>{err}</AlertDescription>
+        </Alert>
+      )}
       <form onSubmit={onSubmit} className="space-y-4">
         <div>
           <label className={labelClass}>Email</label>
-          <input
+          <Input
             type="email"
             required
             autoFocus
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className={inputClass}
             placeholder="you@example.com"
           />
         </div>
         <div>
           <label className={labelClass}>Password</label>
-          <input
+          <Input
             type="password"
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className={inputClass}
             placeholder="••••••••"
           />
         </div>
-        <button type="submit" disabled={busy} className={primaryBtnClass}>
+        <Button type="submit" disabled={busy} className={greenBtnClass}>
           {busy ? "Signing in…" : "Sign in"}
-        </button>
+        </Button>
       </form>
     </AuthShell>
   );

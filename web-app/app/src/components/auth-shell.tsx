@@ -41,14 +41,10 @@ export function AuthShell({
   );
 }
 
-export const inputClass =
-  "w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[#484f58] focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)] transition-colors";
-
 export const labelClass =
   "block text-xs font-medium text-[var(--text-secondary)] mb-1.5 uppercase tracking-wide";
 
-export const primaryBtnClass =
-  "w-full py-2 bg-[#238636] hover:bg-[#2ea043] disabled:bg-[#238636]/50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-md transition-colors";
-
-export const errorClass =
-  "bg-[var(--red)]/10 border border-[var(--red)]/30 text-[var(--red)] text-xs rounded-md px-3 py-2 mb-3";
+// Style classes for a "success green" shadcn <Button> (primary CTA).
+// Kept here so login/register/invite/projects share the same green.
+export const greenBtnClass =
+  "w-full bg-[#238636] hover:bg-[#2ea043] text-white disabled:bg-[#238636]/50";

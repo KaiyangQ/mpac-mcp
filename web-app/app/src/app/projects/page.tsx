@@ -3,9 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Plus, Folder } from "lucide-react";
 import { api, ApiError, type Project } from "@/lib/api";
 import { useRequireAuth } from "@/lib/redirect-hooks";
 import { TopNav } from "@/components/top-nav";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { greenBtnClass } from "@/components/auth-shell";
 
 export default function ProjectsPage() {
   const { user, isLoading: authLoading } = useRequireAuth("/projects");
@@ -76,12 +81,10 @@ export default function ProjectsPage() {
                 AI agents to join.
               </p>
             </div>
-            <button
-              onClick={() => setShowCreate(true)}
-              className="text-sm px-3 py-1.5 bg-[#238636] hover:bg-[#2ea043] text-white rounded-md font-medium transition-colors"
-            >
-              + New project
-            </button>
+            <Button size="sm" onClick={() => setShowCreate(true)} className={greenBtnClass + " w-auto"}>
+              <Plus className="size-4" />
+              New project
+            </Button>
           </div>
 
           {showCreate && (
@@ -93,44 +96,43 @@ export default function ProjectsPage() {
                 Project name
               </label>
               {createError && (
-                <div className="bg-[var(--red)]/10 border border-[var(--red)]/30 text-[var(--red)] text-xs rounded-md px-3 py-2 mb-3">
-                  {createError}
-                </div>
+                <Alert variant="destructive" className="mb-3">
+                  <AlertDescription>{createError}</AlertDescription>
+                </Alert>
               )}
               <div className="flex gap-2">
-                <input
+                <Input
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="my-backend-service"
                   autoFocus
-                  className="flex-1 bg-[var(--bg-primary)] border border-[var(--border)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[#484f58] focus:outline-none focus:border-[var(--accent)]"
                 />
-                <button
+                <Button
                   type="submit"
                   disabled={creating || !newName.trim()}
-                  className="px-3 py-2 bg-[#238636] hover:bg-[#2ea043] disabled:bg-[#238636]/50 text-white text-sm rounded-md font-medium transition-colors"
+                  className={greenBtnClass + " w-auto"}
                 >
                   {creating ? "Creating…" : "Create"}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={() => {
                     setShowCreate(false);
                     setNewName("");
                     setCreateError(null);
                   }}
-                  className="px-3 py-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-sm transition-colors"
                 >
                   Cancel
-                </button>
+                </Button>
               </div>
             </form>
           )}
 
           {listError && (
-            <div className="bg-[var(--red)]/10 border border-[var(--red)]/30 text-[var(--red)] text-sm rounded-md px-3 py-2 mb-4">
-              {listError}
-            </div>
+            <Alert variant="destructive" className="mb-4">
+              <AlertDescription>{listError}</AlertDescription>
+            </Alert>
           )}
 
           {loading ? (
@@ -139,19 +141,17 @@ export default function ProjectsPage() {
             </div>
           ) : projects.length === 0 ? (
             <div className="border border-dashed border-[var(--border)] rounded-lg p-12 text-center">
-              <div className="text-3xl mb-2">📁</div>
+              <Folder className="size-8 mx-auto mb-2 text-[var(--text-secondary)]" />
               <div className="text-sm text-[var(--text-primary)] font-medium mb-1">
                 No projects yet
               </div>
               <div className="text-xs text-[var(--text-secondary)] mb-4">
                 Create your first project to start collaborating
               </div>
-              <button
-                onClick={() => setShowCreate(true)}
-                className="text-sm px-3 py-1.5 bg-[var(--bg-tertiary)] hover:bg-[var(--border)] border border-[var(--border)] rounded-md text-[var(--text-primary)] transition-colors"
-              >
-                + New project
-              </button>
+              <Button size="sm" variant="outline" onClick={() => setShowCreate(true)}>
+                <Plus className="size-4" />
+                New project
+              </Button>
             </div>
           ) : (
             <ul className="space-y-2">

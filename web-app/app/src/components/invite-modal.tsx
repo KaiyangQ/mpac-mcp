@@ -2,16 +2,30 @@
 // Owner-only invite modal. Generates an invite link the owner can share.
 
 import { useState } from "react";
+import { Copy, Check } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { greenBtnClass } from "@/components/auth-shell";
 
 export function InviteModal({
   projectId,
   projectName,
-  onClose,
+  open,
+  onOpenChange,
 }: {
   projectId: number;
   projectName: string;
-  onClose: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const [link, setLink] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -47,64 +61,67 @@ export function InviteModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4"
-      onClick={onClose}
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) {
+          // Reset form state when the dialog closes so a reopened instance
+          // doesn't show a stale link or error.
+          setLink(null);
+          setErr(null);
+          setCopied(false);
+        }
+        onOpenChange(next);
+      }}
     >
-      <div
-        className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-6 w-full max-w-md shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <h2 className="text-base font-semibold text-[#e6edf3]">
-              Invite to {projectName}
-            </h2>
-            <p className="text-xs text-[var(--text-secondary)] mt-1">
-              Generate a one-time link your collaborator can use to join.
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-lg leading-none"
-            aria-label="Close"
-          >
-            ×
-          </button>
-        </div>
+      <DialogContent className="bg-[var(--bg-secondary)] border-[var(--border)] text-[var(--text-primary)] sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-[#e6edf3]">Invite to {projectName}</DialogTitle>
+          <DialogDescription className="text-[var(--text-secondary)]">
+            Generate a one-time link your collaborator can use to join.
+          </DialogDescription>
+        </DialogHeader>
 
         {err && (
-          <div className="bg-[var(--red)]/10 border border-[var(--red)]/30 text-[var(--red)] text-xs rounded-md px-3 py-2 mb-3">
-            {err}
-          </div>
+          <Alert variant="destructive">
+            <AlertDescription>{err}</AlertDescription>
+          </Alert>
         )}
 
         {!link ? (
-          <button
-            onClick={onGenerate}
-            disabled={busy}
-            className="w-full py-2 bg-[#238636] hover:bg-[#2ea043] disabled:bg-[#238636]/50 text-white text-sm font-medium rounded-md transition-colors"
-          >
+          <Button onClick={onGenerate} disabled={busy} className={greenBtnClass}>
             {busy ? "Generating…" : "Generate invite link"}
-          </button>
+          </Button>
         ) : (
           <div>
             <label className="block text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
               Share this link
             </label>
             <div className="flex gap-2">
-              <input
+              <Input
                 readOnly
                 value={link}
                 onClick={(e) => e.currentTarget.select()}
-                className="flex-1 bg-[var(--bg-primary)] border border-[var(--border)] rounded-md px-3 py-2 text-xs text-[var(--text-primary)] font-mono"
+                className="font-mono text-xs"
               />
-              <button
+              <Button
+                type="button"
+                variant="secondary"
                 onClick={onCopy}
-                className="px-3 py-2 bg-[var(--bg-tertiary)] hover:bg-[var(--border)] border border-[var(--border)] text-[var(--text-primary)] text-xs rounded-md transition-colors flex-shrink-0"
+                className="shrink-0"
               >
-                {copied ? "Copied!" : "Copy"}
-              </button>
+                {copied ? (
+                  <>
+                    <Check className="size-4" />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-4" />
+                    Copy
+                  </>
+                )}
+              </Button>
             </div>
             <p className="text-[11px] text-[var(--text-secondary)] mt-3">
               The link is single-use. Once accepted, generate a new one to
@@ -112,7 +129,7 @@ export function InviteModal({
             </p>
           </div>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

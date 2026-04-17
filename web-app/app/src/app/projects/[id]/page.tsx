@@ -5,10 +5,24 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Group, Panel, Separator } from "react-resizable-panels";
+import {
+  AlertTriangle,
+  Bot,
+  CheckCircle2,
+  ChevronLeft,
+  File as FileIcon,
+  Folder,
+  Pencil,
+  Share2,
+} from "lucide-react";
 import { api, ApiError, type Project, type TokenResponse } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { useRequireAuth } from "@/lib/redirect-hooks";
 import { InviteModal } from "@/components/invite-modal";
+import { CommandPalette } from "@/components/command-palette";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Kbd } from "@/components/ui/kbd";
 import {
   useMpacSession,
   type ConnectionStatus,
@@ -376,8 +390,12 @@ function FileTree({
               } ${isActive ? "bg-[var(--bg-tertiary)] text-[var(--accent)]" : "text-[var(--text-primary)]"}`}
               style={{ paddingLeft: `${depth * 16 + 12}px`, paddingRight: "8px" }}
             >
-              <span className="text-[var(--text-secondary)] text-xs">
-                {f.children ? "📁" : "📄"}
+              <span className="text-[var(--text-secondary)] shrink-0 inline-flex">
+                {f.children ? (
+                  <Folder className="size-3.5" />
+                ) : (
+                  <FileIcon className="size-3.5" />
+                )}
               </span>
               <span className="flex-1 truncate">{f.name}</span>
               {iOwnIntent && (
@@ -437,7 +455,7 @@ function ConflictCard({
   return (
     <div className="bg-[#f8514910] border border-[#f8514930] rounded-lg p-2.5 mb-2">
       <div className="flex items-center gap-1.5 mb-1.5">
-        <span className="text-sm">⚠️</span>
+        <AlertTriangle className="size-3.5 text-[var(--red)]" />
         <span className="text-xs font-medium text-[var(--red)]">
           {conflict.category === "scope_overlap" ? "Scope overlap" : conflict.category}
         </span>
@@ -453,19 +471,23 @@ function ConflictCard({
         <span className="font-medium">{b}</span>
       </div>
       <div className="flex gap-1.5">
-        <button
+        <Button
+          size="xs"
+          variant="secondary"
           onClick={onAck}
-          className="text-[11px] px-2 py-1 bg-[var(--bg-tertiary)] hover:bg-[var(--border)] border border-[var(--border)] rounded text-[var(--text-primary)] transition-colors"
+          className="bg-[var(--bg-tertiary)] hover:bg-[var(--border)] border border-[var(--border)] text-[var(--text-primary)]"
         >
           Acknowledge
-        </button>
+        </Button>
         {myIntentInConflict && (
-          <button
+          <Button
+            size="xs"
+            variant="secondary"
             onClick={onYield}
-            className="text-[11px] px-2 py-1 bg-[var(--yellow)]/20 hover:bg-[var(--yellow)]/30 border border-[var(--yellow)]/40 rounded text-[var(--yellow)] transition-colors"
+            className="bg-[var(--yellow)]/20 hover:bg-[var(--yellow)]/30 border border-[var(--yellow)]/40 text-[var(--yellow)]"
           >
             Yield
-          </button>
+          </Button>
         )}
       </div>
     </div>
@@ -514,7 +536,11 @@ function CollabPanel({
                         : "bg-[var(--bg-tertiary)] text-[var(--text-primary)]"
                     }`}
                   >
-                    {p.is_agent ? "🤖" : p.display_name[0]?.toUpperCase() ?? "?"}
+                    {p.is_agent ? (
+                      <Bot className="size-4" />
+                    ) : (
+                      p.display_name[0]?.toUpperCase() ?? "?"
+                    )}
                   </div>
                   <span
                     className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[var(--bg-secondary)] ${
@@ -539,10 +565,13 @@ function CollabPanel({
                     )}
                   </div>
                   {p.active_intent?.scope?.resources?.length ? (
-                    <div className="text-xs text-[var(--text-secondary)] truncate mt-0.5">
-                      📝 {p.active_intent.scope.resources[0]}
-                      {p.active_intent.scope.resources.length > 1 &&
-                        ` +${p.active_intent.scope.resources.length - 1}`}
+                    <div className="flex items-center gap-1 text-xs text-[var(--text-secondary)] truncate mt-0.5">
+                      <Pencil className="size-3 shrink-0" />
+                      <span className="truncate">
+                        {p.active_intent.scope.resources[0]}
+                        {p.active_intent.scope.resources.length > 1 &&
+                          ` +${p.active_intent.scope.resources.length - 1}`}
+                      </span>
                     </div>
                   ) : p.online ? (
                     <div className="text-xs text-[var(--text-secondary)] mt-0.5">idle</div>
@@ -566,8 +595,9 @@ function CollabPanel({
           Conflicts
         </h3>
         {conflicts.length === 0 ? (
-          <div className="text-xs text-[var(--text-secondary)] text-center py-4">
-            ✅ No conflicts
+          <div className="flex items-center justify-center gap-1.5 text-xs text-[var(--text-secondary)] py-4">
+            <CheckCircle2 className="size-3.5 text-[var(--green)]" />
+            No conflicts
           </div>
         ) : (
           conflicts.map((c) => {
@@ -657,7 +687,7 @@ function AiChat({
       setTurns((prev) =>
         prev.map((t) =>
           t.id === pendingTurn.id
-            ? { ...t, content: `❌ ${message}`, pending: false, error: true }
+            ? { ...t, content: message, pending: false, error: true }
             : t,
         ),
       );
@@ -669,7 +699,7 @@ function AiChat({
   return (
     <div className="flex flex-col h-full">
       <div className="px-3 py-2 border-b border-[var(--border)] flex items-center gap-2 flex-shrink-0">
-        <span className="text-sm">🤖</span>
+        <Bot className="size-4 text-[var(--accent)]" />
         <span className="text-[11px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider">
           AI Assistant
         </span>
@@ -698,7 +728,7 @@ function AiChat({
                     : "bg-[#1f2937] text-[var(--accent)] ring-1 ring-[var(--accent)]/30"
                 }`}
               >
-                {t.role === "user" ? userInitial : "🤖"}
+                {t.role === "user" ? userInitial : <Bot className="size-3.5" />}
               </div>
               <div
                 className={`text-[13px] leading-relaxed flex-1 min-w-0 ${
@@ -740,21 +770,21 @@ function AiChat({
 
       <form onSubmit={onSubmit} className="p-2 border-t border-[var(--border)] flex-shrink-0">
         <div className="flex gap-2">
-          <input
+          <Input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={busy ? "Claude is working…" : "Ask AI to help with your code..."}
             disabled={busy}
-            className="flex-1 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[#484f58] focus:outline-none focus:border-[var(--accent)] transition-colors disabled:opacity-60"
+            className="flex-1"
           />
-          <button
+          <Button
             type="submit"
             disabled={busy || !input.trim()}
-            className="px-3 py-2 bg-[#238636] hover:bg-[#2ea043] disabled:bg-[#238636]/50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors font-medium"
+            className="bg-[#238636] hover:bg-[#2ea043] disabled:bg-[#238636]/50 text-white"
           >
             {busy ? "…" : "Send"}
-          </button>
+          </Button>
         </div>
       </form>
     </div>
@@ -844,6 +874,7 @@ export default function WorkspacePage({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
+  const [showPalette, setShowPalette] = useState(false);
   const [activePath, setActivePath] = useState<string | null>("src/auth.py");
 
   // Persisted drag-to-resize layout
@@ -924,14 +955,14 @@ export default function WorkspacePage({
   if (loadError || !project || !mpacToken) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-[var(--bg-primary)] text-[var(--text-primary)] gap-3">
-        <div className="text-3xl">⚠️</div>
+        <AlertTriangle className="size-8 text-[var(--yellow)]" />
         <div className="text-sm">{loadError ?? "Project not available"}</div>
-        <Link
-          href="/projects"
-          className="text-sm px-3 py-1.5 bg-[var(--bg-tertiary)] hover:bg-[var(--border)] border border-[var(--border)] rounded-md text-[var(--text-primary)] transition-colors"
-        >
-          ← Back to projects
-        </Link>
+        <Button asChild variant="secondary">
+          <Link href="/projects">
+            <ChevronLeft className="size-4" />
+            Back to projects
+          </Link>
+        </Button>
       </div>
     );
   }
@@ -947,9 +978,10 @@ export default function WorkspacePage({
       <header className="h-12 bg-[var(--bg-secondary)] border-b border-[var(--border)] flex items-center px-4 gap-4 flex-shrink-0">
         <Link
           href="/projects"
-          className="text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+          className="inline-flex items-center gap-1 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
         >
-          ◀ Projects
+          <ChevronLeft className="size-4" />
+          Projects
         </Link>
         <div className="h-4 w-px bg-[var(--border)]" />
         <h1
@@ -972,7 +1004,11 @@ export default function WorkspacePage({
                 }`}
                 title={p.display_name}
               >
-                {p.is_agent ? "🤖" : p.display_name[0]?.toUpperCase() ?? "?"}
+                {p.is_agent ? (
+                  <Bot className="size-3" />
+                ) : (
+                  p.display_name[0]?.toUpperCase() ?? "?"
+                )}
               </div>
             ))}
           <span className="text-xs text-[var(--text-secondary)] ml-1">
@@ -980,26 +1016,41 @@ export default function WorkspacePage({
           </span>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-xs text-[var(--text-secondary)] mr-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setShowPalette(true)}
+            className="gap-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hidden sm:inline-flex"
+            title="Command palette"
+          >
+            <span className="text-xs">Search</span>
+            <Kbd>⌘K</Kbd>
+          </Button>
+          <span className="text-xs text-[var(--text-secondary)] mr-1">
             {user.display_name}
           </span>
           {isOwner && (
-            <button
+            <Button
+              size="sm"
               onClick={() => setShowInvite(true)}
-              className="text-xs px-3 py-1.5 bg-[#238636] hover:bg-[#2ea043] rounded-md text-white transition-colors font-medium"
+              className="bg-[#238636] hover:bg-[#2ea043] text-white"
             >
-              📤 Invite
-            </button>
+              <Share2 className="size-3.5" />
+              Invite
+            </Button>
           )}
-          <button
+          <Button
+            size="sm"
+            variant="ghost"
             onClick={() => {
               logout();
               router.replace("/login");
             }}
-            className="text-xs px-2 py-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+            className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
           >
             Sign out
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -1115,13 +1166,29 @@ export default function WorkspacePage({
         </span>
       </footer>
 
-      {showInvite && (
-        <InviteModal
-          projectId={project.id}
-          projectName={project.name}
-          onClose={() => setShowInvite(false)}
-        />
-      )}
+      <InviteModal
+        projectId={project.id}
+        projectName={project.name}
+        open={showInvite}
+        onOpenChange={setShowInvite}
+      />
+
+      <CommandPalette
+        open={showPalette}
+        onOpenChange={setShowPalette}
+        files={MOCK_FILES}
+        onJumpToFile={setActivePath}
+        onOpenInvite={isOwner ? () => setShowInvite(true) : undefined}
+        onGotoProjects={() => router.push("/projects")}
+        onSignOut={() => {
+          logout();
+          router.replace("/login");
+        }}
+        myIntents={session.myIntents}
+        conflicts={session.conflicts}
+        onYieldIntent={session.yieldTask}
+        onAckConflict={session.ackConflict}
+      />
     </div>
   );
 }
