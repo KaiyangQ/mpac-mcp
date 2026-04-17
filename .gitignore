@@ -56,3 +56,4 @@ web-app/app/.env.local
 mpac-mcp/build/
 mpac-mcp/dist/
 mpac-mcp/src/*.egg-info/
+.build-venv/
