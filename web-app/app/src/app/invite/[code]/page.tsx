@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, ApiError, type InvitePreview } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import { AuthShell, greenBtnClass } from "@/components/auth-shell";
+import { AuthShell, primaryBtnClass } from "@/components/auth-shell";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
@@ -74,13 +74,17 @@ export default function InviteAcceptPage({
   }
 
   if (loading) {
-    return <AuthShell title="Loading invite…" />;
+    return <AuthShell title="Loading invite…" pitch={false} />;
   }
 
   if (previewError || !preview) {
     return (
-      <AuthShell title="Invite not found" subtitle="This link may have been revoked or mistyped.">
-        <Alert variant="destructive" className="mb-3">
+      <AuthShell
+        title="Invite not found"
+        subtitle="This link may have been revoked or mistyped."
+        pitch={false}
+      >
+        <Alert variant="destructive" className="mb-4">
           <AlertDescription>{previewError ?? "Unknown error"}</AlertDescription>
         </Alert>
         <Link
@@ -98,6 +102,7 @@ export default function InviteAcceptPage({
       <AuthShell
         title="Already used"
         subtitle={`This invite to ${preview.project_name} has already been accepted. Ask ${preview.invited_by} for a new one.`}
+        pitch={false}
       >
         <Link
           href={user ? "/projects" : "/login"}
@@ -110,7 +115,7 @@ export default function InviteAcceptPage({
   }
 
   if (authLoading) {
-    return <AuthShell title="Loading…" />;
+    return <AuthShell title="Loading…" pitch={false} />;
   }
 
   // Not logged in → pitch register/login, preserving the invite path as `next`.
@@ -120,20 +125,23 @@ export default function InviteAcceptPage({
         title={`${preview.invited_by} invited you`}
         subtitle={
           <>
-            Join <span className="text-[var(--accent)] font-medium">{preview.project_name}</span>{" "}
-            and start collaborating in real time.
+            Join{" "}
+            <span className="text-[var(--accent)] font-medium">
+              {preview.project_name}
+            </span>{" "}
+            and start collaborating in real time with humans and AI agents.
           </>
         }
       >
         <div className="space-y-3">
-          <Button asChild className={greenBtnClass}>
+          <Button asChild className={primaryBtnClass}>
             <Link href={`/register?next=${encodeURIComponent(nextPath)}`}>
               Create account to join
             </Link>
           </Button>
-          <Button asChild variant="outline" className="w-full">
+          <Button asChild variant="outline" className="w-full h-10">
             <Link href={`/login?next=${encodeURIComponent(nextPath)}`}>
-              Sign in to join
+              I already have an account
             </Link>
           </Button>
         </div>
@@ -148,25 +156,33 @@ export default function InviteAcceptPage({
       subtitle={`Invited by ${preview.invited_by}. You'll get a token scoped to this project only.`}
     >
       {acceptError && (
-        <Alert variant="destructive" className="mb-3">
+        <Alert variant="destructive" className="mb-4">
           <AlertDescription>{acceptError}</AlertDescription>
         </Alert>
       )}
-      <div className="bg-[var(--bg-primary)] border border-[var(--border)] rounded-md p-3 mb-4 text-xs">
-        <div className="flex justify-between text-[var(--text-secondary)]">
-          <span>Project</span>
-          <span className="text-[var(--text-primary)] font-medium">{preview.project_name}</span>
+      <div className="bg-[var(--bg-secondary)]/70 backdrop-blur border border-[var(--border)] rounded-lg p-4 mb-5 text-sm space-y-2">
+        <div className="flex justify-between">
+          <span className="text-[var(--text-secondary)]">Project</span>
+          <span className="text-[var(--text-primary)] font-medium">
+            {preview.project_name}
+          </span>
         </div>
-        <div className="flex justify-between mt-1.5 text-[var(--text-secondary)]">
-          <span>Session</span>
-          <span className="text-[var(--text-primary)] font-mono">{preview.session_id}</span>
+        <div className="flex justify-between">
+          <span className="text-[var(--text-secondary)]">Session</span>
+          <span className="text-[var(--text-primary)] font-mono text-xs">
+            {preview.session_id}
+          </span>
         </div>
-        <div className="flex justify-between mt-1.5 text-[var(--text-secondary)]">
-          <span>You&apos;ll join as</span>
+        <div className="flex justify-between">
+          <span className="text-[var(--text-secondary)]">You&apos;ll join as</span>
           <span className="text-[var(--text-primary)]">{user.display_name}</span>
         </div>
       </div>
-      <Button onClick={onAccept} disabled={accepting} className={greenBtnClass}>
+      <Button
+        onClick={onAccept}
+        disabled={accepting}
+        className={primaryBtnClass}
+      >
         {accepting ? "Joining…" : "Accept invite"}
       </Button>
     </AuthShell>

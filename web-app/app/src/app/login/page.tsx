@@ -6,7 +6,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useRedirectIfAuthed } from "@/lib/redirect-hooks";
 import { ApiError } from "@/lib/api";
-import { AuthShell, labelClass, greenBtnClass } from "@/components/auth-shell";
+import {
+  AuthShell,
+  labelClass,
+  primaryBtnClass,
+} from "@/components/auth-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -40,25 +44,25 @@ function LoginForm() {
   return (
     <AuthShell
       title="Welcome back"
-      subtitle="Sign in to your MPAC workspace"
+      subtitle="Sign in to pick up where you left off."
       footer={
         <>
-          No account?{" "}
+          New here?{" "}
           <Link
             href={`/register${next !== "/projects" ? `?next=${encodeURIComponent(next)}` : ""}`}
-            className="text-[var(--accent)] hover:underline"
+            className="text-[var(--accent)] hover:underline font-medium"
           >
-            Create one
+            Claim your invite
           </Link>
         </>
       }
     >
       {err && (
-        <Alert variant="destructive" className="mb-3">
+        <Alert variant="destructive" className="mb-4">
           <AlertDescription>{err}</AlertDescription>
         </Alert>
       )}
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form onSubmit={onSubmit} className="space-y-5">
         <div>
           <label className={labelClass}>Email</label>
           <Input
@@ -68,6 +72,7 @@ function LoginForm() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
+            className="h-10"
           />
         </div>
         <div>
@@ -78,9 +83,10 @@ function LoginForm() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="••••••••"
+            className="h-10"
           />
         </div>
-        <Button type="submit" disabled={busy} className={greenBtnClass}>
+        <Button type="submit" disabled={busy} className={primaryBtnClass}>
           {busy ? "Signing in…" : "Sign in"}
         </Button>
       </form>
