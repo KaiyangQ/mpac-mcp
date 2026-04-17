@@ -1060,6 +1060,12 @@ export default function WorkspacePage({
               Invite
             </Button>
           )}
+          <Link
+            href="/settings"
+            className="text-xs px-2 py-1 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+          >
+            Settings
+          </Link>
           <Button
             size="sm"
             variant="ghost"
