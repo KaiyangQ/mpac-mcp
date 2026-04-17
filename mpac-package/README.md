@@ -241,9 +241,22 @@ Single-session mode (`MPACServer(session_id="demo")`) is fully backward compatib
 ## Status
 
 **Draft / experimental.** The protocol is at v0.1.13. This package is
-at 0.1.0. Not yet stable for production interoperability — intended for
+at 0.2.0. Not yet stable for production interoperability — intended for
 reference implementations, research prototypes, and early ecosystem
 feedback.
+
+### What's new in 0.2.0
+
+- **Authenticated profile credential verification** (SPEC §23.1.4):
+  `SessionCoordinator(credential_verifier=...)` lets integrators plug in
+  bearer-token / JWT / API-key verifiers that inspect HELLO credentials
+  and return `accept(granted_roles=...)` / `reject(reason=...)`. Enables
+  real multi-tenant deployments with per-participant authorization.
+- **Multi-session mode** (`MPACServer(multi_session=True)`): one server
+  process hosts many independent sessions, routed by URL path
+  (`/session/<id>`). Each session gets its own coordinator, file store,
+  and connection pool — zero cross-session state leakage.
+- Open-profile behavior is 100% backward compatible with 0.1.0.
 
 ## License
 

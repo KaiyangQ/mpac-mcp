@@ -12,11 +12,33 @@ license = {text = "Apache-2.0"}
 authors = [
     {name = "Kaiyang Qian", email = "kaiyang.2.qian@ucdenver.edu"},
 ]
+keywords = [
+    "mpac", "mcp", "multi-agent", "agent-coordination", "claude-code",
+    "cursor", "ai-agents", "coordination",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "websockets>=12.0",
     "mcp>=1.0.0",
-    "mpac>=0.1.0",
+    "mpac>=0.2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/KaiyangQ/mpac-mcp"
+Repository = "https://github.com/KaiyangQ/mpac-mcp"
+"MPAC Protocol" = "https://github.com/KaiyangQ/mpac-protocol"
+Issues = "https://github.com/KaiyangQ/mpac-mcp/issues"
 
 [project.scripts]
 mpac-mcp = "mpac_mcp.server:main"
