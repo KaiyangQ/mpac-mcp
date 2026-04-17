@@ -65,24 +65,15 @@ function PitchPanel() {
     <aside
       className="hidden lg:block relative overflow-hidden border-r border-[var(--border)]"
       style={{
-        // A richer gradient than the page's ambient — tied to primary + a
-        // warm purple so the two halves feel distinct but related.
+        // Subtle blue → purple wash so the left half feels distinct from the
+        // right without competing with the form for attention. No grid / mesh
+        // texture — the `border-r` would clip any pattern to a rectangle and
+        // it ends up looking like a separate "panel skin" instead of an
+        // ambient background.
         backgroundImage:
           "linear-gradient(135deg, rgba(88,166,255,0.08) 0%, rgba(163,113,247,0.06) 45%, rgba(13,17,23,0) 100%)",
       }}
     >
-      {/* Subtle grid texture — feels like "engineering" without being noisy. */}
-      <div
-        aria-hidden
-        className="absolute inset-0 opacity-[0.04] pointer-events-none"
-        style={{
-          backgroundImage:
-            "linear-gradient(var(--text-primary) 1px, transparent 1px), " +
-            "linear-gradient(90deg, var(--text-primary) 1px, transparent 1px)",
-          backgroundSize: "32px 32px",
-        }}
-      />
-
       {/* Centered content column — all three sections (logo, pitch, footer)
           share this single max-w-md mx-auto wrapper so they sit on the same
           left edge and the whole column is horizontally centered in the panel.
