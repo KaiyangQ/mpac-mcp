@@ -7,6 +7,10 @@ pytest-cache-files-*/
 local_config.json
 node_modules/
 
+# Root-level Python venv used for local dogfooding against main.
+# (Sub-dir venvs like web-app/.venv/ are listed separately below.)
+/.venv/
+
 # Runtime artifacts from interop test
 ref-impl/demo/interop_messages/
 
