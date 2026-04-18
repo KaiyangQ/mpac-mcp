@@ -85,6 +85,25 @@ class AnthropicKeyUpdate(BaseModel):
     api_key: str
 
 
+# ── Project files ──
+
+class ProjectFileListItem(BaseModel):
+    path: str
+    updated_at: str
+
+class ProjectFileListResponse(BaseModel):
+    files: list[ProjectFileListItem]
+
+class ProjectFileContent(BaseModel):
+    path: str
+    content: str
+    updated_at: str
+
+class ProjectFileUpsert(BaseModel):
+    path: str
+    content: str = ""
+
+
 # ── Chat ──
 
 class ChatMessage(BaseModel):

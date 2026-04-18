@@ -19,6 +19,7 @@ import { api, ApiError, type Project, type TokenResponse } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { useRequireAuth } from "@/lib/redirect-hooks";
 import { InviteModal } from "@/components/invite-modal";
+import { NewFileModal } from "@/components/new-file-modal";
 import { CommandPalette } from "@/components/command-palette";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,276 +34,73 @@ import {
 // Monaco must be loaded client-side only (no SSR)
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 
-// ── Mock file tree + code (Phase D scope: real presence + intents,
-//    but file content + tree stay mock until Phase F) ────────────────
-
-// Demo project: "Task API" — a tiny Flask REST API for collaborative editing.
-// Chosen so there are natural overlapping concerns (auth + validators +
-// endpoints) to drive realistic MPAC conflict scenarios.
+// ── File tree types + helpers ────────────────────────────────────
+//
+// Files live server-side (see api/routes/files.py). The backend hands us
+// a flat list of paths; we build a tree client-side for rendering and for
+// the command palette's fuzzy-match index.
 
 type FileNode = { name: string; path: string; children?: FileNode[] };
 
-const MOCK_FILES: FileNode[] = [
-  { name: "src/", path: "src/", children: [
-    { name: "auth.py", path: "src/auth.py" },
-    { name: "api.py", path: "src/api.py" },
-    { name: "models.py", path: "src/models.py" },
-    { name: "utils/", path: "src/utils/", children: [
-      { name: "helpers.py", path: "src/utils/helpers.py" },
-      { name: "validators.py", path: "src/utils/validators.py" },
-    ]},
-  ]},
-  { name: "tests/", path: "tests/", children: [
-    { name: "test_auth.py", path: "tests/test_auth.py" },
-    { name: "test_api.py", path: "tests/test_api.py" },
-  ]},
-  { name: "README.md", path: "README.md" },
-];
+/** Build a nested FileNode tree from a flat list of POSIX paths. */
+function buildFileTree(paths: string[]): FileNode[] {
+  const root: FileNode[] = [];
+  const dirIndex = new Map<string, FileNode[]>(); // dirPath → children array
+  dirIndex.set("", root);
 
-const MOCK_CODE: Record<string, string> = {
-  "src/auth.py": `"""JWT-based auth for the Task API."""
-from __future__ import annotations
-
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-
-import jwt
-from flask import current_app, request
-
-ALG = "HS256"
-ACCESS_TTL = timedelta(minutes=15)
-
-
-def issue_token(user_id: int, email: str) -> str:
-    payload = {
-        "sub": str(user_id),
-        "email": email,
-        "iat": datetime.now(timezone.utc),
-        "exp": datetime.now(timezone.utc) + ACCESS_TTL,
+  // Sort so parents of any directory are visited before its files — makes
+  // the dir-creation loop straightforward.
+  const sorted = [...paths].sort();
+  for (const path of sorted) {
+    const segments = path.split("/");
+    let parentKey = "";
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      const isLeaf = i === segments.length - 1;
+      const currentKey = parentKey ? `${parentKey}/${segment}` : segment;
+      const parentChildren = dirIndex.get(parentKey)!;
+      if (isLeaf) {
+        if (!parentChildren.some((n) => n.path === path)) {
+          parentChildren.push({ name: segment, path });
+        }
+      } else {
+        const dirPath = `${currentKey}/`;
+        let dirNode = parentChildren.find((n) => n.path === dirPath);
+        if (!dirNode) {
+          dirNode = { name: `${segment}/`, path: dirPath, children: [] };
+          parentChildren.push(dirNode);
+          dirIndex.set(currentKey, dirNode.children!);
+        }
+      }
+      parentKey = currentKey;
     }
-    return jwt.encode(payload, current_app.config["SECRET_KEY"], algorithm=ALG)
+  }
+  // Sort each level: directories first, then files, each alphabetically.
+  const sortLevel = (nodes: FileNode[]) => {
+    nodes.sort((a, b) => {
+      const aDir = !!a.children;
+      const bDir = !!b.children;
+      if (aDir !== bDir) return aDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    for (const n of nodes) if (n.children) sortLevel(n.children);
+  };
+  sortLevel(root);
+  return root;
+}
 
+function languageForPath(path: string): string {
+  if (path.endsWith(".md")) return "markdown";
+  if (path.endsWith(".json")) return "json";
+  if (path.endsWith(".ts") || path.endsWith(".tsx")) return "typescript";
+  if (path.endsWith(".js") || path.endsWith(".jsx")) return "javascript";
+  if (path.endsWith(".css")) return "css";
+  if (path.endsWith(".html")) return "html";
+  if (path.endsWith(".sh")) return "shell";
+  if (path.endsWith(".yml") || path.endsWith(".yaml")) return "yaml";
+  return "python";
+}
 
-def verify_token(token: str) -> Optional[dict]:
-    """Verify a JWT and return the claims dict, or None on failure."""
-    try:
-        return jwt.decode(
-            token,
-            current_app.config["SECRET_KEY"],
-            algorithms=[ALG],
-        )
-    except jwt.ExpiredSignatureError:
-        return None
-    except jwt.InvalidTokenError:
-        return None
-
-
-def current_user() -> Optional[dict]:
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return None
-    return verify_token(auth[7:])
-`,
-  "src/api.py": `"""Task CRUD endpoints."""
-from __future__ import annotations
-
-from flask import Blueprint, jsonify, request
-
-from .auth import current_user
-from .models import Task, store
-from .utils.validators import validate_task_payload
-
-bp = Blueprint("api", __name__, url_prefix="/api/tasks")
-
-
-@bp.get("")
-def list_tasks():
-    user = current_user()
-    if not user:
-        return {"error": "unauthorized"}, 401
-    return jsonify([t.to_dict() for t in store.for_user(user["sub"])])
-
-
-@bp.post("")
-def create_task():
-    user = current_user()
-    if not user:
-        return {"error": "unauthorized"}, 401
-    body = request.get_json(silent=True) or {}
-    err = validate_task_payload(body)
-    if err:
-        return {"error": err}, 400
-    task = Task(owner_id=user["sub"], title=body["title"], done=False)
-    store.add(task)
-    return task.to_dict(), 201
-
-
-@bp.delete("/<int:task_id>")
-def delete_task(task_id: int):
-    user = current_user()
-    if not user:
-        return {"error": "unauthorized"}, 401
-    if not store.delete(task_id, owner_id=user["sub"]):
-        return {"error": "not found"}, 404
-    return "", 204
-`,
-  "src/models.py": `"""In-memory Task store for the demo."""
-from __future__ import annotations
-
-from dataclasses import dataclass, field, asdict
-from itertools import count
-from typing import Dict, List, Optional
-
-_ids = count(1)
-
-
-@dataclass
-class Task:
-    owner_id: str
-    title: str
-    done: bool = False
-    id: int = field(default_factory=lambda: next(_ids))
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-
-class TaskStore:
-    def __init__(self) -> None:
-        self._by_id: Dict[int, Task] = {}
-
-    def add(self, task: Task) -> None:
-        self._by_id[task.id] = task
-
-    def for_user(self, owner_id: str) -> List[Task]:
-        return [t for t in self._by_id.values() if t.owner_id == owner_id]
-
-    def delete(self, task_id: int, *, owner_id: str) -> bool:
-        t = self._by_id.get(task_id)
-        if t is None or t.owner_id != owner_id:
-            return False
-        del self._by_id[task_id]
-        return True
-
-
-store = TaskStore()
-`,
-  "src/utils/helpers.py": `"""Small formatting helpers used across the API layer."""
-from __future__ import annotations
-
-from datetime import datetime, timezone
-
-
-def utc_iso() -> str:
-    """RFC 3339 timestamp for the current moment."""
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def clamp(n: int, lo: int, hi: int) -> int:
-    return max(lo, min(hi, n))
-`,
-  "src/utils/validators.py": `"""Payload validation for the Task API."""
-from __future__ import annotations
-
-from typing import Optional
-
-MAX_TITLE_LEN = 200
-
-
-def validate_task_payload(body: dict) -> Optional[str]:
-    """Return an error string if invalid, else None."""
-    title = body.get("title")
-    if not isinstance(title, str) or not title.strip():
-        return "title is required and must be a non-empty string"
-    if len(title) > MAX_TITLE_LEN:
-        return f"title exceeds {MAX_TITLE_LEN} chars"
-    done = body.get("done", False)
-    if not isinstance(done, bool):
-        return "done must be a boolean"
-    return None
-`,
-  "tests/test_auth.py": `"""Auth tests — currently only happy-path; refresh token coverage TODO."""
-from __future__ import annotations
-
-import time
-
-import pytest
-from flask import Flask
-
-from src.auth import issue_token, verify_token
-
-
-@pytest.fixture
-def app():
-    app = Flask(__name__)
-    app.config["SECRET_KEY"] = "test-secret"
-    with app.app_context():
-        yield app
-
-
-def test_issue_and_verify_roundtrip(app):
-    token = issue_token(42, "a@b.com")
-    claims = verify_token(token)
-    assert claims["sub"] == "42"
-    assert claims["email"] == "a@b.com"
-
-
-def test_invalid_token_returns_none(app):
-    assert verify_token("garbage") is None
-`,
-  "tests/test_api.py": `"""Endpoint tests. Coverage is thin — expand this!"""
-from __future__ import annotations
-
-import pytest
-from flask import Flask
-
-from src.api import bp as api_bp
-
-
-@pytest.fixture
-def client():
-    app = Flask(__name__)
-    app.config["SECRET_KEY"] = "test-secret"
-    app.register_blueprint(api_bp)
-    with app.test_client() as c:
-        yield c
-
-
-def test_list_unauthorized(client):
-    resp = client.get("/api/tasks")
-    assert resp.status_code == 401
-`,
-  "README.md": `# Task API — MPAC demo project
-
-Tiny Flask-based task tracker used to exercise the Multi-Principal Agent
-Coordination protocol. Humans and AI agents share the same repo; MPAC keeps
-them from stepping on each other's toes via explicit intent announcements
-and scope-overlap detection.
-
-## Module map
-
-\`\`\`
-src/
-├── auth.py         # JWT issue / verify (no refresh tokens yet)
-├── api.py          # Blueprint with /api/tasks CRUD
-├── models.py       # In-memory Task dataclass + TaskStore
-└── utils/
-    ├── helpers.py      # clamp, utc_iso
-    └── validators.py   # validate_task_payload
-
-tests/
-├── test_auth.py
-└── test_api.py
-\`\`\`
-
-## Known gaps (good targets for agent work)
-
-- No refresh token flow in \`auth.py\`.
-- \`api.py\` is missing \`PUT /api/tasks/<id>\` (update/toggle-done).
-- \`validators.py\` doesn't validate \`done\` on partial updates.
-- Test coverage in \`test_api.py\` is placeholder-only.
-`,
-};
 
 // ── Derived helpers ────────────────────────────────────────────────────
 
@@ -356,6 +154,7 @@ function FileTree({
   selfPrincipalId,
   myIntents,
   onSelect,
+  onDelete,
   depth = 0,
 }: {
   files: FileNode[];
@@ -364,6 +163,7 @@ function FileTree({
   selfPrincipalId: string;
   myIntents: Record<string, { intent_id: string; scope?: { resources?: string[] } }>;
   onSelect: (path: string) => void;
+  onDelete?: (path: string) => void;
   depth?: number;
 }) {
   return (
@@ -385,7 +185,7 @@ function FileTree({
                   onSelect(f.path);
                 }
               }}
-              className={`flex items-center gap-1.5 py-1 text-[13px] rounded transition-colors ${
+              className={`group flex items-center gap-1.5 py-1 text-[13px] rounded transition-colors ${
                 isFile ? "cursor-pointer hover:bg-[var(--bg-tertiary)]" : "cursor-default"
               } ${isActive ? "bg-[var(--bg-tertiary)] text-[var(--accent)]" : "text-[var(--text-primary)]"}`}
               style={{ paddingLeft: `${depth * 16 + 12}px`, paddingRight: "8px" }}
@@ -410,6 +210,20 @@ function FileTree({
                   title={`${editor.display_name} is working on this`}
                 />
               )}
+              {isFile && onDelete && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(f.path);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 text-[var(--text-secondary)] hover:text-[var(--red)] text-xs leading-none shrink-0"
+                  title={`Delete ${f.path}`}
+                  aria-label={`Delete ${f.path}`}
+                >
+                  ×
+                </button>
+              )}
             </div>
             {f.children && (
               <FileTree
@@ -419,6 +233,7 @@ function FileTree({
                 selfPrincipalId={selfPrincipalId}
                 myIntents={myIntents}
                 onSelect={onSelect}
+                onDelete={onDelete}
                 depth={depth + 1}
               />
             )}
@@ -895,7 +710,15 @@ export default function WorkspacePage({
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
-  const [activePath, setActivePath] = useState<string | null>("src/auth.py");
+  const [showNewFile, setShowNewFile] = useState(false);
+  const [activePath, setActivePath] = useState<string | null>(null);
+
+  // File state — list of paths is authoritative; contents cached per-path as
+  // they're opened. A null content entry means "not loaded yet".
+  const [filePaths, setFilePaths] = useState<string[]>([]);
+  const [fileContents, setFileContents] = useState<Record<string, string>>({});
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Persisted drag-to-resize layout
   const colsLayout = useStoredLayout("mpac.workspace.cols");
@@ -908,13 +731,18 @@ export default function WorkspacePage({
       setLoading(true);
       setLoadError(null);
       try {
-        const [p, t] = await Promise.all([
+        const [p, t, files] = await Promise.all([
           api.getProject(projectId),
           api.getMpacToken(projectId),
+          api.listProjectFiles(projectId),
         ]);
         if (cancelled) return;
         setProject(p);
         setMpacToken(t);
+        const paths = files.files.map((f) => f.path);
+        setFilePaths(paths);
+        // Auto-open the first file so the editor isn't blank on arrival.
+        if (paths.length > 0) setActivePath(paths[0]);
       } catch (e) {
         if (cancelled) return;
         if (e instanceof ApiError && e.status === 401) {
@@ -933,6 +761,89 @@ export default function WorkspacePage({
       cancelled = true;
     };
   }, [user, projectId, nextPath, logout, router]);
+
+  // Lazy-load the content of whichever file is active. We cache in
+  // fileContents so switching back to an already-opened file is instant.
+  useEffect(() => {
+    if (!activePath) return;
+    if (activePath in fileContents) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const f = await api.readProjectFile(projectId, activePath);
+        if (cancelled) return;
+        setFileContents((prev) => ({ ...prev, [activePath]: f.content }));
+      } catch (e) {
+        if (cancelled) return;
+        console.error("Failed to load file", activePath, e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activePath, fileContents, projectId]);
+
+  // Debounced autosave — queued on every keystroke, only the last fires.
+  const scheduleSave = (path: string, content: string) => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    setSaveStatus("saving");
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        await api.writeProjectFile(projectId, path, content);
+        setSaveStatus("saved");
+      } catch (e) {
+        console.error("Save failed", e);
+        setSaveStatus("error");
+      }
+    }, 800);
+  };
+
+  const handleEditorChange = (value: string | undefined) => {
+    if (!activePath) return;
+    const next = value ?? "";
+    setFileContents((prev) => ({ ...prev, [activePath]: next }));
+    scheduleSave(activePath, next);
+  };
+
+  const handleCreateFile = async (path: string) => {
+    // Called by NewFileModal after basic client-side validation. The modal
+    // stays open (showing the error) if this throws.
+    try {
+      await api.writeProjectFile(projectId, path, "");
+      setFilePaths((prev) => [...prev, path].sort());
+      setFileContents((prev) => ({ ...prev, [path]: "" }));
+      setActivePath(path);
+    } catch (e) {
+      throw new Error(
+        e instanceof ApiError ? e.message : "Failed to create file",
+      );
+    }
+  };
+
+  const handleDeleteFile = async (path: string) => {
+    if (!window.confirm(`Delete ${path}?`)) return;
+    try {
+      await api.deleteProjectFile(projectId, path);
+      setFilePaths((prev) => prev.filter((p) => p !== path));
+      setFileContents((prev) => {
+        const next = { ...prev };
+        delete next[path];
+        return next;
+      });
+      if (activePath === path) {
+        // Pick a sibling to open next, or clear if the tree is empty.
+        const remaining = filePaths.filter((p) => p !== path);
+        setActivePath(remaining[0] ?? null);
+      }
+    } catch (e) {
+      window.alert(
+        `Delete failed: ${e instanceof ApiError ? e.message : "unknown error"}`,
+      );
+    }
+  };
+
+  // Derived file tree for the sidebar + command palette.
+  const fileTree = buildFileTree(filePaths);
 
   const selfPrincipalId = user ? `user:${user.user_id}` : "user:?";
   const selfDisplayName = user?.display_name ?? "You";
@@ -1091,20 +1002,36 @@ export default function WorkspacePage({
         {/* Left: file tree */}
         <Panel id="files" defaultSize="15%" minSize="8%" maxSize="30%" collapsible
                className="bg-[var(--bg-secondary)] flex flex-col">
-          <div className="px-3 py-2 border-b border-[var(--border)]">
+          <div className="px-3 py-2 border-b border-[var(--border)] flex items-center justify-between">
             <span className="text-[11px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider">
               Files
             </span>
+            <button
+              type="button"
+              onClick={() => setShowNewFile(true)}
+              className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-base leading-none"
+              title="New file"
+              aria-label="New file"
+            >
+              +
+            </button>
           </div>
           <div className="flex-1 overflow-y-auto py-1">
-            <FileTree
-              files={MOCK_FILES}
-              activePath={activePath}
-              participants={session.participants}
-              selfPrincipalId={selfPrincipalId}
-              myIntents={session.myIntents}
-              onSelect={setActivePath}
-            />
+            {filePaths.length === 0 ? (
+              <div className="px-3 py-3 text-[11px] text-[var(--text-secondary)]">
+                No files yet. Click <span className="text-[var(--text-primary)]">+</span> to add one.
+              </div>
+            ) : (
+              <FileTree
+                files={fileTree}
+                activePath={activePath}
+                participants={session.participants}
+                selfPrincipalId={selfPrincipalId}
+                myIntents={session.myIntents}
+                onSelect={setActivePath}
+                onDelete={handleDeleteFile}
+              />
+            )}
           </div>
         </Panel>
 
@@ -1113,18 +1040,34 @@ export default function WorkspacePage({
         {/* Center: editor */}
         <Panel id="editor" defaultSize="60%" minSize="25%"
                className="flex flex-col bg-[var(--bg-primary)]">
-          <div className="h-9 bg-[var(--bg-secondary)] border-b border-[var(--border)] flex items-center px-2 gap-0.5 flex-shrink-0">
+          <div className="h-9 bg-[var(--bg-secondary)] border-b border-[var(--border)] flex items-center px-2 gap-2 flex-shrink-0">
             <div className="flex items-center gap-1.5 px-3 py-1 bg-[var(--bg-primary)] rounded-t border border-[var(--border)] border-b-transparent text-xs">
               <span className="text-[#e6edf3]">{activePath ?? "(no file)"}</span>
             </div>
+            {activePath && (
+              <span className="text-[11px] text-[var(--text-secondary)] ml-auto pr-2" title="Autosave state">
+                {saveStatus === "saving" && "Saving…"}
+                {saveStatus === "saved" && "Saved"}
+                {saveStatus === "error" && (
+                  <span className="text-[var(--red)]">Save failed</span>
+                )}
+              </span>
+            )}
           </div>
           <div className="flex-1 min-h-0">
             <Editor
               height="100%"
-              language={activePath?.endsWith(".md") ? "markdown" : "python"}
+              language={activePath ? languageForPath(activePath) : "plaintext"}
               theme="vs-dark"
               path={activePath ?? "untitled"}
-              value={activePath ? (MOCK_CODE[activePath] ?? "") : ""}
+              value={activePath ? (fileContents[activePath] ?? "") : ""}
+              onChange={handleEditorChange}
+              onMount={(editor) => {
+                // Kick a manual layout after paint — some browser/host combos
+                // (embedded Playwright, for one) don't fire the ResizeObserver
+                // on initial mount, leaving the editor stuck at 5×5.
+                setTimeout(() => editor.layout(), 0);
+              }}
               options={{
                 fontSize: 14,
                 minimap: { enabled: false },
@@ -1199,10 +1142,17 @@ export default function WorkspacePage({
         onOpenChange={setShowInvite}
       />
 
+      <NewFileModal
+        open={showNewFile}
+        onOpenChange={setShowNewFile}
+        existingPaths={filePaths}
+        onCreate={handleCreateFile}
+      />
+
       <CommandPalette
         open={showPalette}
         onOpenChange={setShowPalette}
-        files={MOCK_FILES}
+        files={fileTree}
         onJumpToFile={setActivePath}
         onOpenInvite={isOwner ? () => setShowInvite(true) : undefined}
         onGotoProjects={() => router.push("/projects")}

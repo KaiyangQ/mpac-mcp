@@ -61,6 +61,21 @@ export type AnthropicKeyStatus = {
   key_preview?: string | null;
 };
 
+export type ProjectFileListItem = {
+  path: string;
+  updated_at: string;
+};
+
+export type ProjectFileListResponse = {
+  files: ProjectFileListItem[];
+};
+
+export type ProjectFileContent = {
+  path: string;
+  content: string;
+  updated_at: string;
+};
+
 // ── Storage helpers ───────────────────────────────────────
 
 export function getStoredJwt(): string | null {
@@ -175,6 +190,30 @@ export const api = {
 
   deleteAnthropicKey: () =>
     request<AnthropicKeyStatus>("DELETE", "/api/settings/anthropic-key"),
+
+  // ── Project files (Phase F) ─────────────────────────────
+
+  listProjectFiles: (projectId: number) =>
+    request<ProjectFileListResponse>("GET", `/api/projects/${projectId}/files`),
+
+  readProjectFile: (projectId: number, path: string) =>
+    request<ProjectFileContent>(
+      "GET",
+      `/api/projects/${projectId}/files/content?path=${encodeURIComponent(path)}`,
+    ),
+
+  writeProjectFile: (projectId: number, path: string, content: string) =>
+    request<ProjectFileContent>(
+      "PUT",
+      `/api/projects/${projectId}/files/content`,
+      { path, content },
+    ),
+
+  deleteProjectFile: (projectId: number, path: string) =>
+    request<{ status: string; path: string }>(
+      "DELETE",
+      `/api/projects/${projectId}/files?path=${encodeURIComponent(path)}`,
+    ),
 
   // ── Chat (Phase E) ──────────────────────────────────────
 

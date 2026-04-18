@@ -1,7 +1,10 @@
 """SQLAlchemy ORM models for the MPAC Web App."""
 from __future__ import annotations
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    Boolean, Column, DateTime, ForeignKey, Integer, String, Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -77,6 +80,27 @@ class Invite(Base):
     project = relationship("Project", back_populates="invites")
     created_by = relationship("User", foreign_keys=[created_by_id])
     used_by = relationship("User", foreign_keys=[used_by_id])
+
+
+class ProjectFile(Base):
+    """A file inside a project's virtual filesystem.
+
+    ``path`` is a POSIX-style forward-slashed path, unique per project.
+    Directories aren't stored as rows — they're derived on read from the
+    set of existing file paths. Deleting a file therefore implicitly
+    collapses any directory that becomes empty.
+    """
+    __tablename__ = "project_files"
+    __table_args__ = (
+        UniqueConstraint("project_id", "path", name="uq_project_files_path"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    path = Column(String(1024), nullable=False)
+    content = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
 class SignupCode(Base):

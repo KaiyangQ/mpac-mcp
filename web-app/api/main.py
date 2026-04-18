@@ -112,13 +112,14 @@ else:
     )
 
 # Import and include routers
-from .routes import users, projects, tokens, chat, settings  # noqa: E402
+from .routes import users, projects, tokens, chat, settings, files  # noqa: E402
 
 app.include_router(users.router, prefix="/api", tags=["auth"])
 app.include_router(projects.router, prefix="/api", tags=["projects"])
 app.include_router(tokens.router, prefix="/api", tags=["tokens"])
 app.include_router(chat.router, prefix="/api", tags=["chat"])
 app.include_router(settings.router, prefix="/api", tags=["settings"])
+app.include_router(files.router, prefix="/api", tags=["files"])
 
 
 @app.get("/health")
