@@ -1,0 +1,77 @@
+# MPAC web-app — Lightsail host nginx config.
+#
+# Replace `__DOMAIN__` with your actual hostname (e.g. `mpac.yourname.com`
+# or the Lightsail static IP). After that, run `sudo certbot --nginx -d __DOMAIN__`
+# — certbot edits the 443 server block in-place to add the SSL directives
+# and the http → https redirect.
+#
+# Install:
+#   sudo sed 's|__DOMAIN__|your.actual.host|g' \
+#       deploy/aws-lightsail/nginx.conf.template > /etc/nginx/sites-available/mpac
+#   sudo ln -sf /etc/nginx/sites-available/mpac /etc/nginx/sites-enabled/mpac
+#   sudo rm -f /etc/nginx/sites-enabled/default
+#   sudo nginx -t && sudo systemctl reload nginx
+
+# Single server block on :80 for now; certbot will add the :443 block
+# automatically when you run it.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __DOMAIN__;
+
+    # Let's Encrypt validation path — certbot writes challenge files here
+    # during renewal. Keep this above any catch-all redirect.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # ── FastAPI API endpoints ─────────────────────────────
+    # Any /api/* request is proxied straight to the api container.
+    location /api/ {
+        proxy_pass         http://127.0.0.1:8001;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+    }
+
+    # ── FastAPI WebSocket (collaboration coordinator) ─────
+    # Must use HTTP/1.1 + Upgrade header for WebSocket. Long read timeout
+    # so idle sessions don't drop.
+    location /ws/ {
+        proxy_pass         http://127.0.0.1:8001;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade    $http_upgrade;
+        proxy_set_header   Connection "upgrade";
+        proxy_set_header   Host       $host;
+        proxy_set_header   X-Real-IP  $remote_addr;
+        proxy_read_timeout 3600s;  # 1h — keep long WS sessions alive
+        proxy_send_timeout 3600s;
+    }
+
+    # ── FastAPI /health (convenience; not behind /api/) ───
+    location = /health {
+        proxy_pass         http://127.0.0.1:8001;
+        proxy_set_header   Host $host;
+    }
+
+    # ── Next.js (everything else) ─────────────────────────
+    # Next.js also uses upgrade headers for its HMR WebSocket in dev, but
+    # we're running the production build here — still safe to pass them.
+    location / {
+        proxy_pass         http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade           $http_upgrade;
+        proxy_set_header   Connection        "upgrade";
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+    }
+
+    # Upload cap — we don't expect anything big, but set a floor well
+    # above chat payloads so Claude replies don't get chopped.
+    client_max_body_size 5m;
+}

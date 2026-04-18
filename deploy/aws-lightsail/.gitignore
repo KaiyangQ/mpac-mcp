@@ -1,0 +1,7 @@
+# Never commit SQLite backups — they contain signup codes, hashed passwords,
+# and potentially Fernet-encrypted API keys. Re-dump from the running server
+# when you need a fresh backup.
+backups/
+
+# Populated env file — contains JWT secret, encryption key, invite CSV.
+api.env

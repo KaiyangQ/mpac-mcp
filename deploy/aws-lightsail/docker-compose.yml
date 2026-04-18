@@ -1,0 +1,55 @@
+# MPAC web-app on AWS Lightsail — single-host Docker Compose stack.
+#
+# Runs two containers behind the host's nginx:
+#   * api (FastAPI, port 8001)    — reuses deploy/fly-webapi/Dockerfile
+#   * app (Next.js, port 3000)    — reuses deploy/fly-webapp/Dockerfile
+#
+# Both expose their ports on 127.0.0.1 only — the host nginx (NOT
+# containerised) terminates TLS on :443 and reverse-proxies everything.
+#
+# Secrets come from /etc/mpac/api.env (see api.env.example). SQLite lives
+# on /var/mpac/data on the host, survives container recreation.
+#
+# Build + launch (run from repo root):
+#     sudo docker compose -f deploy/aws-lightsail/docker-compose.yml \
+#          --env-file /etc/mpac/compose.env build
+#     sudo docker compose -f deploy/aws-lightsail/docker-compose.yml \
+#          --env-file /etc/mpac/compose.env up -d
+#
+# /etc/mpac/compose.env must define NEXT_PUBLIC_API_URL (full https URL of
+# the deployment — e.g. https://mpac.yourname.com — or empty string for
+# same-origin). Next bakes this into its JS bundle at build time.
+
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/fly-webapi/Dockerfile
+    image: mpac-web-api:local
+    restart: always
+    ports:
+      - "127.0.0.1:8001:8001"
+    volumes:
+      - /var/mpac/data:/data
+    env_file:
+      - /etc/mpac/api.env
+    environment:
+      # These are overridable but have sane defaults via api.env.
+      MPAC_WEB_ENV: production
+      MPAC_WEB_DB_DIR: /data
+      MPAC_LOG_LEVEL: INFO
+
+  app:
+    build:
+      context: ../..
+      dockerfile: deploy/fly-webapp/Dockerfile
+      args:
+        # Next.js inlines this into the client bundle at build time —
+        # change it, `docker compose build app --no-cache` to rebake.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    image: mpac-web-app:local
+    restart: always
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - api
