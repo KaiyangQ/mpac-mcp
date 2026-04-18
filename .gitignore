@@ -61,3 +61,10 @@ mpac-mcp/src/*.egg-info/
 # Semi-public beta deploy state (generated invite codes — never commit)
 deploy/scripts/.invite-codes.txt
 deploy/scripts/.env
+
+# SSH / TLS private keys — never commit. Covers Lightsail *.pem, SSH keys,
+# and anything else that happens to drop in the repo with a key-ish suffix.
+*.pem
+*.key
+id_rsa
+id_ed25519
