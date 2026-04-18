@@ -135,13 +135,68 @@ leaks. `INVITE_CODES` can be rotated freely without affecting users.
 
 ---
 
-## 🚚 Day-2 ops quickref
+## 🚚 Day-2 ops — updating the live site
+
+The Lightsail instance tracks the `deploy` branch (a thin-slice of main,
+only the files needed to build and run). To ship a change:
+
+### From your laptop — promote main to deploy
+
+```bash
+# After committing whatever you want to release to main:
+./deploy/scripts/sync-deploy-branch.sh
+```
+
+The script:
+1. Archives the current `origin/deploy` as `deploy-archive-YYYY-MM-DD`
+   (on GitHub too, so rollback is always possible).
+2. Builds a fresh orphan commit containing only the whitelist
+   (`deploy/` + `web-app/` + 4 root files) from `main`'s current HEAD.
+3. Force-pushes that commit to `origin/deploy`.
+
+### On Lightsail — pull the new snapshot
+
+```bash
+ssh -i ~/Downloads/LightsailDefaultKey-us-west-2.pem ubuntu@184.32.168.112
+cd ~/Agent_talking
+git fetch origin deploy
+git reset --hard origin/deploy        # NOT `git pull` — deploy force-pushes
+sudo docker compose -f deploy/aws-lightsail/docker-compose.yml \
+    --env-file /etc/mpac/compose.env up -d --build
+```
+
+`docker compose up -d --build` rebuilds only the services whose image
+source changed, and recreates the corresponding container. Running
+sessions on the OTHER service keep going.
+
+### Rollback (if a release breaks the site)
+
+```bash
+# From your laptop:
+git push origin deploy-archive-2026-04-17:deploy --force
+# Then on Lightsail, same fetch + reset + compose up as above.
+```
+
+### Other ops
 
 | Task | Command (on Lightsail host) |
 |---|---|
-| Pull new code + rebuild | `cd ~/Agent_talking && git pull && sudo docker compose -f deploy/aws-lightsail/docker-compose.yml --env-file /etc/mpac/compose.env up -d --build` |
 | Tail api logs | `sudo docker compose -f deploy/aws-lightsail/docker-compose.yml logs -f api` |
 | Tail app logs | `sudo docker compose -f deploy/aws-lightsail/docker-compose.yml logs -f app` |
-| nginx access log | `sudo tail -f /var/log/nginx/access.log` |
+| Tail nginx access log | `sudo tail -f /var/log/nginx/access.log` |
 | Check certbot next renewal | `sudo certbot certificates` |
-| SQLite dump backup | `sudo sqlite3 /var/mpac/data/mpac_web.db ".backup /tmp/backup.db"` |
+| SQLite one-shot backup | `sudo sqlite3 /var/mpac/data/mpac_web.db ".backup /tmp/backup.db"` |
+| List invite codes on disk | `sudo sqlite3 /var/mpac/data/mpac_web.db 'SELECT code, used_by_id FROM signup_codes'` |
+
+## 🗂 Branch layout (private `Agent_talking`)
+
+| Branch | What it contains | Lives where |
+|---|---|---|
+| `main` | Full development history — daily reports, version history, docs, ref-impl, mpac-package/mpac-mcp source, web-app, everything. | Local laptop + private GitHub |
+| `deploy` | Thin-slice of main: `deploy/ + web-app/ + 4 root files`. No dev docs, no mpac-* source. Force-pushed by `sync-deploy-branch.sh` every time a release is cut. | Private GitHub + Lightsail (`/home/ubuntu/Agent_talking/`) |
+| `deploy-archive-YYYY-MM-DD` | Snapshot of `deploy` from before the last sync, kept for rollback. | Private GitHub (no active clones) |
+| `opensource` / `opensource-mcp` | Thin-slices published as `mpac` / `mpac-mcp` on PyPI — unrelated to the web app. | Private GitHub → mirrored to public `mpac-protocol` / `mpac-mcp` repos |
+
+`BETA_ACCESS.md`, `daily_reports/`, `deploy/scripts/.invite-codes.txt`
+etc. live **only on `main`** — they never leak to `deploy` (thin-slice
+whitelist excludes them) or to the public PyPI branches.
