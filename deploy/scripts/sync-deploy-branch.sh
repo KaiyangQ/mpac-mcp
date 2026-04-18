@@ -80,8 +80,14 @@ cleanup() {
     git worktree remove --force "$TMPDIR" 2>/dev/null || true
     rm -rf "$TMPDIR"
     git worktree prune >/dev/null 2>&1 || true
+    # Drop any leftover temp orphan branch from an interrupted run.
+    git branch -D __sync_deploy_fresh >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+
+# Clean up leftover state from any previous interrupted run BEFORE we start.
+git branch -D __sync_deploy_fresh >/dev/null 2>&1 || true
+git worktree prune >/dev/null 2>&1 || true
 
 log "temp worktree: $TMPDIR"
 git worktree add --quiet --detach "$TMPDIR" HEAD
