@@ -1,8 +1,8 @@
 # MPAC web-app on AWS Lightsail — single-host Docker Compose stack.
 #
 # Runs two containers behind the host's nginx:
-#   * api (FastAPI, port 8001)    — reuses deploy/fly-webapi/Dockerfile
-#   * app (Next.js, port 3000)    — reuses deploy/fly-webapp/Dockerfile
+#   * api (FastAPI, port 8001)    — built from deploy/dockerfiles/api/Dockerfile
+#   * app (Next.js, port 3000)    — built from deploy/dockerfiles/app/Dockerfile
 #
 # Both expose their ports on 127.0.0.1 only — the host nginx (NOT
 # containerised) terminates TLS on :443 and reverse-proxies everything.
@@ -24,7 +24,7 @@ services:
   api:
     build:
       context: ../..
-      dockerfile: deploy/fly-webapi/Dockerfile
+      dockerfile: deploy/dockerfiles/api/Dockerfile
     image: mpac-web-api:local
     restart: always
     ports:
@@ -42,7 +42,7 @@ services:
   app:
     build:
       context: ../..
-      dockerfile: deploy/fly-webapp/Dockerfile
+      dockerfile: deploy/dockerfiles/app/Dockerfile
       args:
         # Next.js inlines this into the client bundle at build time —
         # change it, `docker compose build app --no-cache` to rebake.

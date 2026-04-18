@@ -1,14 +1,15 @@
-# MPAC Web App — Next.js frontend for fly.io (mpac-web-app).
+# MPAC Web App — Next.js frontend image.
 #
-# Build from the REPO ROOT so the context includes web-app/:
+# Two-stage build: node:20-alpine for deps + `next build`, then
+# node:20-alpine for the runtime (uses Next's `standalone` output — no
+# node_modules in the final image, just a self-contained server.js).
+# Used by deploy/aws-lightsail/docker-compose.yml. Build context must be
+# the REPO ROOT so `COPY web-app/app/ …` works.
 #
-#     fly deploy --config deploy/fly-webapp/fly.toml \
-#                --dockerfile deploy/fly-webapp/Dockerfile \
-#                --build-arg NEXT_PUBLIC_API_URL=https://mpac-web-api.fly.dev
-#
-# Multi-stage: node:20 alpine for deps + build, then node:20 alpine for
-# the runtime (uses Next's `standalone` output — NO node_modules in the
-# final image, just a self-contained server.js).
+#     # from repo root, typically via compose:
+#     docker build -f deploy/dockerfiles/app/Dockerfile \
+#         --build-arg NEXT_PUBLIC_API_URL=https://mpac-web.duckdns.org \
+#         -t mpac-web-app:local .
 
 # ───────────────────────── Stage 1: build ─────────────────────────
 FROM node:20-alpine AS builder
@@ -16,8 +17,9 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # `NEXT_PUBLIC_*` env vars must be present at BUILD time — Next inlines
-# them into the JS bundle. Override at deploy time via `--build-arg`.
-ARG NEXT_PUBLIC_API_URL=https://mpac-web-api.fly.dev
+# them into the JS bundle. Override at deploy time via `--build-arg` (see
+# docker-compose.yml or the docker build example above).
+ARG NEXT_PUBLIC_API_URL=https://mpac-web.duckdns.org
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
 # Install deps (cache layer: copy manifests first).

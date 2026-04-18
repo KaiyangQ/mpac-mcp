@@ -1,9 +1,11 @@
-# MPAC Web App — FastAPI backend for fly.io (mpac-web-api).
+# MPAC Web App — FastAPI backend image.
 #
-# Build from the REPO ROOT so the context includes web-app/:
+# Builds a Python 3.12 image running uvicorn on port 8001. Used by
+# deploy/aws-lightsail/docker-compose.yml. Build context must be the
+# REPO ROOT so the image can COPY web-app/api/ and web-app/api/requirements.txt.
 #
-#     fly deploy --config deploy/fly-webapi/fly.toml \
-#                --dockerfile deploy/fly-webapi/Dockerfile
+#     # from repo root, typically via compose:
+#     docker build -f deploy/dockerfiles/api/Dockerfile -t mpac-web-api:local .
 
 FROM python:3.12-slim
 
@@ -22,7 +24,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # App code.
 COPY web-app/api/ ./api/
 
-# Volume mountpoint (fly volume `webapi_data` is mounted here via fly.toml).
+# SQLite volume mountpoint. On Lightsail this is bind-mounted from
+# /var/mpac/data on the host (see docker-compose.yml).
 RUN mkdir -p /data
 
 EXPOSE 8001
