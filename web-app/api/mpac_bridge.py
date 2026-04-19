@@ -397,6 +397,33 @@ async def register_and_hello(
     Returns the ``_ConnectedParticipant`` on success, ``None`` if HELLO was
     rejected (caller should close the connection).
     """
+    # ── Reconnect dedup ─────────────────────────────────────────────
+    # If this principal_id already has an active _ConnectedParticipant
+    # (e.g. a browser tab that reloaded before its old WebSocket closed,
+    # or two tabs for the same user), we need to retire the old one
+    # FIRST. Otherwise the coordinator keeps the old participant's
+    # intents alive and any file the user re-opens triggers a bogus
+    # "Alice ↔ Alice" scope-overlap conflict. Sequence:
+    #   1. Synth GOODBYE on the old participant's behalf so the
+    #      coordinator drops their intents + presence cleanly.
+    #   2. Broadcast offline PARTICIPANT_UPDATE so other tabs/agents
+    #      see the transition (the new HELLO below will immediately
+    #      re-broadcast online, but that's fine — it's correct state).
+    # This happens BEFORE installing the new connection so the HELLO
+    # below looks like a fresh join to the coordinator.
+    stale = session.connections.get(principal_id)
+    if stale is not None:
+        log.info(
+            "Reconnect detected for %s — retiring stale connection before "
+            "accepting new HELLO",
+            principal_id,
+        )
+        try:
+            await unregister_and_goodbye(session, stale)
+        except Exception:
+            log.exception("Failed to retire stale connection %s; continuing",
+                          principal_id)
+
     participant = Participant(
         principal_id=principal_id,
         principal_type=principal_type,
