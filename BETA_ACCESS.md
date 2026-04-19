@@ -64,6 +64,71 @@ ciphertext decrypts identically for each account.
 
 ---
 
+## 🤖 Connect Claude (local-bridge mode, no API key needed)
+
+Shipped 2026-04-19. Users on the beta can now route the in-browser AI
+chat through their **local Claude Code subscription** instead of filling
+in an Anthropic API key. Zero cost to them beyond the Claude Pro / Max
+subscription they already have.
+
+### One-time laptop setup
+
+```bash
+# 1. Claude Code CLI
+npm install -g @anthropic-ai/claude-code
+
+# 2. Bind the subscription to this machine (OAuth in browser)
+claude /login
+
+# 3. Install the MPAC bridge package
+pip install mpac-mcp   # needs >= 0.2.0 for the `mpac-mcp-relay` command
+```
+
+No API key anywhere in the loop. `claude -p` reads
+`~/.claude/sessions/` credential files which are set by step 2.
+
+### Per-project connect flow
+
+1. Log into <https://mpac-web.duckdns.org>, open a project.
+2. Click **"Connect Claude"** in the header (to the left of Invite).
+3. The modal shows a ready-to-run command like:
+   ```bash
+   mpac-mcp-relay \
+     --project-url wss://mpac-web.duckdns.org/ws/relay/<project_id> \
+     --token <opaque-44-char-token>
+   ```
+4. Paste into a terminal and run. The modal status strip flips to
+   green **`● Connected`** within ~2 s.
+5. Leave the `mpac-mcp-relay` process running in the background. The
+   in-browser AI chat now routes to Claude running on that laptop.
+
+Inside the chat, Claude has six MPAC-aware tools:
+`list_project_files`, `read_project_file`, `write_project_file`,
+`check_overlap`, `announce_intent`, `withdraw_intent`. It uses them
+to actually read and edit the shared project files (not your local
+filesystem), and its intents are visible to everyone else in the
+session's WHO'S WORKING panel.
+
+### Stopping / switching
+
+- **Stop your relay:** `Ctrl+C` the running process. Claude's avatar
+  goes offline in the session within seconds.
+- **Rotate your token:** reopening the modal while a relay is already
+  connected simply shows the existing command again (we intentionally
+  don't rotate to avoid killing the running relay). To force a new
+  token, stop the relay first, then reopen the modal.
+- **Quota:** each user's chat messages consume THEIR OWN Claude Code
+  subscription quota. Nobody shares a pool.
+
+### Fallback
+
+If no relay is connected and the user has a BYOK Anthropic key on file,
+`/api/chat` falls back to the old API-key path. If neither is set, the
+chat returns `HTTP 402` with a hint to either Connect Claude or add a
+key.
+
+---
+
 ## 🎟 Single-use beta invite codes (10)
 
 Seeded from `MPAC_WEB_INVITE_CODES` (in `/etc/mpac/api.env` on the
