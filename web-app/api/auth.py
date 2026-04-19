@@ -56,3 +56,47 @@ def get_current_user(
     if not user:
         raise HTTPException(401, "User not found")
     return user
+
+
+def get_user_or_agent(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> User:
+    """Like get_current_user, but also accepts an MPAC agent bearer token.
+
+    The bearer can be either:
+      * A JWT — the user's browser session credential (same as get_current_user)
+      * An agent Token.token_value — minted via POST /api/projects/{id}/agent-token,
+        carried by mpac-mcp-relay and its relay_tools MCP subprocess.
+
+    In both cases we return the ``User`` the token belongs to, so downstream
+    handlers see a consistent "who is this request on behalf of" answer.
+    Agent tokens scoped to a specific project still return the user — the
+    handler is expected to cross-check project membership itself (e.g. files.py
+    already does this via _assert_member). Revoked agent tokens are rejected.
+    """
+    from .models import Token  # local import avoids circular dep
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Missing or invalid Authorization header")
+    raw = authorization[7:]
+
+    # First try JWT — if it parses, we're done.
+    payload = decode_jwt(raw)
+    if payload:
+        user = db.get(User, int(payload["sub"]))
+        if not user:
+            raise HTTPException(401, "User not found")
+        return user
+
+    # Otherwise treat the raw string as an MPAC bearer token.
+    tok = db.query(Token).filter(
+        Token.token_value == raw,
+        Token.is_revoked == False,  # noqa: E712
+    ).first()
+    if tok is None:
+        raise HTTPException(401, "Invalid or expired token")
+    user = db.get(User, tok.user_id)
+    if not user:
+        raise HTTPException(401, "User not found")
+    return user

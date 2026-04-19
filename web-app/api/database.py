@@ -43,6 +43,17 @@ def _lightweight_migrations() -> None:
                     "anthropic_api_key_encrypted TEXT"
                 ))
 
+    # Path B relay feature: tokens.is_agent distinguishes human-owned
+    # credentials from the ones minted for a local Claude Code relay.
+    if "tokens" in inspector.get_table_names():
+        cols = {c["name"] for c in inspector.get_columns("tokens")}
+        if "is_agent" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE tokens ADD COLUMN "
+                    "is_agent BOOLEAN NOT NULL DEFAULT 0"
+                ))
+
 
 def init_db():
     """Create all tables (idempotent) + run lightweight ALTER migrations."""

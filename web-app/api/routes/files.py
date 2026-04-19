@@ -13,7 +13,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from ..auth import get_current_user
+# get_user_or_agent accepts both the user's browser JWT and an MPAC agent
+# bearer token. That lets the mpac-mcp-relay's relay_tools subprocess (running
+# as a claude -p MCP server) read/write the same files as the user's browser.
+from ..auth import get_user_or_agent as get_current_user
 from ..database import get_db
 from ..models import Project, ProjectFile, Token, User
 from ..schemas import (

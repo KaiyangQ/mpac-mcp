@@ -114,3 +114,40 @@ class ChatMessage(BaseModel):
 
 class ChatReply(BaseModel):
     reply: str
+
+
+# ── Agent relay (Path B: local Claude Code bridge) ──
+
+class AgentTokenResponse(BaseModel):
+    """Minted once, shown once. User copies the launch command and runs it
+    locally; mpac-mcp-relay authenticates to /ws/relay with this token."""
+    token_value: str
+    project_id: int
+    relay_url: str  # full ws:// URL the relay connects to
+    launch_command: str  # pre-built shell command for copy-paste
+
+class AgentStatusResponse(BaseModel):
+    connected: bool
+    display_name: Optional[str] = None  # e.g. "Alice's Claude"
+
+
+class AgentAnnounceIntent(BaseModel):
+    project_id: int
+    files: list[str]
+    objective: str = "working"
+
+class AgentAnnounceIntentResponse(BaseModel):
+    intent_id: str
+    accepted: bool
+
+class AgentWithdrawIntent(BaseModel):
+    project_id: int
+    intent_id: str
+    reason: str = "done"
+
+class AgentOverlapQuery(BaseModel):
+    project_id: int
+    files: list[str]
+
+class AgentOverlapResponse(BaseModel):
+    overlaps: list[dict]  # [{principal_id, display_name, files, objective}]

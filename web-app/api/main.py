@@ -112,7 +112,7 @@ else:
     )
 
 # Import and include routers
-from .routes import users, projects, tokens, chat, settings, files  # noqa: E402
+from .routes import users, projects, tokens, chat, settings, files, agent, ws_relay  # noqa: E402
 
 app.include_router(users.router, prefix="/api", tags=["auth"])
 app.include_router(projects.router, prefix="/api", tags=["projects"])
@@ -120,6 +120,10 @@ app.include_router(tokens.router, prefix="/api", tags=["tokens"])
 app.include_router(chat.router, prefix="/api", tags=["chat"])
 app.include_router(settings.router, prefix="/api", tags=["settings"])
 app.include_router(files.router, prefix="/api", tags=["files"])
+app.include_router(agent.router, prefix="/api", tags=["agent"])
+# ws_relay owns /ws/relay/{project_id} — mounted at root (no /api prefix,
+# matches the /ws/session pattern below).
+app.include_router(ws_relay.router)
 
 
 @app.get("/health")

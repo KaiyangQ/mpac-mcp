@@ -47,7 +47,13 @@ class Project(Base):
 
 
 class Token(Base):
-    """Per-user per-project MPAC bearer token (Plan C credential)."""
+    """Per-user per-project MPAC bearer token (Plan C credential).
+
+    A given (user_id, project_id) pair can have multiple tokens when
+    is_agent differs: one for the user's browser session, another for
+    their local Claude Code relay. Membership is granted by any live
+    (non-revoked) token regardless of is_agent.
+    """
     __tablename__ = "tokens"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -58,6 +64,11 @@ class Token(Base):
     created_at = Column(DateTime, default=_utcnow)
     expires_at = Column(DateTime, nullable=True)
     is_revoked = Column(Boolean, default=False)
+    # True when minted for an mpac-mcp relay (local Claude Code bridge).
+    # The /ws/relay endpoint only accepts is_agent=True tokens; the human
+    # browser path (/ws/session) checks membership via any live token but
+    # treats is_agent=False as the user's own credential.
+    is_agent = Column(Boolean, default=False, nullable=False)
 
     # Relationships
     user = relationship("User", back_populates="tokens")

@@ -1,5 +1,18 @@
-"""AI chat route — spawns a Claude agent that joins the MPAC session as a peer."""
+"""AI chat route — routes to the user's local Claude Code relay if connected,
+falls back to BYOK ClaudeAgent otherwise.
+
+Routing priority (Path B variant 2):
+  1. Relay online for (user, project) → forward the message to the user's
+     mpac-mcp-relay process; it spawns `claude -p` locally and returns the
+     reply. Uses the user's Claude Code subscription, not an API key.
+  2. BYOK Anthropic key on file → existing ClaudeAgent path (API-keyed).
+  3. In production without either → 402 prompting the user to either start
+     the relay or add an API key. In dev we still let ClaudeAgent's canned
+     fallback produce a demo reply so the UI keeps working offline.
+"""
 from __future__ import annotations
+
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -12,8 +25,10 @@ from ..database import get_db
 from ..models import Project, Token, User
 from ..mpac_bridge import registry
 from ..schemas import ChatMessage, ChatReply
+from .ws_relay import relay_registry
 
 router = APIRouter()
+log = logging.getLogger("mpac.chat")
 
 
 @router.post("/chat", response_model=ChatReply)
@@ -22,14 +37,7 @@ async def chat(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Run one agent turn for the user's chat message.
-
-    The agent joins the project's MPAC session (visible in the collaboration
-    panel), announces an intent on the files it plans to edit, waits briefly
-    to simulate work, withdraws, and leaves. Returns the assistant's text
-    reply — no streaming for MVP.
-    """
-    # Membership check: only members of the project may spawn the agent.
+    # Membership check: only members of the project may chat.
     project = db.get(Project, msg.project_id)
     if not project:
         raise HTTPException(404, "Project not found")
@@ -45,9 +53,25 @@ async def chat(
     if not membership:
         raise HTTPException(403, "You are not a member of this project")
 
-    # BYOK: decrypt this user's Anthropic key. In production, no key ⇒ 402
-    # so the UI can prompt them to go to Settings. In dev, we let the agent
-    # fall through to the platform ANTHROPIC_API_KEY / canned-reply fallback.
+    # ── Route 1: relay is connected ──────────────────────────────────
+    if relay_registry.is_connected(user.id, msg.project_id):
+        log.info("Chat via relay: user=%s project=%s", user.id, msg.project_id)
+        try:
+            reply = await relay_registry.send_chat(
+                user.id, msg.project_id, msg.message,
+            )
+            return ChatReply(reply=reply)
+        except TimeoutError:
+            raise HTTPException(504, "Local Claude Code timed out (>90s)")
+        except LookupError:
+            # Relay raced-disconnected between is_connected() and send_chat();
+            # fall through to BYOK path.
+            log.warning("Relay disappeared mid-request, falling back to BYOK")
+        except RuntimeError as e:
+            # Relay disconnected during the request.
+            raise HTTPException(503, f"Local Claude Code relay dropped: {e}")
+
+    # ── Route 2: BYOK fallback ───────────────────────────────────────
     user_api_key: str | None = None
     if user.anthropic_api_key_encrypted:
         user_api_key = decrypt_str(user.anthropic_api_key_encrypted)
@@ -56,11 +80,14 @@ async def chat(
         raise HTTPException(
             status_code=402,
             detail=(
-                "No Anthropic API key on file. Add your own key in "
-                "Settings → Anthropic API key to use the AI chat."
+                "Chat needs either a running Claude Code relay "
+                "(click Connect Claude) or an Anthropic API key "
+                "(Settings → Anthropic API key)."
             ),
         )
 
+    log.info("Chat via BYOK: user=%s project=%s has_key=%s",
+             user.id, msg.project_id, user_api_key is not None)
     agent = ClaudeAgent(
         project=project, registry=registry, db=db, api_key=user_api_key,
     )
