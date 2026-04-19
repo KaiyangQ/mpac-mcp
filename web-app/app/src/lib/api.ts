@@ -61,6 +61,18 @@ export type AnthropicKeyStatus = {
   key_preview?: string | null;
 };
 
+export type AgentTokenResponse = {
+  token_value: string;
+  project_id: number;
+  relay_url: string;
+  launch_command: string;
+};
+
+export type AgentStatus = {
+  connected: boolean;
+  display_name?: string | null;
+};
+
 export type ProjectFileListItem = {
   path: string;
   updated_at: string;
@@ -222,6 +234,14 @@ export const api = {
       project_id: projectId,
       message,
     }),
+
+  // ── Agent relay (Path B: local Claude Code bridge) ──────
+
+  mintAgentToken: (projectId: number) =>
+    request<AgentTokenResponse>("POST", `/api/projects/${projectId}/agent-token`),
+
+  getAgentStatus: (projectId: number) =>
+    request<AgentStatus>("GET", `/api/projects/${projectId}/agent-status`),
 };
 
 export { API_URL };

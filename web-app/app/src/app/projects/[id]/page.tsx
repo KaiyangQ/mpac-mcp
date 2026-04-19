@@ -20,6 +20,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useRequireAuth } from "@/lib/redirect-hooks";
 import { InviteModal } from "@/components/invite-modal";
 import { NewFileModal } from "@/components/new-file-modal";
+import { ConnectClaudeModal } from "@/components/connect-claude-modal";
 import { CommandPalette } from "@/components/command-palette";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -711,6 +712,8 @@ export default function WorkspacePage({
   const [showInvite, setShowInvite] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [showNewFile, setShowNewFile] = useState(false);
+  const [showConnectClaude, setShowConnectClaude] = useState(false);
+  const [agentConnected, setAgentConnected] = useState(false);
   const [activePath, setActivePath] = useState<string | null>(null);
 
   // File state — list of paths is authoritative; contents cached per-path as
@@ -761,6 +764,27 @@ export default function WorkspacePage({
       cancelled = true;
     };
   }, [user, projectId, nextPath, logout, router]);
+
+  // Poll agent relay status every 5s so the header badge reflects whether
+  // the user's local Claude Code is connected. Cheap HTTP call, no WS needed.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const s = await api.getAgentStatus(projectId);
+        if (!cancelled) setAgentConnected(s.connected);
+      } catch {
+        /* user might not yet be a member; silent */
+      }
+    };
+    tick();
+    const interval = setInterval(tick, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [user, projectId]);
 
   // Lazy-load the content of whichever file is active. We cache in
   // fileContents so switching back to an already-opened file is instant.
@@ -961,6 +985,24 @@ export default function WorkspacePage({
           <span className="text-xs text-[var(--text-secondary)] mr-1">
             {user.display_name}
           </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setShowConnectClaude(true)}
+            className={
+              agentConnected
+                ? "gap-1.5 text-[#3fb950] hover:text-[#3fb950] border border-[#3fb950]/30"
+                : "gap-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border)]"
+            }
+            title={
+              agentConnected
+                ? "Your local Claude Code is bridged into this project"
+                : "Bridge your local Claude Code subscription (no API key needed)"
+            }
+          >
+            <Bot className="size-3.5" />
+            {agentConnected ? "Claude connected" : "Connect Claude"}
+          </Button>
           {isOwner && (
             <Button
               size="sm"
@@ -1147,6 +1189,12 @@ export default function WorkspacePage({
         onOpenChange={setShowNewFile}
         existingPaths={filePaths}
         onCreate={handleCreateFile}
+      />
+
+      <ConnectClaudeModal
+        projectId={projectId}
+        open={showConnectClaude}
+        onOpenChange={setShowConnectClaude}
       />
 
       <CommandPalette
