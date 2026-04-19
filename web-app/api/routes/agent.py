@@ -64,18 +64,50 @@ def _public_ws_base() -> str:
     return "wss://mpac-web.duckdns.org" if IS_PRODUCTION else "ws://127.0.0.1:8001"
 
 
+def _rotate_agent_token(db: Session, user_id: int, project_id: int) -> Token:
+    """Revoke any live agent tokens for (user, project) and mint a fresh one.
+
+    Used when no relay is actively connected — it's safe to rotate because
+    no in-flight MCP HTTP call will be holding the old value.
+    """
+    prior = db.query(Token).filter(
+        Token.user_id == user_id,
+        Token.project_id == project_id,
+        Token.is_agent == True,  # noqa: E712
+        Token.is_revoked == False,  # noqa: E712
+    ).all()
+    for t in prior:
+        t.is_revoked = True
+    token = Token(
+        token_value=secrets.token_urlsafe(32),
+        user_id=user_id,
+        project_id=project_id,
+        roles=json.dumps(["agent"]),
+        is_agent=True,
+    )
+    db.add(token)
+    db.commit()
+    db.refresh(token)
+    return token
+
+
 @router.post("/projects/{project_id}/agent-token", response_model=AgentTokenResponse)
 def mint_agent_token(
     project_id: int,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Mint (or rotate) the caller's agent token for this project.
+    """Mint (or reuse) the caller's agent token for this project.
 
-    Idempotent per user/project pair in the sense that we revoke the prior
-    unrevoked agent Token before issuing a new one — the user only ever has
-    one live relay credential at a time. Calling the endpoint twice is safe
-    and simply rotates the token (old relay disconnects on next use).
+    UX policy: if a relay is CURRENTLY connected for this (user, project),
+    we return the SAME token the running relay is already using. This keeps
+    "open the modal to copy the command again" from silently killing an
+    active relay (which was the original 2026-04-18 design and turned out
+    to be surprising — opening the modal would revoke the token the running
+    relay was using for MCP HTTP calls, and every subsequent tool call 401'd).
+
+    If no relay is connected (or the prior token got somehow lost), we mint
+    a fresh one and revoke any stale prior tokens, as before.
     """
     project = db.get(Project, project_id)
     if not project:
@@ -91,27 +123,31 @@ def mint_agent_token(
     if not membership:
         raise HTTPException(403, "You are not a member of this project")
 
-    # Revoke any prior agent tokens for this user/project so the "latest copy
-    # wins" — avoids dangling zombie relays when the user runs the modal twice.
-    prior = db.query(Token).filter(
-        Token.user_id == user.id,
-        Token.project_id == project_id,
-        Token.is_agent == True,  # noqa: E712
-        Token.is_revoked == False,  # noqa: E712
-    ).all()
-    for t in prior:
-        t.is_revoked = True
-
-    token = Token(
-        token_value=secrets.token_urlsafe(32),
-        user_id=user.id,
-        project_id=project_id,
-        roles=json.dumps(["agent"]),
-        is_agent=True,
-    )
-    db.add(token)
-    db.commit()
-    db.refresh(token)
+    # If a relay is actively connected for this (user, project), reuse the
+    # token it's currently holding. Walk the in-memory RelayRegistry.
+    from .ws_relay import relay_registry  # lazy import — circular
+    relay = relay_registry._by_key.get((user.id, project_id))  # noqa: SLF001
+    if relay is not None:
+        # Find the live token the relay used to authenticate — the only
+        # not-revoked agent token for this (user, project). If for any
+        # reason there's a mismatch, fall through and rotate.
+        existing = db.query(Token).filter(
+            Token.user_id == user.id,
+            Token.project_id == project_id,
+            Token.is_agent == True,  # noqa: E712
+            Token.is_revoked == False,  # noqa: E712
+        ).order_by(Token.id.desc()).first()
+        if existing is not None:
+            token = existing
+            # Skip revoke-and-mint — return the live token unchanged.
+            # Fall through to response-building below.
+            pass  # token is set
+        else:
+            # Shouldn't normally happen (registry says connected but DB has
+            # no live token) — rotate to recover.
+            token = _rotate_agent_token(db, user.id, project_id)
+    else:
+        token = _rotate_agent_token(db, user.id, project_id)
 
     ws_base = _public_ws_base()
     relay_url = f"{ws_base}/ws/relay/{project_id}"
