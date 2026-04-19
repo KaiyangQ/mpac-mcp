@@ -297,47 +297,77 @@ async def run_relay(args: argparse.Namespace) -> int:
     full_uri = f"{uri}{sep}token={args.token}"
     log.info("Connecting to %s", uri)
 
-    # websockets v14 renamed extra_headers → additional_headers. We don't
-    # pass any, so it's irrelevant; token goes in the query string.
-    try:
-        async with websockets.connect(full_uri, max_size=4 * 1024 * 1024) as ws:
-            await ws.send(json.dumps({
-                "type": "hello",
-                "version": RELAY_VERSION,
-            }))
-            print(f"[relay] Connected to {uri}")
-            print(f"[relay] Claude binary: {claude_binary}")
-            print(f"[relay] Waiting for chat messages…")
+    # Reconnect loop with exponential backoff (capped at 60 s). A production
+    # backend restart or a brief network blip should NOT require the user to
+    # re-run the command. Only a truly rejected handshake (401 invalid token)
+    # breaks us out — at that point the operator needs a new token from the
+    # web UI anyway.
+    attempts = 0
+    while True:
+        try:
+            async with websockets.connect(
+                full_uri, max_size=4 * 1024 * 1024,
+                open_timeout=15,
+                close_timeout=5,
+                ping_interval=20, ping_timeout=20,
+            ) as ws:
+                # Successful connect — reset backoff counter.
+                attempts = 0
+                await ws.send(json.dumps({
+                    "type": "hello",
+                    "version": RELAY_VERSION,
+                }))
+                print(f"[relay] Connected to {uri}")
+                print(f"[relay] Claude binary: {ctx.claude_binary}")
+                print(f"[relay] Waiting for chat messages…")
 
-            async for raw in ws:
-                try:
-                    msg = json.loads(raw)
-                except json.JSONDecodeError:
-                    log.warning("Non-JSON from server: %r", raw[:200])
-                    continue
-                mtype = msg.get("type")
-                if mtype == "chat":
-                    mid = msg.get("message_id")
-                    body = msg.get("message", "")
-                    # Handle each chat concurrently so one slow Claude turn
-                    # doesn't block the next incoming message.
-                    asyncio.create_task(_handle_and_reply(ws, ctx, mid, body))
-                elif mtype == "mpac_envelope":
-                    # MVP: we don't react to coordinator envelopes yet.
-                    # Milestone B will use these to drive Claude's context.
-                    log.debug("Received mpac_envelope: %s",
-                              msg.get("envelope", {}).get("message_type"))
-                else:
-                    log.debug("Server sent unknown type=%r", mtype)
-    except websockets.exceptions.InvalidStatusCode as e:
-        print(f"error: WebSocket handshake rejected ({e}). "
-              f"Token may be invalid or revoked.", file=sys.stderr)
-        return 3
-    except (websockets.exceptions.ConnectionClosed,
-            ConnectionRefusedError, OSError) as e:
-        print(f"[relay] Disconnected: {e}")
-        return 0
-    return 0
+                async for raw in ws:
+                    try:
+                        msg = json.loads(raw)
+                    except json.JSONDecodeError:
+                        log.warning("Non-JSON from server: %r", raw[:200])
+                        continue
+                    mtype = msg.get("type")
+                    if mtype == "chat":
+                        mid = msg.get("message_id")
+                        body = msg.get("message", "")
+                        # Handle each chat concurrently so one slow Claude
+                        # turn doesn't block the next incoming message.
+                        asyncio.create_task(
+                            _handle_and_reply(ws, ctx, mid, body)
+                        )
+                    elif mtype == "mpac_envelope":
+                        # MVP: we don't react to coordinator envelopes yet.
+                        log.debug("Received mpac_envelope: %s",
+                                  msg.get("envelope", {}).get("message_type"))
+                    else:
+                        log.debug("Server sent unknown type=%r", mtype)
+        except websockets.exceptions.InvalidStatusCode as e:
+            # 401 from the server usually means the agent token was revoked
+            # (e.g. user clicked "Connect Claude" again and rotated tokens).
+            # Bail — reconnecting forever with a dead token is wasteful.
+            status = getattr(e, 'status_code', None)
+            if status in (401, 403):
+                print(
+                    f"error: WebSocket handshake rejected ({e}). "
+                    f"Token is invalid or revoked. Click 'Connect Claude' "
+                    f"in the web app to get a fresh command.",
+                    file=sys.stderr,
+                )
+                return 3
+            # Other status codes: backoff and retry (maybe backend booting).
+            log.warning("WS handshake unexpected status: %s", e)
+        except (websockets.exceptions.ConnectionClosed,
+                ConnectionRefusedError, OSError) as e:
+            log.info("Disconnected: %s", e)
+
+        attempts += 1
+        delay = min(2 ** min(attempts, 6), 60)  # 2, 4, 8, 16, 32, 64→60 cap
+        print(f"[relay] Reconnecting in {delay}s… (attempt {attempts})")
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return 0
 
 
 async def _handle_and_reply(ws, ctx: RelayContext, message_id: str, body: str) -> None:
