@@ -30,6 +30,7 @@ import pytest
 from mpac_protocol.analysis.import_index import (
     collect_python_sources_from_dir,
     scan_reverse_deps,
+    scan_reverse_deps_detailed,
     scan_reverse_deps_from_dir,
 )
 from mpac_protocol.core.coordinator import SessionCoordinator
@@ -244,6 +245,207 @@ def test_scope_from_dict_ignores_unknown_top_level_fields():
     assert scope.extensions == {"impact": ["y.py"]}
 
 
+# ─── v0.2.2: symbol-level detailed scanner ─────────────────────
+
+
+def test_detailed_scanner_pins_from_imports():
+    """`from utils import foo, bar` — detailed scanner records both
+    names, fully qualified against the target module."""
+    sources = {
+        "utils.py": "def foo(): pass\ndef bar(): pass\n",
+        "main.py": "from utils import foo, bar\n",
+    }
+    result = scan_reverse_deps_detailed(["utils.py"], sources)
+    assert result == {"main.py": ["utils.bar", "utils.foo"]}
+
+
+def test_detailed_scanner_uses_original_name_not_alias():
+    """`from utils import foo as f` — we track ``foo``, not ``f``.
+    Alice cares about which of HER symbols are touched, not what the
+    importer renamed them to."""
+    sources = {
+        "utils.py": "def foo(): pass\n",
+        "main.py": "from utils import foo as f\n",
+    }
+    assert scan_reverse_deps_detailed(["utils.py"], sources) == {
+        "main.py": ["utils.foo"]
+    }
+
+
+def test_detailed_scanner_wildcard_on_star_import():
+    """`from utils import *` — we can't tell which symbols; return None
+    so the conflict detector treats it as 'any symbol could be used'."""
+    sources = {
+        "utils.py": "def foo(): pass\n",
+        "star.py": "from utils import *\n",
+    }
+    assert scan_reverse_deps_detailed(["utils.py"], sources) == {"star.py": None}
+
+
+def test_detailed_scanner_wildcard_on_bare_import():
+    """`import utils` — no specific names yet; attribute access could
+    happen anywhere downstream. Flag wildcard."""
+    sources = {
+        "utils.py": "def foo(): pass\n",
+        "docs.py": "import utils\n",
+    }
+    assert scan_reverse_deps_detailed(["utils.py"], sources) == {"docs.py": None}
+
+
+def test_detailed_scanner_merges_multiple_imports_from_same_file():
+    """If a file has two separate `from utils import ...` statements,
+    the symbol sets merge (deduped, sorted)."""
+    sources = {
+        "utils.py": "def foo(): pass\ndef bar(): pass\ndef baz(): pass\n",
+        "main.py": "from utils import foo\n\nfrom utils import bar, foo\n",
+    }
+    assert scan_reverse_deps_detailed(["utils.py"], sources) == {
+        "main.py": ["utils.bar", "utils.foo"]
+    }
+
+
+def test_detailed_scanner_wildcard_dominates_specific():
+    """If a file has both `import utils` (wildcard) and `from utils
+    import foo` (specific), wildcard wins — we must assume any symbol
+    could be used."""
+    sources = {
+        "utils.py": "def foo(): pass\n",
+        "mixed.py": "import utils\nfrom utils import foo\n",
+    }
+    assert scan_reverse_deps_detailed(["utils.py"], sources) == {"mixed.py": None}
+
+
+# ─── v0.2.2: scope_dependency_conflict with symbol precision ────
+
+
+def _scope_with(
+    resources,
+    impact=None,
+    impact_symbols=None,
+    affects_symbols=None,
+):
+    """Test helper — build a scope with any v0.2.1 / v0.2.2 extensions."""
+    ext = {}
+    if impact is not None:
+        ext["impact"] = impact
+    if impact_symbols is not None:
+        ext["impact_symbols"] = impact_symbols
+    if affects_symbols is not None:
+        ext["affects_symbols"] = affects_symbols
+    return Scope(
+        kind="file_set",
+        resources=list(resources),
+        extensions=ext or None,
+    )
+
+
+def test_precision_no_conflict_when_symbols_disjoint():
+    """**The motivating case for v0.2.2.**
+
+    Alice edits only ``utils.foo``. main.py imports only ``utils.bar``.
+    Pre-0.2.2 this was a false positive; 0.2.2 correctly says "no
+    conflict" because the symbol sets are disjoint.
+    """
+    alice = _scope_with(
+        ["utils.py"],
+        impact=["main.py"],
+        impact_symbols={"main.py": ["utils.bar"]},
+        affects_symbols=["utils.foo"],
+    )
+    bob = _scope_with(["main.py"])
+    assert scope_dependency_conflict(alice, bob) is False
+
+
+def test_precision_conflict_when_symbols_match():
+    """Alice edits ``utils.foo``; main.py uses ``utils.foo``. Still a
+    conflict — just precisely scoped to the right symbol."""
+    alice = _scope_with(
+        ["utils.py"],
+        impact=["main.py"],
+        impact_symbols={"main.py": ["utils.foo", "utils.bar"]},
+        affects_symbols=["utils.foo"],
+    )
+    bob = _scope_with(["main.py"])
+    assert scope_dependency_conflict(alice, bob) is True
+
+
+def test_precision_falls_back_when_importer_uses_wildcard():
+    """main.py does ``import utils`` — scanner can't pin symbols.
+    Even though Alice declared ``affects_symbols``, we must conservatively
+    flag a conflict."""
+    alice = _scope_with(
+        ["utils.py"],
+        impact=["main.py"],
+        impact_symbols={"main.py": None},
+        affects_symbols=["utils.foo"],
+    )
+    bob = _scope_with(["main.py"])
+    assert scope_dependency_conflict(alice, bob) is True
+
+
+def test_precision_falls_back_when_editor_didnt_declare_symbols():
+    """Alice didn't declare ``affects_symbols`` — old 0.2.1 client, or
+    she genuinely doesn't know which symbols she'll touch. Coordinator
+    degrades to file-level: anyone importing utils.py is a conflict."""
+    alice = _scope_with(
+        ["utils.py"],
+        impact=["main.py"],
+        impact_symbols={"main.py": ["utils.bar"]},
+        # no affects_symbols
+    )
+    bob = _scope_with(["main.py"])
+    assert scope_dependency_conflict(alice, bob) is True
+
+
+def test_precision_falls_back_when_coordinator_has_no_impact_symbols():
+    """Old 0.2.1 client: populated ``impact`` but not ``impact_symbols``.
+    New 0.2.2 coordinator must still flag the conflict by the file-level
+    rule."""
+    alice = _scope_with(
+        ["utils.py"],
+        impact=["main.py"],
+        affects_symbols=["utils.foo"],
+        # no impact_symbols
+    )
+    bob = _scope_with(["main.py"])
+    assert scope_dependency_conflict(alice, bob) is True
+
+
+def test_precision_symmetric_direction():
+    """Check the symmetric check: Bob is the 'editor' with symbol info,
+    Alice is the 'importer'."""
+    alice = _scope_with(["main.py"])
+    bob = _scope_with(
+        ["utils.py"],
+        impact=["main.py"],
+        impact_symbols={"main.py": ["utils.bar"]},
+        affects_symbols=["utils.foo"],
+    )
+    assert scope_dependency_conflict(alice, bob) is False
+
+
+def test_precision_one_side_specific_other_side_wildcard_per_importer():
+    """Multiple importers, mixed per-importer precision. Alice touches
+    foo. api.py uses only bar (safe). docs.py is wildcard (conflict).
+    Both importers are claimed by Bob — result should still be conflict
+    because docs.py forces the conservative path."""
+    alice = _scope_with(
+        ["utils.py"],
+        impact=["api.py", "docs.py"],
+        impact_symbols={
+            "api.py": ["utils.bar"],
+            "docs.py": None,
+        },
+        affects_symbols=["utils.foo"],
+    )
+    bob = _scope_with(["docs.py"])  # Bob claims the wildcard one
+    assert scope_dependency_conflict(alice, bob) is True
+
+    # Conversely: Bob claims only the safe one
+    bob_safe = _scope_with(["api.py"])
+    assert scope_dependency_conflict(alice, bob_safe) is False
+
+
 # ─── Coordinator integration ────────────────────────────────────
 
 
@@ -325,6 +527,78 @@ def test_coordinator_still_reports_scope_overlap_for_direct_conflict():
     conflict = _find_conflict(responses)
     assert conflict is not None
     assert conflict["payload"]["category"] == "scope_overlap"
+
+
+def test_coordinator_no_conflict_when_symbols_disjoint_v022():
+    """End-to-end: Alice declares ``affects_symbols=["utils.foo"]`` + scanner
+    says main.py only uses ``utils.bar``. Bob claims main.py. No conflict
+    should fire (v0.2.2 precision kicks in).
+
+    This is the single most important test for the symbol-precision
+    upgrade — it's the concrete false-positive-removal case."""
+    session_id = "sess-dep-sym-1"
+    coord = SessionCoordinator(session_id, security_profile="open")
+
+    alice, hello_a = _hello("alice", session_id)
+    bob, hello_b = _hello("bob", session_id)
+    coord.process_message(hello_a)
+    coord.process_message(hello_b)
+
+    alice_scope = Scope(
+        kind="file_set",
+        resources=["utils.py"],
+        extensions={
+            "impact": ["main.py"],
+            "impact_symbols": {"main.py": ["utils.bar"]},
+            "affects_symbols": ["utils.foo"],
+        },
+    )
+    coord.process_message(
+        alice.announce_intent(session_id, "intent-a", "refactor foo", alice_scope)
+    )
+
+    bob_scope = Scope(kind="file_set", resources=["main.py"])
+    responses = coord.process_message(
+        bob.announce_intent(session_id, "intent-b", "fix entrypoint", bob_scope)
+    )
+
+    assert _find_conflict(responses) is None, (
+        "v0.2.2 should NOT flag this — Alice only touches utils.foo, "
+        "main.py only uses utils.bar, so there's no actual risk."
+    )
+
+
+def test_coordinator_still_flags_when_symbols_match_v022():
+    """Regression: same plumbing but symbols DO match → conflict fires."""
+    session_id = "sess-dep-sym-2"
+    coord = SessionCoordinator(session_id, security_profile="open")
+
+    alice, hello_a = _hello("alice", session_id)
+    bob, hello_b = _hello("bob", session_id)
+    coord.process_message(hello_a)
+    coord.process_message(hello_b)
+
+    alice_scope = Scope(
+        kind="file_set",
+        resources=["utils.py"],
+        extensions={
+            "impact": ["main.py"],
+            "impact_symbols": {"main.py": ["utils.foo"]},
+            "affects_symbols": ["utils.foo"],
+        },
+    )
+    coord.process_message(
+        alice.announce_intent(session_id, "intent-a", "refactor foo", alice_scope)
+    )
+
+    bob_scope = Scope(kind="file_set", resources=["main.py"])
+    responses = coord.process_message(
+        bob.announce_intent(session_id, "intent-b", "edit main", bob_scope)
+    )
+
+    conflict = _find_conflict(responses)
+    assert conflict is not None
+    assert conflict["payload"]["category"] == "dependency_breakage"
 
 
 def test_coordinator_skips_conflict_when_no_overlap_and_no_impact():

@@ -5,13 +5,21 @@ Two kinds of conflicts live here:
 * ``scope_overlap`` — the classical case where two scopes claim overlapping
   resources (same file, same entity, same task). SPEC.md §15.2.1.1 defines
   this as a MUST: ``file_set`` overlap is *iff* resources intersect.
-* ``scope_dependency_conflict`` (v0.2.1, new) — the cross-file case where
-  no resources overlap but one scope's edits reach into the other's via an
-  import. The coordinator reports these with category ``dependency_breakage``
-  (SPEC.md §17.5 already lists this category; v0.2.1 fills in a concrete
-  detection rule for it without widening what "overlap" means).
+* ``scope_dependency_conflict`` — the cross-file case where no resources
+  overlap but one scope's edits reach into the other's via an import.
+  Reported with category ``dependency_breakage`` (SPEC.md §17.5 already
+  lists this category).
+
+  - **v0.2.1**: file-level precision — if A's edited file is imported by
+    any file B is editing, conflict.
+  - **v0.2.2 (this release)**: symbol-level precision when both sides
+    supply enough info. If A declares ``affects_symbols`` (the specific
+    names being changed) and the importer's symbol list (computed by the
+    analyzer into ``impact_symbols``) doesn't intersect it, no conflict.
+    Any missing info on either side falls back to the v0.2.1 file-level
+    behaviour — no false negatives from the precision upgrade.
 """
-from typing import List
+from typing import List, Optional
 import re
 
 from .models import Scope
@@ -98,25 +106,99 @@ def _scope_impact(scope: Scope) -> List[str]:
     return [x for x in impact if isinstance(x, str)]
 
 
+def _scope_affects_symbols(scope: Scope) -> Optional[List[str]]:
+    """Pull the agent-declared symbol set (0.2.2+).
+
+    Returns None when the agent DID NOT declare specific symbols — this is
+    the "assume everything" signal that triggers file-level fallback in
+    dependency detection. An empty list is treated the same as None
+    (nothing to match against → defer to file-level).
+    """
+    if not scope.extensions:
+        return None
+    raw = scope.extensions.get("affects_symbols")
+    if not isinstance(raw, list):
+        return None
+    cleaned = [x for x in raw if isinstance(x, str) and x]
+    return cleaned or None
+
+
+def _scope_impact_symbols(scope: Scope, importer: str) -> Optional[List[str]]:
+    """Pull the scanner-computed symbol list for a specific importer file.
+
+    Returns:
+        - A list of fully-qualified symbol names the importer actually uses.
+        - ``None`` meaning "wildcard / can't determine" — callers must treat
+          as "any symbol could be affected" and fall back to file-level.
+        - Also ``None`` when ``impact_symbols`` is absent entirely (0.2.1
+          client → 0.2.2 coordinator path).
+    """
+    if not scope.extensions:
+        return None
+    raw = scope.extensions.get("impact_symbols")
+    if not isinstance(raw, dict):
+        return None
+    value = raw.get(importer)
+    if value is None:
+        # Two cases: key present with None (explicit wildcard) OR key absent.
+        # Distinguish by checking membership.
+        if importer in raw:
+            return None  # explicit wildcard
+        return None  # absent — caller should still treat as wildcard (safer)
+    if not isinstance(value, list):
+        return None
+    return [s for s in value if isinstance(s, str)]
+
+
+def _symbols_actually_clash(
+    editor_scope: Scope,
+    importer_file: str,
+) -> bool:
+    """Given that ``importer_file`` imports from ``editor_scope``'s files,
+    decide whether the editor's planned changes actually affect a symbol
+    the importer uses.
+
+    Returns True (= "this IS a conflict") when:
+      * the editor didn't declare ``affects_symbols`` (assume they touch
+        everything), OR
+      * the scanner couldn't pin importer's symbols (wildcard import), OR
+      * the sets intersect — at least one symbol is both edited and used.
+
+    Returns False only when both sides have concrete symbol sets AND they
+    are disjoint. That's the precision win.
+    """
+    affects = _scope_affects_symbols(editor_scope)
+    if affects is None:
+        return True  # editor didn't declare → file-level fallback
+
+    used = _scope_impact_symbols(editor_scope, importer_file)
+    if used is None:
+        return True  # wildcard or missing → file-level fallback
+
+    return bool(set(affects) & set(used))
+
+
 def scope_dependency_conflict(a: Scope, b: Scope) -> bool:
     """Detect a cross-file dependency conflict between two ``file_set`` scopes.
 
-    Returns True when either:
+    Two checks run, both symmetric:
 
-    * a file in ``a.resources`` is reported as impacted by ``b.extensions.impact``
-      (i.e. ``b``'s edits reach a file ``a`` is about to touch), or
-    * symmetrically, a file in ``b.resources`` appears in ``a.extensions.impact``.
+    1. For each file in ``a.extensions.impact`` ∩ ``b.resources``:
+       does ``a``'s declared ``affects_symbols`` (if any) overlap the set
+       of symbols the importer uses (``a.extensions.impact_symbols``)?
+    2. Symmetric: ``b.extensions.impact`` ∩ ``a.resources`` with ``b``'s
+       symbol declarations.
+
+    When either side lacks symbol info, that side degrades to v0.2.1
+    file-level — an import-reachable file is always flagged. So the
+    v0.2.2 upgrade only ever *removes* false positives; it never misses
+    a conflict the old rule would have caught.
 
     This function intentionally does NOT flag classic same-file overlap —
-    ``scope_overlap`` already owns that case. The caller is expected to
-    check ``scope_overlap`` first and only fall back here if no direct
-    overlap was found; the coordinator does exactly that.
-
-    Empty or missing ``extensions.impact`` → always False, which is the
-    graceful-degradation path for clients that haven't run the analyzer.
+    ``scope_overlap`` owns that case. Caller (``coordinator``) checks
+    overlap first, only falls through here on disjoint resources.
     """
     if a.kind != "file_set" or b.kind != "file_set":
-        # Cross-kind or non-file scopes don't carry import semantics.
         return False
 
     a_resources = {normalize_path(r) for r in (a.resources or [])}
@@ -124,8 +206,17 @@ def scope_dependency_conflict(a: Scope, b: Scope) -> bool:
     a_impact = {normalize_path(r) for r in _scope_impact(a)}
     b_impact = {normalize_path(r) for r in _scope_impact(b)}
 
-    # a's edits reach a file b is also claiming? or vice versa?
-    return bool((a_impact & b_resources) or (b_impact & a_resources))
+    # Direction 1: a's edits reach a file b is claiming
+    for f in a_impact & b_resources:
+        if _symbols_actually_clash(a, f):
+            return True
+
+    # Direction 2: b's edits reach a file a is claiming
+    for f in b_impact & a_resources:
+        if _symbols_actually_clash(b, f):
+            return True
+
+    return False
 
 
 def scope_contains(container: Scope, test: Scope) -> bool:

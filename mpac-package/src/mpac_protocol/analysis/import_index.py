@@ -33,7 +33,13 @@ import ast
 import os
 import re
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple
+from typing import Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple, Union
+
+# Sentinel for "this file imports target module but we can't pin symbols"
+# (bare ``import X`` or ``from X import *``). Distinct from an empty list
+# which would mean "file imports nothing from target" (impossible for it
+# to be in impact then).
+_WILDCARD = None  # type: ignore
 
 
 # Directories we never descend into when scanning the filesystem. Virtualenvs,
@@ -84,13 +90,23 @@ def _path_to_module(rel_path: str) -> Optional[str]:
     return ".".join(parts)
 
 
-def _extract_imports(source: str, filename: str = "<unknown>") -> List[str]:
-    """Parse ``source`` and return the module names it imports.
+def _extract_imports_detailed(
+    source: str,
+    filename: str = "<unknown>",
+) -> List[Tuple[str, Optional[List[str]]]]:
+    """Parse ``source`` into a list of ``(module, symbols_or_None)`` tuples.
 
-    Absolute imports appear verbatim (``from foo.bar import x`` → ``foo.bar``).
-    Relative imports keep their leading dots (``from . import x`` → ``.``;
-    ``from ..pkg import y`` → ``..pkg``) so the caller can resolve them
-    against the importing file's package.
+    ``symbols`` is:
+    * a list of symbol names (the ORIGINAL names, not their ``as`` aliases)
+      for ``from X import a, b as c`` → returns ``[("X", ["a", "b"])]``
+    * ``None`` when we can't pin which symbols are used — this covers both
+      ``import X`` (any attribute could later be accessed) and
+      ``from X import *``. Callers must treat ``None`` as "wildcard:
+      could use anything".
+
+    Absolute and relative imports both go through this function; relative
+    ones (``from ..pkg import y``) keep their leading dots so the caller
+    resolves them via :func:`_resolve_relative`.
     """
     try:
         tree = ast.parse(source, filename=filename)
@@ -98,16 +114,35 @@ def _extract_imports(source: str, filename: str = "<unknown>") -> List[str]:
         # ValueError covers null-byte-in-source on some platforms.
         return []
 
-    modules: List[str] = []
+    out: List[Tuple[str, Optional[List[str]]]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
+            # ``import X`` — we only know the module is touched; which
+            # attributes get accessed needs a separate AST walk (attribute-
+            # chain resolution), deferred to a later release.
             for alias in node.names:
-                modules.append(alias.name)
+                out.append((alias.name, _WILDCARD))
         elif isinstance(node, ast.ImportFrom):
             level = node.level or 0
             mod = node.module or ""
-            modules.append("." * level + mod)
-    return modules
+            qualified = "." * level + mod
+            # ``from X import *`` surfaces as a single alias with name "*"
+            has_star = any(a.name == "*" for a in node.names)
+            if has_star:
+                out.append((qualified, _WILDCARD))
+            else:
+                # Use the ORIGINAL imported name, not the alias. Alice
+                # changing ``foo`` is the event we care about, regardless
+                # of what the importer renamed it to.
+                symbols = [a.name for a in node.names]
+                out.append((qualified, symbols))
+    return out
+
+
+def _extract_imports(source: str, filename: str = "<unknown>") -> List[str]:
+    """Legacy wrapper — module names only. Kept so older callers keep
+    working; new code should use :func:`_extract_imports_detailed`."""
+    return [m for m, _ in _extract_imports_detailed(source, filename)]
 
 
 def _resolve_relative(rel_import: str, importer_rel_path: str) -> Optional[str]:
@@ -144,38 +179,40 @@ def _resolve_relative(rel_import: str, importer_rel_path: str) -> Optional[str]:
 
 # ── Core scanner (source-agnostic) ──────────────────────────────────────
 
-def scan_reverse_deps(
+def scan_reverse_deps_detailed(
     target_files: Iterable[str],
     project_files: Mapping[str, str],
-) -> List[str]:
-    """Return the files in ``project_files`` that statically import any
-    symbol defined in ``target_files``.
+) -> Dict[str, Optional[List[str]]]:
+    """Return a per-file map of which symbols each importer uses.
 
-    Parameters
-    ----------
-    target_files:
-        Project-relative paths of the files whose reverse dependencies we
-        want. Absolute paths are not meaningful here — normalize before
-        calling if needed.
-    project_files:
-        Mapping of project-relative path → file content. Callers supply
-        whatever subset they can see; non-.py entries are silently skipped.
+    For every file in ``project_files`` that statically imports from a
+    target, the value is one of:
 
-    Returns
-    -------
-    Sorted list of project-relative paths (POSIX separators) that import
-    from at least one target. Target files are excluded from the result.
+    * a **sorted, deduped list of fully-qualified symbol names** (e.g.
+      ``["utils.foo", "utils.Bar"]``) — the symbols the importer pulled
+      out of target modules. Symbol qualification uses the target's
+      dotted module path.
+    * ``None`` (wildcard) — the importer did ``import target`` or
+      ``from target import *``; any symbol could be in play, so callers
+      must treat this as "conflict conservatively".
+
+    This is the 0.2.2 enrichment over :func:`scan_reverse_deps` (which
+    only returns the set of importer files). Both live in the same
+    analyzer because computing symbols is almost free once we're walking
+    the AST anyway.
     """
     targets_norm: Set[str] = {_normalize_rel(t) for t in target_files}
-    target_modules: Set[str] = set()
+    # Map target module → canonical module name used for symbol qualification
+    target_modules: Dict[str, str] = {}
     for t in targets_norm:
         m = _path_to_module(t)
         if m:
-            target_modules.add(m)
+            target_modules[m] = m
     if not target_modules:
-        return []
+        return {}
 
-    result: Set[str] = set()
+    # Importer file → set of qualified symbols (or None for wildcard)
+    raw: Dict[str, Optional[Set[str]]] = {}
 
     for raw_path, content in project_files.items():
         rel = _normalize_rel(raw_path)
@@ -184,26 +221,77 @@ def scan_reverse_deps(
         if rel in targets_norm:
             continue
 
-        for imp in _extract_imports(content, filename=rel):
+        for imp_mod, imp_symbols in _extract_imports_detailed(content, filename=rel):
             resolved = (
-                _resolve_relative(imp, rel)
-                if imp.startswith(".")
-                else imp
+                _resolve_relative(imp_mod, rel)
+                if imp_mod.startswith(".")
+                else imp_mod
             )
             if not resolved:
                 continue
-            # Exact match OR submodule of a target package
-            # (``from target_pkg.sub import x`` when target is
-            # ``target_pkg/__init__.py``).
-            for tmod in target_modules:
-                if resolved == tmod or resolved.startswith(tmod + "."):
-                    result.add(rel)
-                    break
-            else:
-                continue
-            break  # first hit is enough; next file
 
-    return sorted(result)
+            # Does this import hit any target module?
+            for tmod in target_modules:
+                # Exact module match.
+                if resolved == tmod:
+                    hit_module = tmod
+                # Submodule of a target package (target is pkg/__init__.py).
+                elif resolved.startswith(tmod + "."):
+                    hit_module = tmod
+                    # Treat "from pkg.sub import x" as accessing both the
+                    # submodule and the name — wildcard for the package
+                    # since we can't tell what x is without following the
+                    # module graph.
+                    # For v0.2.2 we keep it simple: flag wildcard.
+                    raw[rel] = None
+                    break
+                else:
+                    continue
+
+                # Record symbols for this match.
+                existing = raw.get(rel)
+                if existing is None and rel in raw:
+                    # already wildcard — nothing else to do; wildcard wins
+                    break
+
+                if imp_symbols is None:
+                    # bare import or star → wildcard
+                    raw[rel] = None
+                else:
+                    if existing is None and rel not in raw:
+                        existing = set()
+                    qualified = {f"{hit_module}.{s}" for s in imp_symbols}
+                    # merge
+                    if existing is None:
+                        # Only reachable when rel is genuinely absent; the
+                        # "already wildcard" case breaks out above.
+                        raw[rel] = qualified
+                    else:
+                        existing.update(qualified)
+                        raw[rel] = existing
+                break  # only one target can match per import stmt
+
+    # Freeze: sort lists, keep None for wildcards.
+    out: Dict[str, Optional[List[str]]] = {}
+    for rel, syms in raw.items():
+        if syms is None:
+            out[rel] = None
+        else:
+            out[rel] = sorted(syms)
+    return out
+
+
+def scan_reverse_deps(
+    target_files: Iterable[str],
+    project_files: Mapping[str, str],
+) -> List[str]:
+    """Return the files in ``project_files`` that statically import any
+    symbol defined in ``target_files``.
+
+    Thin wrapper over :func:`scan_reverse_deps_detailed` kept for
+    0.2.1 callers — discards symbol info and returns just the file set.
+    """
+    return sorted(scan_reverse_deps_detailed(target_files, project_files).keys())
 
 
 # ── Filesystem adapter ──────────────────────────────────────────────────
