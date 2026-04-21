@@ -45,6 +45,8 @@ export type LiveConflict = {
   principal_b: string;
   intent_a: string;
   intent_b: string;
+  /** v0.2.3+: symbol-level breakdown for dependency_breakage. */
+  dependency_detail?: import("./envelope-types").DependencyDetail;
 };
 
 export type MpacSessionState = {
@@ -288,6 +290,7 @@ export function useMpacSession({
                 principal_b: p.principal_b ?? "",
                 intent_a: p.intent_a ?? "",
                 intent_b: p.intent_b ?? "",
+                dependency_detail: p.dependency_detail,
               },
             ];
           });

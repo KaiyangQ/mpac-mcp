@@ -55,6 +55,36 @@ export type IntentWithdrawPayload = {
   reason?: string;
 };
 
+/**
+ * Per-direction dependency-breakage entry (v0.2.3+).
+ *
+ * ``symbols`` is:
+ *   - an array of fully-qualified symbol names that clash (e.g.
+ *     ``["utils.foo"]``) — precise symbol-level conflict, UI can show
+ *     exactly which names are at risk.
+ *   - ``null`` when we fell back to file-level precision (one side didn't
+ *     declare ``affects_symbols``, or the importer did a wildcard
+ *     ``import`` that we couldn't pin). UI should say "affects your file
+ *     X" without naming symbols.
+ */
+export type DependencyDetailEntry = {
+  file: string;
+  symbols: string[] | null;
+};
+
+/**
+ * Directional breakdown of a dependency_breakage conflict.
+ *
+ * - ``ab``: ``principal_a``'s edits reach these of ``principal_b``'s files.
+ * - ``ba``: ``principal_b``'s edits reach these of ``principal_a``'s files.
+ *
+ * Both arrays are optional: only the active direction(s) are present.
+ */
+export type DependencyDetail = {
+  ab?: DependencyDetailEntry[];
+  ba?: DependencyDetailEntry[];
+};
+
 export type ConflictReportPayload = {
   conflict_id: string;
   category?: string;
@@ -63,6 +93,8 @@ export type ConflictReportPayload = {
   principal_b?: string;
   intent_a?: string;
   intent_b?: string;
+  /** v0.2.3+: populated only for ``category === "dependency_breakage"``. */
+  dependency_detail?: DependencyDetail;
 };
 
 export type ParticipantUpdatePayload = {

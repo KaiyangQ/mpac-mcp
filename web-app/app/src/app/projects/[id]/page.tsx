@@ -268,12 +268,51 @@ function ConflictCard({
   const myIntentInConflict =
     conflict.intent_a === myIntentId || conflict.intent_b === myIntentId;
 
+  // v0.2.3: category label — prefer "Dependency" over the raw
+  // ``dependency_breakage`` enum, matches the conversational tone of the
+  // panel. Unknown categories pass through verbatim so we never hide a
+  // new category behind a generic label.
+  const categoryLabel =
+    conflict.category === "scope_overlap"
+      ? "Scope overlap"
+      : conflict.category === "dependency_breakage"
+        ? "Dependency"
+        : conflict.category;
+
+  // Flatten dependency_detail (ab/ba directions) into render-friendly
+  // rows with the editor + consumer names resolved. Each row describes
+  // "[editor]'s edits to [symbols] affect [consumer]'s [file]".
+  const dependencyRows: Array<{
+    editor: string;
+    consumer: string;
+    file: string;
+    symbols: string[] | null;
+  }> = [];
+  if (conflict.category === "dependency_breakage" && conflict.dependency_detail) {
+    for (const entry of conflict.dependency_detail.ab ?? []) {
+      dependencyRows.push({
+        editor: a,
+        consumer: b,
+        file: entry.file,
+        symbols: entry.symbols,
+      });
+    }
+    for (const entry of conflict.dependency_detail.ba ?? []) {
+      dependencyRows.push({
+        editor: b,
+        consumer: a,
+        file: entry.file,
+        symbols: entry.symbols,
+      });
+    }
+  }
+
   return (
     <div className="bg-[#f8514910] border border-[#f8514930] rounded-lg p-2.5 mb-2">
       <div className="flex items-center gap-1.5 mb-1.5">
         <AlertTriangle className="size-3.5 text-[var(--red)]" />
         <span className="text-xs font-medium text-[var(--red)]">
-          {conflict.category === "scope_overlap" ? "Scope overlap" : conflict.category}
+          {categoryLabel}
         </span>
         {conflict.severity && (
           <span className="text-[10px] text-[var(--text-secondary)] ml-auto">
@@ -286,6 +325,44 @@ function ConflictCard({
         <span className="text-[var(--text-secondary)]"> ↔ </span>
         <span className="font-medium">{b}</span>
       </div>
+      {dependencyRows.length > 0 && (
+        <div className="text-[11px] text-[var(--text-secondary)] mb-2 space-y-1">
+          {dependencyRows.map((row, i) => (
+            <div key={i} className="leading-tight">
+              <span className="font-medium text-[var(--text-primary)]">
+                {row.editor}
+              </span>
+              {" "}
+              {row.symbols && row.symbols.length > 0 ? (
+                <>
+                  is changing{" "}
+                  {row.symbols.map((s, j) => (
+                    <span key={s}>
+                      <code className="px-1 py-0.5 bg-[var(--bg-tertiary)] rounded text-[10px] text-[var(--text-primary)]">
+                        {s}
+                      </code>
+                      {j < row.symbols!.length - 1 ? ", " : ""}
+                    </span>
+                  ))}
+                </>
+              ) : (
+                <>is editing a file imported by</>
+              )}
+              {" "}
+              <span className="text-[var(--text-secondary)]">
+                — affects{" "}
+                <span className="font-medium text-[var(--text-primary)]">
+                  {row.consumer}
+                </span>
+                &rsquo;s{" "}
+                <code className="px-1 py-0.5 bg-[var(--bg-tertiary)] rounded text-[10px] text-[var(--text-primary)]">
+                  {row.file}
+                </code>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="flex gap-1.5">
         <Button
           size="xs"
