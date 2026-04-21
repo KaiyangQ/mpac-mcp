@@ -1,4 +1,16 @@
-"""Scope overlap detection for MPAC."""
+"""Scope overlap detection for MPAC.
+
+Two kinds of conflicts live here:
+
+* ``scope_overlap`` — the classical case where two scopes claim overlapping
+  resources (same file, same entity, same task). SPEC.md §15.2.1.1 defines
+  this as a MUST: ``file_set`` overlap is *iff* resources intersect.
+* ``scope_dependency_conflict`` (v0.2.1, new) — the cross-file case where
+  no resources overlap but one scope's edits reach into the other's via an
+  import. The coordinator reports these with category ``dependency_breakage``
+  (SPEC.md §17.5 already lists this category; v0.2.1 fills in a concrete
+  detection rule for it without widening what "overlap" means).
+"""
 from typing import List
 import re
 
@@ -69,6 +81,51 @@ def scope_overlap(a: Scope, b: Scope) -> bool:
     else:
         # Unknown scope kind: conservative True
         return True
+
+
+def _scope_impact(scope: Scope) -> List[str]:
+    """Pull the (possibly empty) cross-file impact list from a scope.
+
+    The impact set lives under ``scope.extensions["impact"]`` by convention
+    (see SPEC.md §15.2 extensions escape hatch). We validate shape here so
+    junk or legacy payloads degrade to "no impact info" rather than crash.
+    """
+    if not scope.extensions:
+        return []
+    impact = scope.extensions.get("impact")
+    if not isinstance(impact, list):
+        return []
+    return [x for x in impact if isinstance(x, str)]
+
+
+def scope_dependency_conflict(a: Scope, b: Scope) -> bool:
+    """Detect a cross-file dependency conflict between two ``file_set`` scopes.
+
+    Returns True when either:
+
+    * a file in ``a.resources`` is reported as impacted by ``b.extensions.impact``
+      (i.e. ``b``'s edits reach a file ``a`` is about to touch), or
+    * symmetrically, a file in ``b.resources`` appears in ``a.extensions.impact``.
+
+    This function intentionally does NOT flag classic same-file overlap —
+    ``scope_overlap`` already owns that case. The caller is expected to
+    check ``scope_overlap`` first and only fall back here if no direct
+    overlap was found; the coordinator does exactly that.
+
+    Empty or missing ``extensions.impact`` → always False, which is the
+    graceful-degradation path for clients that haven't run the analyzer.
+    """
+    if a.kind != "file_set" or b.kind != "file_set":
+        # Cross-kind or non-file scopes don't carry import semantics.
+        return False
+
+    a_resources = {normalize_path(r) for r in (a.resources or [])}
+    b_resources = {normalize_path(r) for r in (b.resources or [])}
+    a_impact = {normalize_path(r) for r in _scope_impact(a)}
+    b_impact = {normalize_path(r) for r in _scope_impact(b)}
+
+    # a's edits reach a file b is also claiming? or vice versa?
+    return bool((a_impact & b_resources) or (b_impact & a_resources))
 
 
 def scope_contains(container: Scope, test: Scope) -> bool:
