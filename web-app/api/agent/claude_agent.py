@@ -284,6 +284,7 @@ class ClaudeAgent:
             )
 
         from mpac_protocol.core.models import Scope
+        from ..mpac_bridge import build_file_scope
 
         client = _get_client(self.api_key)
         if client is None:
@@ -296,7 +297,9 @@ class ClaudeAgent:
                     session_id=session.mpac_session_id,
                     intent_id=intent_id,
                     objective=plan["objective"],
-                    scope=Scope(kind="file_set", resources=plan["files"]),
+                    scope=build_file_scope(
+                        plan["files"], db=self.db, project_id=self.project.id,
+                    ),
                 )
                 await process_envelope(session, announce, self.principal_id)
                 # Small, single-purpose visibility window for the canned path:
@@ -360,6 +363,7 @@ class ClaudeAgent:
         is short; if it takes 10s to generate, it's 10s. No hardcoded wait.
         """
         from mpac_protocol.core.models import Scope
+        from ..mpac_bridge import build_file_scope
 
         system_blocks = [
             {
@@ -410,8 +414,10 @@ class ClaudeAgent:
                             session_id=session.mpac_session_id,
                             intent_id=intent_id,
                             objective=objective[:200],
-                            scope=Scope(
-                                kind="file_set", resources=files_norm,
+                            scope=build_file_scope(
+                                files_norm,
+                                db=self.db,
+                                project_id=self.project.id,
                             ),
                         )
                         await process_envelope(
@@ -450,7 +456,9 @@ class ClaudeAgent:
                         session_id=session.mpac_session_id,
                         intent_id=intent_id,
                         objective=str(raw.get("objective") or "editing"),
-                        scope=Scope(kind="file_set", resources=files),
+                        scope=build_file_scope(
+                            files, db=self.db, project_id=self.project.id,
+                        ),
                     )
                     await process_envelope(
                         session, announce, self.principal_id,

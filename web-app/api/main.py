@@ -236,6 +236,7 @@ async def ws_session(ws: WebSocket, project_id: int, token: str = ""):
                     continue
                 envelope = browser_action_to_envelope(
                     action, conn.participant, session.mpac_session_id,
+                    db=db, project_id=session.project_id,
                 )
                 if envelope is None:
                     continue

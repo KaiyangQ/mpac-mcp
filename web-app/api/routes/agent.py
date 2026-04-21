@@ -33,7 +33,7 @@ from ..auth import get_current_user, get_user_or_agent
 from ..config import IS_PRODUCTION
 from ..database import get_db
 from ..models import Project, Token, User
-from ..mpac_bridge import process_envelope, registry as session_registry
+from ..mpac_bridge import build_file_scope, compute_scope_impact, process_envelope, registry as session_registry
 from ..schemas import (
     AgentAnnounceIntent,
     AgentAnnounceIntentResponse,
@@ -240,15 +240,22 @@ async def agent_announce_intent(
 
     session, conn = _get_agent_conn(req.project_id, user.id)
     intent_id = f"intent-agent-{user.id}-{uuid.uuid4().hex[:10]}"
+    scope = build_file_scope(
+        list(req.files), db=db, project_id=req.project_id,
+    )
     envelope = conn.participant.announce_intent(
         session_id=session.mpac_session_id,
         intent_id=intent_id,
         objective=req.objective,
-        scope=Scope(kind="file_set", resources=list(req.files)),
+        scope=scope,
     )
     await process_envelope(session, envelope, conn.principal_id)
-    log.info("Agent intent announced: user=%s files=%s intent_id=%s",
-             user.id, req.files, intent_id)
+    log.info(
+        "Agent intent announced: user=%s files=%s impact=%s intent_id=%s",
+        user.id, req.files,
+        (scope.extensions or {}).get("impact"),
+        intent_id,
+    )
     return AgentAnnounceIntentResponse(intent_id=intent_id, accepted=True)
 
 
@@ -302,6 +309,12 @@ async def agent_check_overlap(
 
     session, conn = _get_agent_conn(req.project_id, user.id)
     proposed = set(req.files)
+    # v0.2.1: compute our prospective impact set up-front so we can also
+    # spot dependency_breakage against intents already in flight. An 0.2.0
+    # coordinator/peer that never populates ``extensions.impact`` just
+    # never contributes to the dep-conflict side of this reducer, which
+    # matches the fallback-to-path-overlap semantics we promised.
+    my_impact = set(compute_scope_impact(db, req.project_id, list(req.files)))
     overlaps: list[dict] = []
     # Coordinator.intents is the source of truth for live intents (the conn
     # objects don't carry intent state — frontends derive it from broadcasts).
@@ -313,14 +326,26 @@ async def agent_check_overlap(
             continue
         scope = intent.scope
         their_files = set(scope.resources) if scope else set()
-        hit = proposed & their_files
-        if not hit:
+        their_impact: set[str] = set()
+        if scope and scope.extensions:
+            raw = scope.extensions.get("impact")
+            if isinstance(raw, list):
+                their_impact = {x for x in raw if isinstance(x, str)}
+
+        direct_hit = proposed & their_files
+        # Cross-file: we'd edit a file they've claimed via reverse-dep,
+        # OR they'd edit a file we've claimed via reverse-dep.
+        dep_hit = (my_impact & their_files) | (their_impact & proposed)
+        if not direct_hit and not dep_hit:
             continue
+
         other_display = session.connections.get(intent.principal_id)
         overlaps.append({
             "principal_id": intent.principal_id,
             "display_name": other_display.display_name if other_display else intent.principal_id,
-            "files": sorted(hit),
+            "files": sorted(direct_hit),
+            "dependency_files": sorted(dep_hit),
             "objective": intent.objective,
+            "category": "scope_overlap" if direct_hit else "dependency_breakage",
         })
     return AgentOverlapResponse(overlaps=overlaps)

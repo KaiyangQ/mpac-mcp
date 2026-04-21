@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
+from mpac_protocol.analysis import scan_reverse_deps
 from mpac_protocol.core.coordinator import (
     CredentialVerifier,
     SessionCoordinator,
@@ -35,7 +36,7 @@ from mpac_protocol.core.models import Scope
 from mpac_protocol.core.participant import Participant
 from sqlalchemy.orm import Session
 
-from .models import Project, Token
+from .models import Project, ProjectFile, Token
 
 log = logging.getLogger("mpac.bridge")
 
@@ -247,14 +248,85 @@ def build_verifier_for_project(db: Session, project_id: int) -> CredentialVerifi
     return verify
 
 
+# ── Cross-file impact analysis (v0.2.1 dependency-breakage detection) ──
+
+def compute_scope_impact(
+    db: Session, project_id: int, files: List[str],
+) -> List[str]:
+    """Return the set of OTHER files in the project that statically import
+    from any of ``files``.
+
+    Pulls all ``.py`` files for ``project_id`` out of the ``ProjectFile``
+    table (files live in the DB in this deployment, not on disk) and hands
+    them to :func:`mpac_protocol.analysis.scan_reverse_deps`. The result is
+    pinned into ``Scope.extensions["impact"]`` by the caller so the
+    coordinator can surface ``dependency_breakage`` conflicts when another
+    participant's scope touches a file in this impact set.
+
+    Empty list on any failure — a broken analyzer must never break the
+    announce path. The conflict detector degrades gracefully (it just
+    won't flag cross-file cases for this intent).
+    """
+    if not files:
+        return []
+    try:
+        rows = (
+            db.query(ProjectFile.path, ProjectFile.content)
+            .filter(
+                ProjectFile.project_id == project_id,
+                ProjectFile.path.like("%.py"),
+            )
+            .all()
+        )
+        sources = {path: content or "" for (path, content) in rows}
+        return scan_reverse_deps(files, sources)
+    except Exception:  # noqa: BLE001 — intentionally swallow
+        log.exception(
+            "compute_scope_impact failed (project_id=%s, files=%s) — "
+            "falling back to empty impact",
+            project_id, files,
+        )
+        return []
+
+
+def build_file_scope(
+    files: List[str],
+    *,
+    db: Optional[Session] = None,
+    project_id: Optional[int] = None,
+) -> Scope:
+    """Construct a ``file_set`` Scope, populating ``extensions.impact`` when
+    we have the DB context to compute it.
+
+    Callers without a DB handle (tests, migrations, degraded flows) just
+    get a plain file-path scope — equivalent to v0.2.0 behavior.
+    """
+    scope = Scope(kind="file_set", resources=list(files))
+    if db is not None and project_id is not None:
+        impact = compute_scope_impact(db, project_id, files)
+        if impact:
+            scope.extensions = {"impact": impact}
+    return scope
+
+
 # ── Simplified browser action → MPAC envelope ──────────────────────────
 
 def browser_action_to_envelope(
-    action: Dict[str, Any], participant: Participant, session_id: str,
+    action: Dict[str, Any],
+    participant: Participant,
+    session_id: str,
+    *,
+    db: Optional[Session] = None,
+    project_id: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """Translate a tiny browser action vocabulary into an MPAC envelope.
 
     Returns ``None`` for unknown actions (the caller should drop them).
+
+    ``db`` + ``project_id`` are optional so the function stays usable from
+    thin contexts, but when both are provided, ``begin_task`` gets a
+    cross-file impact set attached to its scope (enables dependency_breakage
+    detection downstream).
     """
     kind = action.get("action")
 
@@ -262,7 +334,7 @@ def browser_action_to_envelope(
         files = action.get("files") or []
         intent_id = action.get("intent_id") or f"intent-{uuid.uuid4().hex[:12]}"
         objective = action.get("objective") or "editing"
-        scope = Scope(kind="file_set", resources=list(files))
+        scope = build_file_scope(list(files), db=db, project_id=project_id)
         return participant.announce_intent(
             session_id=session_id,
             intent_id=intent_id,
