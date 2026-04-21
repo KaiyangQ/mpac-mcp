@@ -37,6 +37,7 @@ from mpac_protocol.core.coordinator import SessionCoordinator
 from mpac_protocol.core.models import MessageType, Scope
 from mpac_protocol.core.participant import Participant
 from mpac_protocol.core.scope import (
+    compute_dependency_detail,
     scope_dependency_conflict,
     scope_overlap,
 )
@@ -283,13 +284,127 @@ def test_detailed_scanner_wildcard_on_star_import():
 
 
 def test_detailed_scanner_wildcard_on_bare_import():
-    """`import utils` — no specific names yet; attribute access could
-    happen anywhere downstream. Flag wildcard."""
+    """`import utils` with no attribute accesses in the file: we can't
+    rule out future dynamic access, so wildcard. (Attribute-chain
+    resolution only helps when every use is ``alias.attr``.)"""
     sources = {
         "utils.py": "def foo(): pass\n",
+        # Just imports; reference stays bare (the import itself doesn't
+        # emit an ast.Name, so there's literally no use to analyse).
         "docs.py": "import utils\n",
     }
     assert scan_reverse_deps_detailed(["utils.py"], sources) == {"docs.py": None}
+
+
+# ─── v0.2.3: attribute-chain resolution ─────────────────────────
+
+
+def test_attr_chain_resolves_bare_import_to_symbols():
+    """**The motivating case for v0.2.3.**
+
+    ``import utils`` followed by ``utils.foo()`` + ``utils.bar()`` used
+    to fall back to wildcard in v0.2.2. v0.2.3 walks attribute accesses
+    and emits the precise symbol set."""
+    sources = {
+        "utils.py": "def foo(): pass\ndef bar(): pass\n",
+        "main.py": "import utils\nutils.foo()\nutils.bar()\n",
+    }
+    assert scan_reverse_deps_detailed(["utils.py"], sources) == {
+        "main.py": ["utils.bar", "utils.foo"],
+    }
+
+
+def test_attr_chain_handles_alias():
+    """``import utils as u`` — resolver must follow the local binding
+    name, not the module name."""
+    sources = {
+        "utils.py": "def foo(): pass\n",
+        "main.py": "import utils as u\nu.foo()\n",
+    }
+    assert scan_reverse_deps_detailed(["utils.py"], sources) == {
+        "main.py": ["utils.foo"],
+    }
+
+
+def test_attr_chain_falls_back_on_bare_reference():
+    """Any bare reference to the alias — assignment, return, argument —
+    means we can't trust the attribute accesses to be exhaustive."""
+    sources = {
+        "utils.py": "def foo(): pass\n",
+        "main.py": "import utils\nx = utils\nutils.foo()\n",
+    }
+    assert scan_reverse_deps_detailed(["utils.py"], sources) == {
+        "main.py": None,
+    }
+
+
+def test_attr_chain_merges_with_from_import_in_same_file():
+    """Mixed forms: ``import utils`` + ``from utils import bar`` should
+    merge both sources' symbols into one deduped list."""
+    sources = {
+        "utils.py": "def foo(): pass\ndef bar(): pass\n",
+        "main.py": "import utils\nfrom utils import bar\nutils.foo()\nbar()\n",
+    }
+    assert scan_reverse_deps_detailed(["utils.py"], sources) == {
+        "main.py": ["utils.bar", "utils.foo"],
+    }
+
+
+def test_attr_chain_dotted_import_still_wildcard():
+    """``import pkg.sub`` is ambiguous (submodule vs attribute) and we
+    don't resolve the module graph. Stay wildcard."""
+    sources = {
+        "pkg/__init__.py": "",
+        "pkg/sub.py": "def foo(): pass\n",
+        "main.py": "import pkg.sub\npkg.sub.foo()\n",
+    }
+    assert scan_reverse_deps_detailed(["pkg/sub.py"], sources) == {
+        "main.py": None,
+    }
+
+
+def test_attr_chain_unused_import_is_wildcard():
+    """A dangling ``import utils`` with zero references is still
+    wildcard — we can't prove a later eval / getattr won't touch
+    anything."""
+    sources = {
+        "utils.py": "def foo(): pass\n",
+        "main.py": "import utils\nprint('hi')\n",
+    }
+    assert scan_reverse_deps_detailed(["utils.py"], sources) == {
+        "main.py": None,
+    }
+
+
+def test_attr_chain_chained_attribute_uses_outer_attr():
+    """``utils.Class.method()`` — we record the FIRST attribute
+    (``Class``) as the used symbol, because that's what's accessed on
+    ``utils`` directly. Whether ``Class.method`` changes is a
+    second-order concern."""
+    sources = {
+        "utils.py": "class Class: pass\n",
+        "main.py": "import utils\nutils.Class.method()\n",
+    }
+    assert scan_reverse_deps_detailed(["utils.py"], sources) == {
+        "main.py": ["utils.Class"],
+    }
+
+
+def test_attr_chain_inside_functions():
+    """Resolver walks the whole AST, not just module-level statements.
+    An attribute access deep inside a function body still counts."""
+    sources = {
+        "utils.py": "def foo(): pass\n",
+        "main.py": (
+            "import utils\n"
+            "def handler():\n"
+            "    if True:\n"
+            "        return utils.foo()\n"
+        ),
+    }
+    assert scan_reverse_deps_detailed(["utils.py"], sources) == {
+        "main.py": ["utils.foo"],
+    }
 
 
 def test_detailed_scanner_merges_multiple_imports_from_same_file():
@@ -446,6 +561,81 @@ def test_precision_one_side_specific_other_side_wildcard_per_importer():
     assert scope_dependency_conflict(alice, bob_safe) is False
 
 
+# ─── v0.2.3: compute_dependency_detail (for CONFLICT_REPORT payload) ──
+
+
+def test_detail_symbol_level_intersection():
+    """When both sides have symbol info, ``ab`` entry should carry the
+    precise intersection."""
+    alice = _scope_with(
+        ["utils.py"],
+        impact=["main.py"],
+        impact_symbols={"main.py": ["utils.foo", "utils.bar"]},
+        affects_symbols=["utils.foo"],
+    )
+    bob = _scope_with(["main.py"])
+    d = compute_dependency_detail(alice, bob)
+    assert d == {"ab": [{"file": "main.py", "symbols": ["utils.foo"]}]}
+
+
+def test_detail_wildcard_importer_returns_none_symbols():
+    """If the importer's entry in ``impact_symbols`` is wildcard (None),
+    we report file-level (symbols=None) in the detail — UI can phrase it
+    as 'import chain too dynamic to pin'."""
+    alice = _scope_with(
+        ["utils.py"],
+        impact=["main.py"],
+        impact_symbols={"main.py": None},
+        affects_symbols=["utils.foo"],
+    )
+    bob = _scope_with(["main.py"])
+    assert compute_dependency_detail(alice, bob) == {
+        "ab": [{"file": "main.py", "symbols": None}]
+    }
+
+
+def test_detail_missing_affects_symbols_returns_none():
+    """Alice didn't declare ``affects_symbols`` — fall back to file-level
+    report: ``{"file": "main.py", "symbols": None}``."""
+    alice = _scope_with(
+        ["utils.py"],
+        impact=["main.py"],
+        impact_symbols={"main.py": ["utils.bar"]},
+    )
+    bob = _scope_with(["main.py"])
+    assert compute_dependency_detail(alice, bob) == {
+        "ab": [{"file": "main.py", "symbols": None}]
+    }
+
+
+def test_detail_symmetric_direction():
+    """Both sides reaching into each other — detail carries both ``ab``
+    and ``ba`` entries."""
+    alice = _scope_with(
+        ["utils.py"],
+        impact=["shared.py"],
+        impact_symbols={"shared.py": ["utils.foo"]},
+        affects_symbols=["utils.foo"],
+    )
+    bob = _scope_with(
+        ["shared.py"],
+        impact=["utils.py"],
+        impact_symbols={"utils.py": ["shared.helper"]},
+        affects_symbols=["shared.helper"],
+    )
+    d = compute_dependency_detail(alice, bob)
+    assert d["ab"] == [{"file": "shared.py", "symbols": ["utils.foo"]}]
+    assert d["ba"] == [{"file": "utils.py", "symbols": ["shared.helper"]}]
+
+
+def test_detail_empty_when_no_cross_file_touch():
+    """Two fully disjoint scopes → detail is empty (scope_dependency_
+    conflict would also be False — defensive return)."""
+    alice = _scope_with(["utils.py"])
+    bob = _scope_with(["main.py"])
+    assert compute_dependency_detail(alice, bob) == {}
+
+
 # ─── Coordinator integration ────────────────────────────────────
 
 
@@ -566,6 +756,50 @@ def test_coordinator_no_conflict_when_symbols_disjoint_v022():
         "v0.2.2 should NOT flag this — Alice only touches utils.foo, "
         "main.py only uses utils.bar, so there's no actual risk."
     )
+
+
+def test_coordinator_conflict_report_includes_dependency_detail_v023():
+    """CONFLICT_REPORT payload should carry ``dependency_detail`` when
+    both sides have enough info for the UI to say which symbols clash."""
+    session_id = "sess-detail-1"
+    coord = SessionCoordinator(session_id, security_profile="open")
+
+    alice, hello_a = _hello("alice", session_id)
+    bob, hello_b = _hello("bob", session_id)
+    coord.process_message(hello_a)
+    coord.process_message(hello_b)
+
+    alice_scope = Scope(
+        kind="file_set",
+        resources=["utils.py"],
+        extensions={
+            "impact": ["main.py"],
+            "impact_symbols": {"main.py": ["utils.foo", "utils.bar"]},
+            "affects_symbols": ["utils.foo"],
+        },
+    )
+    coord.process_message(
+        alice.announce_intent(session_id, "intent-a", "refactor foo", alice_scope)
+    )
+
+    bob_scope = Scope(kind="file_set", resources=["main.py"])
+    responses = coord.process_message(
+        bob.announce_intent(session_id, "intent-b", "edit main", bob_scope)
+    )
+    conflict = _find_conflict(responses)
+    assert conflict is not None
+    payload = conflict["payload"]
+    detail = payload.get("dependency_detail")
+    assert detail is not None, "CONFLICT_REPORT missing dependency_detail"
+    # principal_a = newest announcer (bob); principal_b = existing intent's
+    # owner (alice). ``ba`` = "principal_b's (alice's) edits reach
+    # principal_a's (bob's) files" — which is exactly the direction we
+    # want: Alice refactors utils.foo, Bob edits main.py that imports it.
+    assert payload["principal_a"] == "bob"
+    assert payload["principal_b"] == "alice"
+    assert detail == {
+        "ba": [{"file": "main.py", "symbols": ["utils.foo"]}]
+    }
 
 
 def test_coordinator_still_flags_when_symbols_match_v022():

@@ -21,7 +21,12 @@ from .models import (
     Scope,
     Sender,
 )
-from .scope import scope_overlap, scope_contains, scope_dependency_conflict
+from .scope import (
+    compute_dependency_detail as _compute_dependency_detail,
+    scope_contains,
+    scope_dependency_conflict,
+    scope_overlap,
+)
 from .state_machines import (
     ConflictStateMachine,
     IntentStateMachine,
@@ -1706,17 +1711,26 @@ class SessionCoordinator:
                 related_intents=[new_intent.intent_id, other.intent_id],
             )
             self.conflicts[conflict_id] = conflict
+
+            # v0.2.3: attach symbol-level detail when we can derive it,
+            # so the UI can say "Alice's edits to utils.foo affect your
+            # main.py" instead of just "dependency conflict".
+            payload: Dict[str, Any] = {
+                "conflict_id": conflict_id,
+                "category": category,
+                "severity": "medium",
+                "principal_a": new_intent.principal_id,
+                "principal_b": other.principal_id,
+                "intent_a": new_intent.intent_id,
+                "intent_b": other.intent_id,
+            }
+            if category == "dependency_breakage":
+                detail = _compute_dependency_detail(new_intent.scope, other.scope)
+                if detail:
+                    payload["dependency_detail"] = detail
             responses.append(self._make_envelope(
                 MessageType.CONFLICT_REPORT.value,
-                {
-                    "conflict_id": conflict_id,
-                    "category": category,
-                    "severity": "medium",
-                    "principal_a": new_intent.principal_id,
-                    "principal_b": other.principal_id,
-                    "intent_a": new_intent.intent_id,
-                    "intent_b": other.intent_id,
-                },
+                payload,
             ))
 
         return responses

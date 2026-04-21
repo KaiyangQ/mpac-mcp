@@ -99,10 +99,19 @@ def _extract_imports_detailed(
     ``symbols`` is:
     * a list of symbol names (the ORIGINAL names, not their ``as`` aliases)
       for ``from X import a, b as c`` → returns ``[("X", ["a", "b"])]``
-    * ``None`` when we can't pin which symbols are used — this covers both
-      ``import X`` (any attribute could later be accessed) and
-      ``from X import *``. Callers must treat ``None`` as "wildcard:
-      could use anything".
+    * ``None`` when we can't pin which symbols are used — covers
+      ``from X import *`` and the conservative path for ``import X`` when
+      attribute-chain resolution sees a bare use of the alias.
+
+    v0.2.3 adds attribute-chain resolution: for plain ``import X`` (and
+    ``import X as Y``), we walk subsequent attribute accesses like
+    ``X.foo()``. If every reference to the alias is a ``.attr`` access,
+    we emit those attributes as the concrete symbol set. Any bare
+    reference (``x = utils``, ``return utils``, ``isinstance(m, utils)``)
+    collapses back to wildcard — we can't tell what the module got
+    reassigned to. ``import pkg.sub`` is always wildcard; disambiguating
+    whether ``pkg.sub.foo()`` means ``pkg.sub`` module or its ``.sub``
+    attribute requires resolving the module graph, out of scope for now.
 
     Absolute and relative imports both go through this function; relative
     ones (``from ..pkg import y``) keep their leading dots so the caller
@@ -115,27 +124,96 @@ def _extract_imports_detailed(
         return []
 
     out: List[Tuple[str, Optional[List[str]]]] = []
+
+    # alias_name (what the file binds locally) → module_name (the actual
+    # dotted import target). Used for the attribute-chain pass below.
+    # We only populate for ``import X`` / ``import X as Y`` without dots
+    # in the target — ``import pkg.sub`` stays wildcard up-front.
+    alias_to_module: Dict[str, str] = {}
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            # ``import X`` — we only know the module is touched; which
-            # attributes get accessed needs a separate AST walk (attribute-
-            # chain resolution), deferred to a later release.
             for alias in node.names:
-                out.append((alias.name, _WILDCARD))
+                module = alias.name
+                if "." in module:
+                    # ``import pkg.sub`` — submodule semantics are ambiguous
+                    # without the module graph. Stay conservative.
+                    out.append((module, _WILDCARD))
+                    continue
+                local_name = alias.asname or alias.name
+                alias_to_module[local_name] = module
         elif isinstance(node, ast.ImportFrom):
             level = node.level or 0
             mod = node.module or ""
             qualified = "." * level + mod
-            # ``from X import *`` surfaces as a single alias with name "*"
             has_star = any(a.name == "*" for a in node.names)
             if has_star:
                 out.append((qualified, _WILDCARD))
             else:
-                # Use the ORIGINAL imported name, not the alias. Alice
-                # changing ``foo`` is the event we care about, regardless
-                # of what the importer renamed it to.
                 symbols = [a.name for a in node.names]
                 out.append((qualified, symbols))
+
+    # Attribute-chain pass: for each plain ``import X`` binding we didn't
+    # resolve above, try to prove every use is ``X.attr``; if so, collect
+    # attrs and emit as a precise symbol list. One bare use anywhere in
+    # the file → wildcard.
+    if alias_to_module:
+        resolved_pairs = _resolve_attribute_chains(tree, alias_to_module)
+        out.extend(resolved_pairs)
+
+    return out
+
+
+def _resolve_attribute_chains(
+    tree: ast.AST,
+    alias_to_module: Dict[str, str],
+) -> List[Tuple[str, Optional[List[str]]]]:
+    """Walk ``tree`` and for each alias in ``alias_to_module`` decide:
+
+    * All references are attribute-base (``alias.attr``) → emit
+      ``(module, sorted([attr1, attr2, ...]))``.
+    * At least one bare reference (``x = alias``, ``return alias``, etc.)
+      → emit ``(module, None)``.
+    * No references at all (import unused) → also ``(module, None)`` —
+      the file technically still imports the module, so treat the whole
+      module as potentially touched.
+
+    This pass is pure read-only; we never mutate the AST permanently
+    (parent pointers are set only on a shallow copy of what we walked).
+    """
+    # Temporarily set ``_mpac_parent`` on each node so we can look up who
+    # owns each Name without re-traversing. We use a custom attribute so
+    # we don't collide with anything ast's own logic expects.
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            child._mpac_parent = parent  # type: ignore[attr-defined]
+
+    attrs_by_alias: Dict[str, Set[str]] = {a: set() for a in alias_to_module}
+    wildcarded: Set[str] = set()
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Name):
+            continue
+        if node.id not in alias_to_module:
+            continue
+        parent = getattr(node, "_mpac_parent", None)
+        # ``alias.attr`` — parent is Attribute and our Name IS its ``value``
+        if isinstance(parent, ast.Attribute) and parent.value is node:
+            attrs_by_alias[node.id].add(parent.attr)
+        else:
+            # Bare reference: could be reassignment, return value,
+            # argument to a function, etc. Conservatively bail on
+            # attribute-chain precision for this alias.
+            wildcarded.add(node.id)
+
+    out: List[Tuple[str, Optional[List[str]]]] = []
+    for alias, module in alias_to_module.items():
+        if alias in wildcarded or not attrs_by_alias[alias]:
+            # Fallback: either bare use OR import was unused (can't rule
+            # out future dynamic access in the same file).
+            out.append((module, _WILDCARD))
+        else:
+            out.append((module, sorted(attrs_by_alias[alias])))
     return out
 
 

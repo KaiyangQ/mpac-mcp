@@ -19,7 +19,7 @@ Two kinds of conflicts live here:
     Any missing info on either side falls back to the v0.2.1 file-level
     behaviour — no false negatives from the precision upgrade.
 """
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import re
 
 from .models import Scope
@@ -176,6 +176,69 @@ def _symbols_actually_clash(
         return True  # wildcard or missing → file-level fallback
 
     return bool(set(affects) & set(used))
+
+
+def compute_dependency_detail(a: Scope, b: Scope) -> Dict[str, Any]:
+    """Compute a human-readable breakdown of a dependency-breakage conflict.
+
+    Returns a dict with up to two directional entries:
+
+    * ``ab``: what ``a``'s edits reach in ``b``'s resources — each entry
+      is ``{"file": <b-file>, "symbols": [...] | None}`` where
+      ``symbols`` is the intersection of ``a.affects_symbols`` and what
+      ``b-file`` imports from ``a``. ``None`` signals "file-level only"
+      (wildcard or missing declarations).
+    * ``ba``: symmetric, ``b``'s edits reaching ``a``.
+
+    Empty dict when nothing to report (should not normally happen once
+    the caller has confirmed a dep conflict; returned defensively).
+
+    The UI consumes this to render "Alice editing utils.foo affects your
+    main.py" instead of the generic "dependency conflict" banner.
+    """
+    if a.kind != "file_set" or b.kind != "file_set":
+        return {}
+
+    a_resources = {normalize_path(r) for r in (a.resources or [])}
+    b_resources = {normalize_path(r) for r in (b.resources or [])}
+    a_impact = {normalize_path(r) for r in _scope_impact(a)}
+    b_impact = {normalize_path(r) for r in _scope_impact(b)}
+
+    detail: Dict[str, Any] = {}
+    ab = _direction_detail(a, a_impact & b_resources)
+    if ab:
+        detail["ab"] = ab
+    ba = _direction_detail(b, b_impact & a_resources)
+    if ba:
+        detail["ba"] = ba
+    return detail
+
+
+def _direction_detail(
+    editor_scope: Scope,
+    affected_files: set,
+) -> List[Dict[str, Any]]:
+    """For the given editor scope and the set of consumer files they
+    touch, return one entry per file with the clashing-symbol intersection
+    (or ``None`` if this direction degrades to file-level precision)."""
+    if not affected_files:
+        return []
+    affects = _scope_affects_symbols(editor_scope)
+    entries: List[Dict[str, Any]] = []
+    for f in sorted(affected_files):
+        if affects is None:
+            entries.append({"file": f, "symbols": None})
+            continue
+        used = _scope_impact_symbols(editor_scope, f)
+        if used is None:
+            # Importer wildcard (``import X`` with bare use) — even with
+            # ``affects_symbols`` we can't pin which symbols actually
+            # clash, so report file-level.
+            entries.append({"file": f, "symbols": None})
+        else:
+            clashing = sorted(set(affects) & set(used))
+            entries.append({"file": f, "symbols": clashing or None})
+    return entries
 
 
 def scope_dependency_conflict(a: Scope, b: Scope) -> bool:
