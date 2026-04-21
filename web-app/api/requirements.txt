@@ -10,5 +10,6 @@ python-multipart>=0.0.9
 # Per-user BYOK Anthropic key encryption (Fernet)
 cryptography>=42.0
 # MPAC protocol core + MCP bridge (both on PyPI as of 2026-04-17)
-mpac>=0.2.0
+# mpac 0.2.1 adds cross-file dependency-breakage detection (analysis/).
+mpac>=0.2.1
 mpac-mcp>=0.1.0
