@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from mpac_protocol.analysis import scan_reverse_deps
+from mpac_protocol.analysis import scan_reverse_deps, scan_reverse_deps_detailed
 from mpac_protocol.core.coordinator import (
     CredentialVerifier,
     SessionCoordinator,
@@ -248,39 +248,46 @@ def build_verifier_for_project(db: Session, project_id: int) -> CredentialVerifi
     return verify
 
 
-# ── Cross-file impact analysis (v0.2.1 dependency-breakage detection) ──
+# ── Cross-file impact analysis ────────────────────────────────────────
+# v0.2.1 added file-level dependency_breakage detection.
+# v0.2.2 adds per-importer symbol detail so Alice's "I'm only touching
+# utils.foo" can disjoint Bob's "main.py uses utils.bar" — no more false
+# positive when the dependency exists but the specific symbols don't clash.
+
+def _load_project_py_sources(
+    db: Session, project_id: int,
+) -> Dict[str, str]:
+    """Pull every .py file for this project out of the DB into an
+    in-memory {path: content} map for the analyzer. Single query, one
+    fetch per announce — worth optimizing if load tests show this
+    dominating."""
+    rows = (
+        db.query(ProjectFile.path, ProjectFile.content)
+        .filter(
+            ProjectFile.project_id == project_id,
+            ProjectFile.path.like("%.py"),
+        )
+        .all()
+    )
+    return {path: content or "" for (path, content) in rows}
+
 
 def compute_scope_impact(
     db: Session, project_id: int, files: List[str],
 ) -> List[str]:
     """Return the set of OTHER files in the project that statically import
-    from any of ``files``.
+    from any of ``files``. **v0.2.1-compatible** — file list only.
 
-    Pulls all ``.py`` files for ``project_id`` out of the ``ProjectFile``
-    table (files live in the DB in this deployment, not on disk) and hands
-    them to :func:`mpac_protocol.analysis.scan_reverse_deps`. The result is
-    pinned into ``Scope.extensions["impact"]`` by the caller so the
-    coordinator can surface ``dependency_breakage`` conflicts when another
-    participant's scope touches a file in this impact set.
-
-    Empty list on any failure — a broken analyzer must never break the
-    announce path. The conflict detector degrades gracefully (it just
-    won't flag cross-file cases for this intent).
+    Prefer :func:`compute_scope_impact_detailed` in new code; it returns
+    the same file set plus per-file symbol data the v0.2.2 coordinator
+    uses to skip false positives.
     """
     if not files:
         return []
     try:
-        rows = (
-            db.query(ProjectFile.path, ProjectFile.content)
-            .filter(
-                ProjectFile.project_id == project_id,
-                ProjectFile.path.like("%.py"),
-            )
-            .all()
-        )
-        sources = {path: content or "" for (path, content) in rows}
+        sources = _load_project_py_sources(db, project_id)
         return scan_reverse_deps(files, sources)
-    except Exception:  # noqa: BLE001 — intentionally swallow
+    except Exception:  # noqa: BLE001
         log.exception(
             "compute_scope_impact failed (project_id=%s, files=%s) — "
             "falling back to empty impact",
@@ -289,23 +296,78 @@ def compute_scope_impact(
         return []
 
 
+def compute_scope_impact_detailed(
+    db: Session, project_id: int, files: List[str],
+) -> Dict[str, Optional[List[str]]]:
+    """v0.2.2: return {importer_file: [symbols_used] | None} for every
+    file that imports from ``files``. ``None`` as the value means the
+    importer did a bare ``import X`` or ``from X import *`` — callers
+    must treat as "any symbol could be touched" (wildcard fallback).
+
+    Empty dict on any failure — graceful degradation matches 0.2.1.
+    """
+    if not files:
+        return {}
+    try:
+        sources = _load_project_py_sources(db, project_id)
+        return scan_reverse_deps_detailed(files, sources)
+    except Exception:  # noqa: BLE001
+        log.exception(
+            "compute_scope_impact_detailed failed (project_id=%s, files=%s) — "
+            "falling back to empty impact",
+            project_id, files,
+        )
+        return {}
+
+
 def build_file_scope(
     files: List[str],
     *,
     db: Optional[Session] = None,
     project_id: Optional[int] = None,
+    affects_symbols: Optional[List[str]] = None,
 ) -> Scope:
-    """Construct a ``file_set`` Scope, populating ``extensions.impact`` when
-    we have the DB context to compute it.
+    """Construct a ``file_set`` Scope.
 
-    Callers without a DB handle (tests, migrations, degraded flows) just
-    get a plain file-path scope — equivalent to v0.2.0 behavior.
+    When ``db`` + ``project_id`` are provided (normal web-app path), the
+    scope is enriched with:
+
+    * ``extensions.impact`` — v0.2.1 file list (kept for old-coordinator
+      compatibility). Always populated when impact exists.
+    * ``extensions.impact_symbols`` — v0.2.2 per-file symbol map. Always
+      populated alongside ``impact`` when detailed scanning succeeds.
+    * ``extensions.affects_symbols`` — v0.2.2 agent-declared set of
+      symbols actually being modified. Populated only when
+      ``affects_symbols`` is passed. Without it the coordinator falls
+      back to file-level "assume all symbols touched".
+
+    Callers without a DB handle (tests, degraded flows) get a plain
+    file-path scope — equivalent to v0.2.0 behavior.
     """
     scope = Scope(kind="file_set", resources=list(files))
+    ext: Dict[str, Any] = {}
+
     if db is not None and project_id is not None:
-        impact = compute_scope_impact(db, project_id, files)
-        if impact:
-            scope.extensions = {"impact": impact}
+        detail = compute_scope_impact_detailed(db, project_id, files)
+        if detail:
+            # Keep ``impact`` as the stable v0.2.1-compatible file list
+            # so a mixed-version fleet still reads it.
+            ext["impact"] = sorted(detail.keys())
+            ext["impact_symbols"] = detail
+
+    if affects_symbols:
+        # Dedup + drop blanks; preserve stable order for test determinism
+        seen = set()
+        cleaned: List[str] = []
+        for s in affects_symbols:
+            if s and isinstance(s, str) and s not in seen:
+                seen.add(s)
+                cleaned.append(s)
+        if cleaned:
+            ext["affects_symbols"] = cleaned
+
+    if ext:
+        scope.extensions = ext
     return scope
 
 
@@ -334,7 +396,15 @@ def browser_action_to_envelope(
         files = action.get("files") or []
         intent_id = action.get("intent_id") or f"intent-{uuid.uuid4().hex[:12]}"
         objective = action.get("objective") or "editing"
-        scope = build_file_scope(list(files), db=db, project_id=project_id)
+        # v0.2.2: browser can optionally declare which symbols will be
+        # touched; if absent, coordinator falls back to file-level.
+        raw_symbols = action.get("symbols")
+        affects_symbols = raw_symbols if isinstance(raw_symbols, list) else None
+        scope = build_file_scope(
+            list(files),
+            db=db, project_id=project_id,
+            affects_symbols=affects_symbols,
+        )
         return participant.announce_intent(
             session_id=session_id,
             intent_id=intent_id,

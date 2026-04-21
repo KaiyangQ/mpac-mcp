@@ -135,6 +135,11 @@ class AgentAnnounceIntent(BaseModel):
     project_id: int
     files: list[str]
     objective: str = "working"
+    # v0.2.2: optional fully-qualified symbol names (e.g. ``utils.foo``)
+    # this intent will actually modify. When provided, coordinator can
+    # skip dependency_breakage conflicts whose importer uses only symbols
+    # the agent is NOT touching. Omit for file-level (v0.2.1) precision.
+    symbols: Optional[list[str]] = None
 
 class AgentAnnounceIntentResponse(BaseModel):
     intent_id: str

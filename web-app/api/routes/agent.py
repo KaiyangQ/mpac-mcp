@@ -241,7 +241,9 @@ async def agent_announce_intent(
     session, conn = _get_agent_conn(req.project_id, user.id)
     intent_id = f"intent-agent-{user.id}-{uuid.uuid4().hex[:10]}"
     scope = build_file_scope(
-        list(req.files), db=db, project_id=req.project_id,
+        list(req.files),
+        db=db, project_id=req.project_id,
+        affects_symbols=req.symbols,
     )
     envelope = conn.participant.announce_intent(
         session_id=session.mpac_session_id,
@@ -250,10 +252,13 @@ async def agent_announce_intent(
         scope=scope,
     )
     await process_envelope(session, envelope, conn.principal_id)
+    ext = scope.extensions or {}
     log.info(
-        "Agent intent announced: user=%s files=%s impact=%s intent_id=%s",
+        "Agent intent announced: user=%s files=%s impact=%s "
+        "symbols=%s intent_id=%s",
         user.id, req.files,
-        (scope.extensions or {}).get("impact"),
+        ext.get("impact"),
+        ext.get("affects_symbols"),
         intent_id,
     )
     return AgentAnnounceIntentResponse(intent_id=intent_id, accepted=True)
