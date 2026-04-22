@@ -27,10 +27,10 @@ claude /login      # 登你自己的 Claude Pro / Max 账号
 
 ### 0.2 MPAC 工具版本
 
-beta 要求 **`mpac-mcp >= 0.2.1`** （今天新发的，`announce_intent` 加了 `symbols` 参数，符号级精度才能走通）：
+beta 要求 **`mpac-mcp >= 0.2.2`**（今天新发的，`announce_intent` 支持 `symbols` 参数 + 新增 `list_active_intents()` 工具让 Claude 能主动了解团队状态）：
 
 ```bash
-pip install -U 'mpac-mcp>=0.2.1'
+pip install -U 'mpac-mcp>=0.2.2'
 mpac-mcp-relay --version   # sanity check
 ```
 
@@ -51,6 +51,7 @@ mpac-mcp-relay --version   # sanity check
 - 每个场景都用独立的顶层包（`scenario_1_same_file/`, `scenario_2_dep_breakage/`, ...），导入链用 **完整路径**（`from scenario_2_dep_breakage.utils import fetch_data`），MPAC scanner 能正确解析。
 - 每一步说完"**对 Claude 说**: ..."之后，给 Claude 5-15 秒处理时间，同时**紧盯浏览器**。
 - 每个场景结束后，最好让所有人点 **Acknowledge** 或 **Yield** 把冲突清掉，避免状态污染下一个场景。
+- **每个场景开始前**，建议让每个人的 Claude 先调一次 `list_active_intents()`（新工具，mpac-mcp 0.2.2+）—— Claude 会自己报告"我看到 Alice 在做 X、Bob 在做 Y"，全局视角从第一秒就建立。
 
 以下叙述里约定**三人**：**Alice / Bob / Carol**。如果只有两个测试者，可以跳过场景 3 的 Carol 那段或者让同一个人分饰两角（轮流）。
 
@@ -140,16 +141,24 @@ scenario_3_symbol_precision/
 
 ### 脚本
 
+**先各自建立全局视图**（这一步是新的，0.2.2 起强烈建议）：
+- 三人同时对自己的 Claude 说："**先调 `list_active_intents()` 看看现在项目里有谁在做什么**，然后我告诉你我的任务。"
+- 预期：Claude 返回"没人在干活"（第一轮），人再讲自己的任务
+
 1. **Alice** 对 Claude 说：
    > "给 `scenario_3_symbol_precision/utils.py` 里的 **fetch** 函数加 functools.lru_cache。注意只改 fetch，不要碰 parse。announce_intent 的时候把 symbols 参数设成 `[\"scenario_3_symbol_precision.utils.fetch\"]`。"
 
    （我们在 prompt 里主动让 Claude 用 `symbols` —— 0.2.1 的 mpac-mcp 工具支持这个参数，但 Claude 需要被教才会填。内测中这是**学到的一招**：用户显式指令最可靠。）
 
 2. 等 10 秒，**Bob** 对 Claude 说：
-   > "给 `scenario_3_symbol_precision/main.py` 里的 run 函数加重试机制（失败最多 3 次）。"
+   > "**先调 `list_active_intents()` 看看有没有人在忙**。然后帮我给 `scenario_3_symbol_precision/main.py` 里的 run 函数加重试机制（失败最多 3 次）。"
+
+   期望：Claude 会报告"Alice 在改 utils.fetch"，然后继续。
 
 3. 再等 10 秒，**Carol** 对 Claude 说：
-   > "在 `scenario_3_symbol_precision/cli.py` 里加一个 --json 标志，输出 parse 结果的 JSON。"
+   > "**先 `list_active_intents()`**。然后在 `scenario_3_symbol_precision/cli.py` 里加一个 --json 标志，输出 parse 结果的 JSON。"
+
+   期望：Claude 会报告"Alice 在改 utils.fetch（影响 main.py）、Bob 在改 main.py。我要改 cli.py，用的是 utils.parse，和他们不冲突 —— 开干"。**这就是全局视角带来的协作感**。
 
 ### 期望观察
 
@@ -245,6 +254,6 @@ scenario_4_attr_chain/
 - **生产 URL**: <https://mpac-web.duckdns.org>
 - **BETA_ACCESS.md**（测试账号凭据，私有）：`./BETA_ACCESS.md`
 - **mpac 在 PyPI**: <https://pypi.org/project/mpac/> — 目前 0.2.3
-- **mpac-mcp 在 PyPI**: <https://pypi.org/project/mpac-mcp/> — 目前 0.2.1
+- **mpac-mcp 在 PyPI**: <https://pypi.org/project/mpac-mcp/> — 目前 0.2.2
 - **协议规范**: `./SPEC.md` —— 想了解冲突类别 / envelope 结构来源的，这里有权威定义
 - **上线记录**: `./daily_reports/` —— 每次新版本上线的 changelog + 决策记录
