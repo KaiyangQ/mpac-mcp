@@ -22,6 +22,10 @@ import { useAuth } from "@/lib/auth-context";
 import { useRequireAuth } from "@/lib/redirect-hooks";
 import { InviteModal } from "@/components/invite-modal";
 import { NewFileModal } from "@/components/new-file-modal";
+import {
+  FileContextMenu,
+  type FileContextMenuItem,
+} from "@/components/file-context-menu";
 import { ConnectClaudeModal } from "@/components/connect-claude-modal";
 import { DestructiveConfirmModal } from "@/components/destructive-confirm-modal";
 import { CommandPalette } from "@/components/command-palette";
@@ -159,6 +163,7 @@ function FileTree({
   myIntents,
   onSelect,
   onDelete,
+  onContextMenu,
   depth = 0,
 }: {
   files: FileNode[];
@@ -168,6 +173,13 @@ function FileTree({
   myIntents: Record<string, { intent_id: string; scope?: { resources?: string[] } }>;
   onSelect: (path: string) => void;
   onDelete?: (path: string) => void;
+  /** Called when the user right-clicks a row. ``isFolder`` lets the
+   * parent pre-fill a "New file in <folder>/" path when appropriate. */
+  onContextMenu?: (
+    e: React.MouseEvent,
+    path: string,
+    isFolder: boolean,
+  ) => void;
   depth?: number;
 }) {
   return (
@@ -189,6 +201,19 @@ function FileTree({
                   onSelect(f.path);
                 }
               }}
+              onContextMenu={
+                onContextMenu
+                  ? (e) => {
+                      // Stop the browser's native menu AND the bubble
+                      // so the Files-panel-wide handler doesn't also
+                      // fire (which would override our row-specific
+                      // target with "empty area").
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onContextMenu(e, f.path, !isFile);
+                    }
+                  : undefined
+              }
               className={`group flex items-center gap-1.5 py-1 text-[13px] rounded transition-colors ${
                 isFile ? "cursor-pointer hover:bg-[var(--bg-tertiary)]" : "cursor-default"
               } ${isActive ? "bg-[var(--bg-tertiary)] text-[var(--accent)]" : "text-[var(--text-primary)]"}`}
@@ -238,6 +263,7 @@ function FileTree({
                 myIntents={myIntents}
                 onSelect={onSelect}
                 onDelete={onDelete}
+                onContextMenu={onContextMenu}
                 depth={depth + 1}
               />
             )}
@@ -792,7 +818,19 @@ export default function WorkspacePage({
   const [showInvite, setShowInvite] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [showNewFile, setShowNewFile] = useState(false);
+  // Pre-filled path for the NewFileModal when summoned from a right-click
+  // on a folder row (e.g. ``pkg/``). Empty = user opened with the "+" or
+  // right-clicked empty space.
+  const [newFilePrefix, setNewFilePrefix] = useState("");
   const [showConnectClaude, setShowConnectClaude] = useState(false);
+
+  // Files-panel right-click context menu. ``target`` is the path of the
+  // row right-clicked (file or folder); undefined means the user right-
+  // clicked empty scroll area. Kept at ProjectPage level so the menu
+  // survives re-renders of the tree.
+  const [fileCtxMenu, setFileCtxMenu] = useState<
+    { x: number; y: number; target?: string; isFolder?: boolean } | null
+  >(null);
   // In-page destructive confirm (replaces window.confirm — see
   // destructive-confirm-modal.tsx for why a real modal over native dialog).
   const [pendingDanger, setPendingDanger] = useState<"delete" | "leave" | null>(null);
@@ -1165,10 +1203,22 @@ export default function WorkspacePage({
               +
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto py-1">
+          <div
+            className="flex-1 overflow-y-auto py-1"
+            // Right-click ANYWHERE in the scroll area — including empty
+            // space below the tree — opens a context menu with "New
+            // file". Row-level handlers (in FileTree) stopPropagation
+            // so right-clicking a row targets that specific file, not
+            // this empty-area handler.
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setFileCtxMenu({ x: e.clientX, y: e.clientY });
+            }}
+          >
             {filePaths.length === 0 ? (
               <div className="px-3 py-3 text-[11px] text-[var(--text-secondary)]">
-                No files yet. Click <span className="text-[var(--text-primary)]">+</span> to add one.
+                No files yet. Click <span className="text-[var(--text-primary)]">+</span>
+                {" "}or right-click here to add one.
               </div>
             ) : (
               <FileTree
@@ -1179,6 +1229,14 @@ export default function WorkspacePage({
                 myIntents={session.myIntents}
                 onSelect={setActivePath}
                 onDelete={handleDeleteFile}
+                onContextMenu={(e, path, isFolder) => {
+                  setFileCtxMenu({
+                    x: e.clientX,
+                    y: e.clientY,
+                    target: path,
+                    isFolder,
+                  });
+                }}
               />
             )}
           </div>
@@ -1293,10 +1351,56 @@ export default function WorkspacePage({
 
       <NewFileModal
         open={showNewFile}
-        onOpenChange={setShowNewFile}
+        onOpenChange={(o) => {
+          setShowNewFile(o);
+          // When the modal closes, clear any right-click-derived prefix
+          // so the next "+" click opens with a blank input, not the
+          // leftover folder name from the last context-menu invocation.
+          if (!o) setNewFilePrefix("");
+        }}
         existingPaths={filePaths}
         onCreate={handleCreateFile}
+        initialPath={newFilePrefix}
       />
+
+      {/*
+        Right-click menu for the Files panel. Items depend on what was
+        clicked: empty area gets just "New file"; a file row adds
+        "Delete"; a folder row pre-fills the new-file dialog with the
+        folder's path so typing a filename completes the path in one
+        breath (``pkg/`` + user types ``foo.py`` → pkg/foo.py).
+      */}
+      {fileCtxMenu && (
+        <FileContextMenu
+          x={fileCtxMenu.x}
+          y={fileCtxMenu.y}
+          onClose={() => setFileCtxMenu(null)}
+          items={
+            ((): FileContextMenuItem[] => {
+              const items: FileContextMenuItem[] = [];
+              const target = fileCtxMenu.target;
+              const isFolder = fileCtxMenu.isFolder;
+              items.push({
+                label: isFolder && target
+                  ? `New file in ${target}/`
+                  : "New file",
+                onSelect: () => {
+                  setNewFilePrefix(isFolder && target ? `${target}/` : "");
+                  setShowNewFile(true);
+                },
+              });
+              if (target && !isFolder) {
+                items.push({
+                  label: `Delete ${target.split("/").pop()}`,
+                  destructive: true,
+                  onSelect: () => handleDeleteFile(target),
+                });
+              }
+              return items;
+            })()
+          }
+        />
+      )}
 
       <ConnectClaudeModal
         projectId={projectId}

@@ -21,24 +21,31 @@ export function NewFileModal({
   onOpenChange,
   existingPaths,
   onCreate,
+  initialPath,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   existingPaths: string[];
   onCreate: (path: string) => Promise<void>;
+  /** Pre-fill the input — used when the user right-clicks a folder so
+   * the prompt opens with e.g. ``pkg/`` ready for them to type the
+   * file name. Blank string = old behaviour (empty input). */
+  initialPath?: string;
 }) {
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   // Reset when reopened so a previous attempt doesn't leak through.
+  // If ``initialPath`` is supplied we seed with it so the cursor lands
+  // after the folder prefix ready for a file name.
   useEffect(() => {
     if (open) {
-      setPath("");
+      setPath(initialPath ?? "");
       setErr(null);
       setBusy(false);
     }
-  }, [open]);
+  }, [open, initialPath]);
 
   const normalized = path.trim().replace(/^\/+/, "");
   const duplicate = normalized.length > 0 && existingPaths.includes(normalized);
