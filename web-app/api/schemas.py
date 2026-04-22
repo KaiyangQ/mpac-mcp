@@ -156,3 +156,22 @@ class AgentOverlapQuery(BaseModel):
 
 class AgentOverlapResponse(BaseModel):
     overlaps: list[dict]  # [{principal_id, display_name, files, objective}]
+
+
+class AgentActiveIntentsResponse(BaseModel):
+    """v0.2.4: agent-facing "what's everyone doing" endpoint.
+
+    Lets a Claude (or any connected agent) build global situational
+    awareness BEFORE announcing its own intent — not just reactively on
+    overlap. Excludes the caller's own intents so Claude doesn't get a
+    mirror of its own noise.
+
+    Each entry mirrors the subset of ``Scope.extensions`` the 0.2.2+
+    coordinator cares about (``affects_symbols``) so the consumer can
+    reason about symbol-level conflicts without a second round-trip.
+    """
+    intents: list[dict]  # [{
+                         #    intent_id, principal_id, display_name,
+                         #    files, symbols (optional),
+                         #    objective, is_agent
+                         #  }]

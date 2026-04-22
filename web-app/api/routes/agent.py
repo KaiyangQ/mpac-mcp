@@ -35,6 +35,7 @@ from ..database import get_db
 from ..models import Project, Token, User
 from ..mpac_bridge import build_file_scope, compute_scope_impact, process_envelope, registry as session_registry
 from ..schemas import (
+    AgentActiveIntentsResponse,
     AgentAnnounceIntent,
     AgentAnnounceIntentResponse,
     AgentOverlapQuery,
@@ -43,7 +44,7 @@ from ..schemas import (
     AgentTokenResponse,
     AgentWithdrawIntent,
 )
-from mpac_protocol.core.models import Scope
+from mpac_protocol.core.models import IntentState, Scope
 
 log = logging.getLogger("mpac.agent")
 
@@ -354,3 +355,90 @@ async def agent_check_overlap(
             "category": "scope_overlap" if direct_hit else "dependency_breakage",
         })
     return AgentOverlapResponse(overlaps=overlaps)
+
+
+@router.get(
+    "/agent/projects/{project_id}/intents",
+    response_model=AgentActiveIntentsResponse,
+)
+async def agent_list_active_intents(
+    project_id: int,
+    user: User = Depends(get_user_or_agent),
+    db: Session = Depends(get_db),
+):
+    """v0.2.4: return every live intent in the project EXCEPT the caller's.
+
+    The MCP relay's ``list_active_intents()`` tool calls this so a Claude
+    can learn the whole team's state before announcing its own intent —
+    not just the overlap subset. Callers get back enough info
+    (``objective``, ``symbols``, ``files``) to reason about whether their
+    planned work will collide with anyone.
+
+    Excluded explicitly:
+      * the caller's own intents (no self-noise)
+      * terminal-state intents (Withdrawn / Completed / Terminated)
+
+    Read-only. No side effects. Safe to call as often as an agent wants.
+    """
+    member = db.query(Token).filter(
+        Token.user_id == user.id,
+        Token.project_id == project_id,
+        Token.is_revoked == False,  # noqa: E712
+    ).first()
+    if not member:
+        raise HTTPException(403, "Not a member of this project")
+
+    # Deliberately NOT using _get_agent_conn — this endpoint is read-only
+    # and shouldn't fail just because the caller's relay happens to be
+    # down or the caller is a human looking at the dashboard. We only
+    # need enough to know WHICH principal ids represent this user (so we
+    # can exclude them from the returned list).
+    session = session_registry.get(project_id)
+    if session is None:
+        return AgentActiveIntentsResponse(intents=[])
+
+    # A single user can show up as both a human (``user:42``) and that
+    # user's agent relay (``agent:user-42``). Exclude both flavours from
+    # the reply so the caller doesn't get "you're working on X" noise.
+    self_prefixes = {f"user:{user.id}", f"agent:user-{user.id}"}
+
+    # Only surface intents in live states — matches what
+    # coordinator._detect_scope_overlaps considers relevant. Checking the
+    # ``current_state`` enum (not a string) — the coordinator's state
+    # machines store ``IntentState`` members, not their .value.
+    live_states = {IntentState.ACTIVE, IntentState.SUSPENDED, IntentState.ANNOUNCED}
+
+    intents: list[dict] = []
+    for intent_id, intent in session.coordinator.intents.items():
+        if intent.principal_id in self_prefixes:
+            continue
+        if intent.state_machine.current_state not in live_states:
+            continue
+
+        scope = intent.scope
+        files = list(scope.resources) if scope and scope.resources else []
+        symbols: list[str] = []
+        if scope and scope.extensions:
+            raw = scope.extensions.get("affects_symbols")
+            if isinstance(raw, list):
+                symbols = [s for s in raw if isinstance(s, str)]
+
+        # Fallback display name via the connections map — principal_id is
+        # opaque (``user:42`` / ``agent:user-42``) and not friendly.
+        other = session.connections.get(intent.principal_id)
+        display = other.display_name if other else intent.principal_id
+        is_agent = intent.principal_id.startswith("agent:")
+
+        intents.append({
+            "intent_id": intent_id,
+            "principal_id": intent.principal_id,
+            "display_name": display,
+            "files": files,
+            "symbols": symbols,
+            "objective": intent.objective,
+            "is_agent": is_agent,
+        })
+
+    # Sort for deterministic output so downstream prompts don't flap.
+    intents.sort(key=lambda i: (i["principal_id"], i["intent_id"]))
+    return AgentActiveIntentsResponse(intents=intents)
