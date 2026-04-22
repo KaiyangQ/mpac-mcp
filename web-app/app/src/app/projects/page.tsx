@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, Folder } from "lucide-react";
+import { Plus, Folder, LogOut, Trash2 } from "lucide-react";
 import { api, ApiError, type Project } from "@/lib/api";
 import { useRequireAuth } from "@/lib/redirect-hooks";
 import { TopNav } from "@/components/top-nav";
@@ -41,6 +41,55 @@ export default function ProjectsPage() {
   useEffect(() => {
     if (user) refresh();
   }, [user, refresh]);
+
+  async function onDelete(p: Project) {
+    const ok = window.confirm(
+      `Delete project "${p.name}"?\n\n` +
+      `This permanently removes all files, invites, and tokens.\n` +
+      `Every member (including Claude agents) loses access immediately.\n\n` +
+      `This can't be undone.`
+    );
+    if (!ok) return;
+    try {
+      await api.deleteProject(p.id);
+      // Optimistic local removal so the UI updates before the refresh
+      // round-trip completes — feels snappier and avoids a flash of the
+      // now-gone project while the network call resolves.
+      setProjects((prev) => prev.filter((x) => x.id !== p.id));
+      refresh();
+    } catch (e) {
+      alert(
+        e instanceof ApiError
+          ? `Delete failed: ${e.message}`
+          : "Delete failed — see console."
+      );
+      // eslint-disable-next-line no-console
+      console.error(e);
+    }
+  }
+
+  async function onLeave(p: Project) {
+    const ok = window.confirm(
+      `Leave "${p.name}"?\n\n` +
+      `Your browser session and any Claude relay you have running will ` +
+      `lose access. The project stays put for the owner and other members ` +
+      `— they can re-invite you later if needed.`
+    );
+    if (!ok) return;
+    try {
+      await api.leaveProject(p.id);
+      setProjects((prev) => prev.filter((x) => x.id !== p.id));
+      refresh();
+    } catch (e) {
+      alert(
+        e instanceof ApiError
+          ? `Leave failed: ${e.message}`
+          : "Leave failed — see console."
+      );
+      // eslint-disable-next-line no-console
+      console.error(e);
+    }
+  }
 
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -155,36 +204,70 @@ export default function ProjectsPage() {
             </div>
           ) : (
             <ul className="space-y-2">
-              {projects.map((p) => (
-                <li key={p.id}>
-                  <Link
-                    href={`/projects/${p.id}`}
-                    className="block bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-lg p-4 transition-colors"
+              {projects.map((p) => {
+                const isOwner = p.owner_id === user.user_id;
+                // Destructive action sits OUTSIDE the <Link> rather than
+                // nested inside — nesting <button> in <a> is invalid HTML
+                // and both would compete for the click. Flexbox + a shared
+                // bg on the outer wrapper gets us the same "whole row is
+                // clickable" feel without the accessibility pitfall.
+                return (
+                  <li
+                    key={p.id}
+                    className="group bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-lg flex items-stretch transition-colors"
                   >
-                    <div className="flex items-start justify-between">
-                      <div className="min-w-0">
-                        <div className="font-medium text-[#e6edf3] truncate">
-                          {p.name}
+                    <Link
+                      href={`/projects/${p.id}`}
+                      className="flex-1 min-w-0 p-4"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="font-medium text-[#e6edf3] truncate">
+                            {p.name}
+                          </div>
+                          <div className="text-xs text-[var(--text-secondary)] mt-1 font-mono truncate">
+                            {p.session_id}
+                          </div>
                         </div>
-                        <div className="text-xs text-[var(--text-secondary)] mt-1 font-mono truncate">
-                          {p.session_id}
+                        <div className="text-xs text-[var(--text-secondary)] flex-shrink-0">
+                          {isOwner ? (
+                            <span className="px-2 py-0.5 bg-[var(--accent)]/10 text-[var(--accent)] rounded">
+                              owner
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-[var(--bg-tertiary)] text-[var(--text-secondary)] rounded">
+                              member
+                            </span>
+                          )}
                         </div>
                       </div>
-                      <div className="text-xs text-[var(--text-secondary)] ml-4 flex-shrink-0">
-                        {p.owner_id === user.user_id ? (
-                          <span className="px-2 py-0.5 bg-[var(--accent)]/10 text-[var(--accent)] rounded">
-                            owner
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 bg-[var(--bg-tertiary)] text-[var(--text-secondary)] rounded">
-                            member
-                          </span>
-                        )}
-                      </div>
+                    </Link>
+                    <div className="flex items-center pr-3">
+                      {isOwner ? (
+                        <button
+                          type="button"
+                          onClick={() => onDelete(p)}
+                          title="Delete this project for everyone"
+                          className="p-2 rounded-md text-[var(--text-secondary)] hover:text-[var(--red)] hover:bg-[var(--red)]/10 transition-colors opacity-60 group-hover:opacity-100"
+                          aria-label={`Delete ${p.name}`}
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onLeave(p)}
+                          title="Leave this project"
+                          className="p-2 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors opacity-60 group-hover:opacity-100"
+                          aria-label={`Leave ${p.name}`}
+                        >
+                          <LogOut className="size-4" />
+                        </button>
+                      )}
                     </div>
-                  </Link>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
