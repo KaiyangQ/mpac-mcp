@@ -124,7 +124,12 @@ class AgentTokenResponse(BaseModel):
     token_value: str
     project_id: int
     relay_url: str  # full ws:// URL the relay connects to
-    launch_command: str  # pre-built shell command for copy-paste
+    launch_command: str  # bash one-liner — macOS / Linux / WSL / Git Bash
+    # v0.2.6: Windows/PowerShell equivalent. Same bootstrap (claude-code
+    # install, claude /login, pip install mpac-mcp, relay), but in a
+    # PowerShell script the frontend exposes via an OS toggle in the
+    # Connect Claude modal.
+    launch_command_windows: Optional[str] = None
 
 class AgentStatusResponse(BaseModel):
     connected: bool

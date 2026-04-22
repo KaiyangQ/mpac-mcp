@@ -32,13 +32,21 @@
 
 ### 步骤 2：粘一行命令到你的本地终端（~20 秒 + 首次安装时间）
 
-在项目页右上角点 **🤖 Connect Claude**。弹出的 Modal 里显示**一行命令**，形如：
+在项目页右上角点 **🤖 Connect Claude**。弹出的 Modal 里 **根据你的系统** 显示一行命令。
+
+**macOS / Linux / WSL / Git Bash**（Modal 顶上会自动选中 "macOS / Linux"）:
 
 ```bash
 bash <(curl -fsSL 'https://mpac-web.duckdns.org/api/projects/N/bootstrap.sh?token=xxx')
 ```
 
-**点 Modal 里的 Copy → 粘到一个新终端窗口 → 回车**。就这样。
+**Windows PowerShell**（Modal 顶上切到 "Windows"）:
+
+```powershell
+iex (irm 'https://mpac-web.duckdns.org/api/projects/N/bootstrap.ps1?token=xxx')
+```
+
+**点 Modal 里的 Copy → 粘到一个新终端窗口 → 回车**。就这样。Modal 会按浏览器 userAgent 自动猜你的系统，不对就手动点 toggle 切换。
 
 这条命令会让服务端返回一个 shell 脚本，脚本自动处理：
 1. 检测 Claude Code 是否装了；没装就 `npm install -g @anthropic-ai/claude-code`

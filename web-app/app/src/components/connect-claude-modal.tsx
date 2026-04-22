@@ -34,6 +34,24 @@ export function ConnectClaudeModal({
   const [connected, setConnected] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Which OS / shell the user wants the command for. Default tries to
+  // infer from the browser's userAgent on first mount (Windows →
+  // "windows"; else "unix") then respects the user's explicit choice
+  // which we persist across modal open/close via localStorage so a
+  // Windows user doesn't have to toggle every time.
+  const [osTab, setOsTab] = useState<"unix" | "windows">(() => {
+    if (typeof window === "undefined") return "unix";
+    const saved = window.localStorage.getItem("mpac.connectClaudeOs");
+    if (saved === "unix" || saved === "windows") return saved;
+    const ua = window.navigator.userAgent || "";
+    return /Windows/i.test(ua) ? "windows" : "unix";
+  });
+  // Persist tab choice so repeat opens remember it.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("mpac.connectClaudeOs", osTab);
+  }, [osTab]);
+
   // Generate the token as soon as the modal opens.
   useEffect(() => {
     if (!open) {
@@ -93,13 +111,21 @@ export function ConnectClaudeModal({
   async function onCopy() {
     if (!agentToken) return;
     try {
-      await navigator.clipboard.writeText(agentToken.launch_command);
+      await navigator.clipboard.writeText(activeCommand);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
       /* clipboard unavailable — user can still select manually */
     }
   }
+
+  // Pick the command for the active OS tab. Fallback to the unix form
+  // when the server didn't send the Windows variant (older backend).
+  const activeCommand = agentToken
+    ? (osTab === "windows" && agentToken.launch_command_windows
+        ? agentToken.launch_command_windows
+        : agentToken.launch_command)
+    : "";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -131,9 +157,55 @@ export function ConnectClaudeModal({
         {agentToken && (
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-2">
-                Run this on your laptop
-              </label>
+              <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+                <label className="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide">
+                  Run this on your laptop
+                </label>
+                {/*
+                  OS segmented control. Two flat pills; active one gets the
+                  accent background. Kept unobtrusive: the whole widget sits
+                  inline with the label so it doesn't look like another
+                  section. Only shown when the server actually sent a
+                  Windows variant; older backends degrade gracefully (no
+                  toggle = one bash command, same as before).
+                */}
+                {agentToken.launch_command_windows && (
+                  <div
+                    className="inline-flex rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] p-0.5 text-[11px]"
+                    role="tablist"
+                    aria-label="Operating system"
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={osTab === "unix"}
+                      onClick={() => setOsTab("unix")}
+                      className={
+                        "px-2 py-0.5 rounded transition-colors " +
+                        (osTab === "unix"
+                          ? "bg-[var(--bg-primary)] text-[var(--text-primary)] shadow-sm"
+                          : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]")
+                      }
+                    >
+                      macOS / Linux
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={osTab === "windows"}
+                      onClick={() => setOsTab("windows")}
+                      className={
+                        "px-2 py-0.5 rounded transition-colors " +
+                        (osTab === "windows"
+                          ? "bg-[var(--bg-primary)] text-[var(--text-primary)] shadow-sm"
+                          : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]")
+                      }
+                    >
+                      Windows
+                    </button>
+                  </div>
+                )}
+              </div>
               <div className="relative">
                 {/*
                   Visual wrap on long commands (the curl URL + token is ~160
@@ -150,7 +222,7 @@ export function ConnectClaudeModal({
                   on the very first (top) line.
                 */}
                 <pre className="rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] p-3 pr-20 text-xs font-mono leading-relaxed whitespace-pre-wrap break-all text-[var(--text-primary)]">
-{agentToken.launch_command}
+{activeCommand}
                 </pre>
                 <Button
                   type="button"
@@ -173,9 +245,23 @@ export function ConnectClaudeModal({
                 </Button>
               </div>
               <p className="text-[11px] text-[var(--text-secondary)] mt-2">
-                Needs <code className="font-mono">node</code> +{" "}
-                <code className="font-mono">python3</code> on your
-                laptop. The rest (
+                {osTab === "windows" ? (
+                  <>
+                    Run in <strong>PowerShell</strong>. Needs{" "}
+                    <code className="font-mono">node</code> and{" "}
+                    <code className="font-mono">python</code> on your
+                    machine.
+                  </>
+                ) : (
+                  <>
+                    Run in any <strong>bash</strong>-compatible shell
+                    (macOS Terminal, Linux, WSL, Git Bash). Needs{" "}
+                    <code className="font-mono">node</code> +{" "}
+                    <code className="font-mono">python3</code> on your
+                    laptop.
+                  </>
+                )}{" "}
+                The rest (
                 <a
                   href="https://docs.anthropic.com/en/docs/claude-code/setup"
                   target="_blank"

@@ -65,7 +65,11 @@ export type AgentTokenResponse = {
   token_value: string;
   project_id: number;
   relay_url: string;
+  /** Bash one-liner — macOS / Linux / WSL / Git Bash. */
   launch_command: string;
+  /** PowerShell one-liner for Windows users (optional: missing in
+   * responses from older web-app versions). */
+  launch_command_windows?: string | null;
 };
 
 export type AgentStatus = {
