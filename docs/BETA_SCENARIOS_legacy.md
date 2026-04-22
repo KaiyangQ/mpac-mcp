@@ -1,9 +1,26 @@
-# MPAC Internal Beta — Scenarios Playbook
+# MPAC Internal Beta — Scenarios Playbook (LEGACY)
+
+> **⚠ LEGACY — 已被 `docs/BETA_EXAMPLE.md` 取代（2026-04-22 下午重写）。**
+>
+> 留着这份的理由：里面 **scenario 4**（`from pkg import mod` + `mod.attr()`）
+> 是一份**反面教材**。当时按 0.2.3 日报宣传的"覆盖最常见 Python 写法"设计了
+> 这个 scenario，但 seed 实际种子在 0.2.3 scanner 下**触发的不是退回文件级，
+> 是完全零冲突** —— `from pkg import mod` 这条分支根本没被 0.2.3 的 attr-chain
+> walker 看到（只处理 `ast.Import`，不处理 `ast.ImportFrom`）。今天下午修掉
+> （`mpac 0.2.4`，commit `e45c920`），顺手把剧本重构成一个综合项目
+> `notes_app`，见 `BETA_EXAMPLE.md`。
+>
+> 如果日后想查 "4 个分离 scenario" 的历史版本、或者想手动重现 0.2.3 vs 0.2.4
+> 的行为差异，可以继续读这份。
+>
+> **现役剧本**：`docs/BETA_EXAMPLE.md`。
+
+---
 
 > **私有文档。** 面向内测参与者（和你自己）。里面含示例 invite 码和测试账号 —— 不要贴到公开仓库。
 >
-> 最新测试项目：<https://mpac-web.duckdns.org/projects/8>（`beta-demo-20260422-1342`，2026-04-22 下午 seed，跑 `mpac 0.2.4` 后的新 scanner）
-> 运行 `scripts/seed_beta_scenarios.py` 可以创建新的一份。
+> 旧测试项目引用（2026-04-22 下午前）：`projects/8` 即 `beta-demo-20260422-1342`。
+> 运行 `scripts/seed_beta_scenarios.py` 可以创建同款新的一份（如果想重现旧行为的话）。
 
 ---
 
