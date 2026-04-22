@@ -202,6 +202,47 @@ def announce_intent(
 
 
 @mcp.tool()
+def list_active_intents() -> dict:
+    """List every other participant's currently-live intent in this project.
+
+    Call this **at the start of a task** — before you know what files you'll
+    touch — so you can build a picture of what the team is doing. It is the
+    complement to :func:`check_overlap`: ``check_overlap`` tells you "does
+    my specific file set collide with anyone"; this tool tells you the
+    broader "what are people working on right now" without needing files
+    up-front.
+
+    Returns::
+
+        {"intents": [
+            {
+              "intent_id": "intent-user-5-...",
+              "principal_id": "user:5",
+              "display_name": "Alice",
+              "files": ["utils.py"],
+              "symbols": ["utils.foo"],      # empty list when unspecified
+              "objective": "add caching",
+              "is_agent": True               # True = another Claude/MPAC agent
+            },
+            ...
+          ]}
+
+    Excluded automatically: your OWN intents (you already know what you're
+    doing), and any intent in a terminal state.
+
+    Recommended prompt usage: call this once at task start; quote the
+    result in a one-line summary to the human ("Alice is caching utils.foo,
+    Bob is adding retry to main.py"); factor it into your plan (e.g. pick
+    files / symbols that don't collide with anyone).
+    """
+    pid = _project_id()
+    with _client() as c:
+        r = c.get(f"/api/agent/projects/{pid}/intents")
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool()
 def withdraw_intent(intent_id: str, reason: str = "done") -> dict:
     """Release an intent you announced earlier. You should always call this
     when your work on the files is complete (success OR abandonment) so
