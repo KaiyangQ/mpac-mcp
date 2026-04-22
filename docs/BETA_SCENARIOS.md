@@ -2,7 +2,7 @@
 
 > **私有文档。** 面向内测参与者（和你自己）。里面含示例 invite 码和测试账号 —— 不要贴到公开仓库。
 >
-> 最新测试项目：<https://mpac-web.duckdns.org/projects/6>
+> 最新测试项目：<https://mpac-web.duckdns.org/projects/8>（`beta-demo-20260422-1342`，2026-04-22 下午 seed，跑 `mpac 0.2.4` 后的新 scanner）
 > 运行 `scripts/seed_beta_scenarios.py` 可以创建新的一份。
 
 ---
