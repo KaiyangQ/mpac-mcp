@@ -159,7 +159,9 @@ export function ConnectClaudeModal({
                 </Button>
               </div>
               <p className="text-[11px] text-[var(--text-secondary)] mt-2">
-                One-time setup: install{" "}
+                Needs <code className="font-mono">node</code> +{" "}
+                <code className="font-mono">python3</code> on your
+                laptop. The rest (
                 <a
                   href="https://docs.anthropic.com/en/docs/claude-code/setup"
                   target="_blank"
@@ -167,12 +169,11 @@ export function ConnectClaudeModal({
                   className="underline hover:text-[var(--text-primary)]"
                 >
                   Claude Code
-                </a>{" "}
-                on your laptop, then run{" "}
-                <code className="font-mono">claude /login</code> once.
-                Everything else (including{" "}
-                <code className="font-mono">mpac-mcp</code>) is installed
-                by the command above.
+                </a>
+                , <code className="font-mono">mpac-mcp</code>, and a
+                one-time <code className="font-mono">claude /login</code>
+                browser flow) auto-installs from the command above. Token
+                is single-use — if the script fails, reopen this modal.
               </p>
             </div>
 

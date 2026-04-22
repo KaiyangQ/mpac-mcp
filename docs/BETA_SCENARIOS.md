@@ -7,68 +7,62 @@
 
 ---
 
-## 👋 先看这个：三步接上 Claude
+## 👋 先看这个：**一行命令接上 Claude**
 
 ```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│ 1. 一次性设置 │ →  │ 2. 加入项目   │ →  │ 3. 接上 Claude│
-│   (~2 分钟)  │    │  (~30 秒)    │    │  (~20 秒)    │
-└─────────────┘    └─────────────┘    └─────────────┘
+┌──────────────────┐    ┌────────────────────────┐
+│ 1. 加入测试项目   │ →  │ 2. 粘一行命令到终端     │
+│   (~30 秒)       │    │  (剩下都是自动的)        │
+└──────────────────┘    └────────────────────────┘
 ```
 
-内测前**每人要跑一次完整的下面三步**。第 1 步是一次性的（下次内测跳过）；第 2、3 步每次加入新项目重复一遍。
+**仅有的前置条件**：你的机器得有 `node` 和 `python3`。没有的话先装：
+- Node.js LTS：<https://nodejs.org/>
+- Python 3.9+（macOS 自带；Windows/Linux 按官方文档）
 
-### 步骤 1：一次性设置你的 Mac / Linux（~2 分钟）
+**以及你要有 Claude Pro 或 Max 订阅** —— 内测依赖你自己的订阅走 Claude Code。
 
-用任何终端：
+---
 
-```bash
-# (a) 装 Claude Code CLI — Anthropic 官方
-npm install -g @anthropic-ai/claude-code
+### 步骤 1：加入测试项目（~30 秒）
 
-# (b) 登录你自己的 Claude Pro / Max 账号（浏览器会弹窗）
-claude /login
-```
-
-**这两条一辈子只跑一次**。Anthropic 的登录态保存在 `~/.claude/`，以后重启机器都还在。
-
-> 没有 `npm`？先装 Node.js：<https://nodejs.org/>（选 LTS 版）
-> 没有 Claude 订阅？内测要求 Pro 或 Max —— 这是每个测试者自己的账号
-
-### 步骤 2：加入测试项目（~30 秒）
-
-1. 打开你收到的 **invite 链接**（组织者会发给你，格式像 `https://mpac-web.duckdns.org/invite/xxx`）
-2. 如果还没账号：用 invite 码在 <https://mpac-web.duckdns.org/register> 注册
+1. 打开你收到的 **invite 链接**（组织者发给你，形如 `https://mpac-web.duckdns.org/invite/xxx`）
+2. 如果还没账号，用 invite 码在 <https://mpac-web.duckdns.org/register> 注册
 3. 登录后自动跳到项目页，网址形如 `https://mpac-web.duckdns.org/projects/N`
 
-### 步骤 3：接上你本地的 Claude（~20 秒）
+### 步骤 2：粘一行命令到你的本地终端（~20 秒 + 首次安装时间）
 
-在项目页点右上角的 **🤖 Connect Claude** 按钮。弹出的 Modal 里有**一整行命令**（包含 `pip install` + 启动 relay），长这样：
+在项目页右上角点 **🤖 Connect Claude**。弹出的 Modal 里显示**一行命令**，形如：
 
 ```bash
-pip install -U 'mpac-mcp>=0.2.2' && mpac-mcp-relay \
-  --project-url wss://mpac-web.duckdns.org/ws/relay/N \
-  --token <一长串>
+bash <(curl -fsSL 'https://mpac-web.duckdns.org/api/projects/N/bootstrap.sh?token=xxx')
 ```
 
-**操作**：
-1. 点 Modal 里的 **Copy** 按钮整条复制
-2. 打开一个新的终端窗口，粘贴、回车
-3. 看到终端持续打日志（不要关窗口！），同时浏览器 Modal 从 "Waiting for the relay..." 变成 **"Connected"**
-4. 关掉 Modal，你名字旁边会出现 🤖 图标
+**点 Modal 里的 Copy → 粘到一个新终端窗口 → 回车**。就这样。
 
-**检查点**：项目页的 WHO'S WORKING 面板里，你自己那一行除了人名还多了一个 🤖，就说明 Claude 接上了。
+这条命令会让服务端返回一个 shell 脚本，脚本自动处理：
+1. 检测 Claude Code 是否装了；没装就 `npm install -g @anthropic-ai/claude-code`
+2. 检测是否登录过 Claude；没登过就**自动跳出浏览器**让你登（一辈子只登一次）
+3. 装 `mpac-mcp`（已装了就跳过；装不上会自动 fallback `--user` 或 `--break-system-packages`）
+4. 启动 relay，连进项目
 
-> ❌ 终端里报 `command not found: mpac-mcp-relay`？
-> → 新开一个终端窗口（pip 装完 PATH 需要刷新）
->
-> ❌ macOS 报 `externally-managed-environment`？
-> → 改成 `pip install --user -U 'mpac-mcp>=0.2.2' && ...`，或用 `pipx install mpac-mcp`
->
-> ❌ WS 握手 401 / 403？
-> → Token 已过期。浏览器关掉 Modal 再点一次 **Connect Claude**，会给一个新的
+**第一次跑大概 1-3 分钟**（主要是 npm 装 Claude Code 的时间）。之后每次重新 connect 都是秒级。
 
-**三个测试者都完成步骤 3**，WHO'S WORKING 面板里应该看到**三个 🤖**。这时才开始下面的场景剧本。
+**浏览器 Modal** 会自动从 "Waiting for relay..." 变成 "**Connected**"，你名字边上出现 🤖，可以关 Modal 了。
+
+---
+
+### 故障排查
+
+| 症状 | 解法 |
+|---|---|
+| `bash: command not found: npm` | 装 Node.js LTS：<https://nodejs.org/> |
+| `bash: command not found: python3` | 装 Python 3.9+ |
+| 浏览器自动跳出 Claude 登录但你关了 | 重新跑一次那条命令就好 |
+| Token 已过期 / 401 / 403 | 浏览器关 Modal 再点 Connect Claude，拿一条新命令 |
+| 脚本跑完终端日志停住了 | **那就对了**！这是 relay 长驻进程，别关终端窗口 |
+
+**三个测试者都完成步骤 2**，项目页 WHO'S WORKING 面板里会看到**三个 🤖**。然后开始下面的场景剧本。
 
 ---
 
