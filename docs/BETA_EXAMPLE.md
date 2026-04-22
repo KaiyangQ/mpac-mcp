@@ -53,14 +53,14 @@ iex (irm 'https://mpac-web.duckdns.org/api/projects/N/bootstrap.ps1?token=xxx')
 通过 5 个剧本步骤，你会亲眼看到 MPAC 协议的**所有协调能力**在一张 import 图上
 协同工作：
 
-| Step | 在演示什么 | MPAC 分类 | 协议版本 |
-|---|---|---|---|
-| 0  | 全局感知 baseline | `list_active_intents` | `mpac-mcp 0.2.2` |
-| 1  | 同文件冲突 | `scope_overlap` | `mpac 0.2.0+` |
-| 2  | 跨文件依赖（文件级） | `dependency_breakage` | `mpac 0.2.1` |
-| 3  | **符号级精度 hero** | `dependency_breakage` 带 `dependency_detail` | `mpac 0.2.2` + `0.2.4` |
-| 4  | 解决冲突：Yield / Acknowledge / withdraw | 状态机 | `mpac 0.2.0+` |
-| 5  | Dotted-import 陷阱 | wildcard fallback | 边界教学 |
+| Step | 在演示什么 | 三人分工 | MPAC 分类 | 协议版本 |
+|---|---|---|---|---|
+| 0  | 全局感知 baseline | 三人并行 list | `list_active_intents` | `mpac-mcp 0.2.2` |
+| 1  | **3-way** 同文件冲突 + Yield/Ack 对照 | 3 个函数、3 人各一 | `scope_overlap` | `mpac 0.2.0+` |
+| 2  | 跨文件依赖，**两个**同时踩进 Alice 爆炸半径 | A=重构 db.py, B=api.py, C=cli.py | `dependency_breakage` 文件级 | `mpac 0.2.1` |
+| 3  | **符号级精度 hero**（Carol 安全） | A=db.save+symbols, B=api.py 精确冲突, C=search.py 无冲突 | `dependency_breakage` 带 `dependency_detail` | `mpac 0.2.2` + `0.2.4` |
+| 4  | 解决冲突：三人各走一条出口 | B=Yield, C=withdraw, A=withdraw | 状态机 | `mpac 0.2.0+` |
+| 5  | Dotted-import vs from-import **并排对照** | A=db.save+symbols, B=exporter.py(dotted→wildcard), C=cli.py(from-import→精确) | wildcard fallback vs 精确 | 边界教学 |
 
 ---
 
@@ -94,13 +94,15 @@ notes_app/
 
 ## 🧭 共享约定（所有 step 适用）
 
-- **三人**：约定叫 **Alice / Bob / Carol**。两人也能跑，场景说明会标注。
+- **三人**：约定叫 **Alice / Bob / Carol**。**三人剧本** —— 每一步都给三个
+  角色明确任务，不存在"观察者"。如果实在只有两人，把 Carol 的 prompt 轮流
+  分给 Alice / Bob 来演（比跳过场景更保留信息量）。
 - 每一步里 "**对 Claude 说**: ..." 之后给 Claude **5-15 秒**再看下一步。
   Claude 本地响应常常 5-15s，MPAC 协议侧延迟 <50ms，**人**是主要等待对象。
 - **每步开始前**建议每个人的 Claude 先 `list_active_intents()` —— 从第一秒
   建立 "别人在做什么" 的全局视图。
 - **每步结束前**冲突卡上点 **Acknowledge** 或 **Yield** 清掉，避免污染下一步。
-  step 4 会专门演示这个。
+  step 1 和 step 4 会专门演示这两个按钮的行为差异。
 
 ---
 
@@ -121,47 +123,67 @@ relay 连上的标志。没有的话先修 Connect Claude 再继续。
 
 ---
 
-## Step 1 — 同文件冲突（scope_overlap，~2 分钟）
+## Step 1 — 3-way 同文件冲突（scope_overlap + 演 Yield / Acknowledge，~3 分钟）
 
-**目的**：见证最糙的一类冲突 —— 两人声明要编辑**同一个文件**，哪怕是不同
-函数，MPAC 也报警。这是 0.2.0 就有的能力、git 和 IDE 也做得到；先建立
-baseline 再往上推。
+**目的**：见证最糙的一类冲突 —— 声明要编辑**同一个文件**，哪怕是不同函数，
+MPAC 也报警。同时让 **Yield** 和 **Acknowledge** 两个解决按钮在 3-way 冲突
+里各被用一次，教学含金量比"按说明点按钮"高。
 
 ### 脚本
 
 1. **Alice** 对 Claude 说：
    > "改 `notes_app/auth.py` 里的 `hash_password`，换成用 bcrypt 做哈希。"
 
-2. 等 10-15 秒看浏览器里 Alice 名字边上出现 intent 卡，然后 **Bob**：
+2. 等 Alice 的 intent 卡在浏览器出现（约 10-15 秒），**Bob**：
    > "改 `notes_app/auth.py` 的 `delete_session`，加一条"如果会话超过 30
    > 分钟没活动就自动清掉"的逻辑。"
 
+3. Bob 的 Claude 应该 `check_overlap()` 看到 Alice，然后要么主动 yield
+   要么硬冲 —— 这里让 Bob 告诉 Claude "**还是 announce 让我们看冲突卡**"，
+   确保 Bob 的 intent 落到服务端。
+
+4. Bob 的浏览器出现冲突卡（Alice ↔ Bob, `scope_overlap`）之后，**Carol**：
+   > "改 `notes_app/auth.py` 的 `verify_password`，加一个"同一 IP 15 分钟
+   > 内错 5 次就拒"的速率限制。**强制 announce**（即使 check_overlap 报
+   > 警，我们要看 3-way 冲突）。"
+
 ### 期望观察
 
-- Alice 的 Claude `check_overlap()` → 空 → `announce_intent([auth.py])`
-- Bob 的 Claude `check_overlap()` → **看到 Alice** → Bob 的 Claude 有
-  两种反应都可以：
-  - (a) 主动 Yield："Alice 在改这个文件，我等她先" —— 不 announce
-  - (b) 硬冲：announce 了自己的 auth.py → 触发冲突卡
-- 如果 (b)：三人浏览器都看到红色冲突卡，标签 `scope_overlap`
+- **三人各自浏览器**都看到 `scope_overlap` 冲突，两两配对：
+  - Alice ↔ Bob
+  - Alice ↔ Carol
+  - Bob ↔ Carol
+- Alice 的 intent 卡上会列出 **两个**对手；Bob 和 Carol 各有两个对手
+- 同一文件 + 不同函数 + 三人 → MPAC 依旧报警（scope_overlap 文件级）
+
+### 解决演示
+
+- **Bob 点 Yield**（冲突卡右下）：Bob 的 intent 被撤 → Alice-Bob 和
+  Bob-Carol 两对冲突都**消失**（因为 Bob 这边没 intent 了）。剩 Alice
+  和 Carol 还在对峙。
+
+- **Carol 点 Acknowledge**（冲突卡右下另一个按钮）：**两人都保留 intent**，
+  冲突卡变灰（不再红色警告），语义是"我们都知道会撞，但都继续干"。
 
 ### Debrief
 
-**关键点**：两人改的是**不同函数**（`hash_password` vs `delete_session`），
-但 MPAC 还是报警。这是**故意保守** —— 即使函数不同，同一个源文件被两个人
-同时改会导致 git merge 冲突、IDE 行级锁失效等一堆现实问题。MPAC 0.2.2+
-的**符号级精度只在"跨文件依赖"里生效**，同文件 overlap 永远文件级。
+- 同文件 = **N^2 对**两两冲突，UI 每对一张卡
+- MPAC 0.2.2+ 的**符号级精度只在跨文件依赖里生效**，同文件 overlap 永远
+  文件级 —— 因为即使函数不同，git merge / IDE 行级锁 / 人工 review 都会
+  撞上
+- **Yield = "让"** (撤自己 intent) vs **Acknowledge = "知道了、都干"**
+  (保留双方 intent、静音卡片)
 
-清场：让 Bob 点 **Yield** 撤掉自己的 intent，冲突卡消失，auth.py 只剩
-Alice 在改。然后让 Alice 也点 **Yield**（或让 Claude `withdraw_intent()`），
-状态归零进入 step 2。
+清场：让 Alice 告诉 Claude "我改完了，撤 intent" → Claude 调
+`withdraw_intent()`；Carol 同操作。状态归零进入 step 2。
 
 ---
 
-## Step 2 — 跨文件依赖冲突（dependency_breakage 文件级，~3 分钟）
+## Step 2 — 跨文件依赖冲突，Alice 爆炸半径内**两个**同时踩进（~3 分钟）
 
 **目的**：展示 MPAC 的**招牌能力** —— 能读 import graph，把"文件路径不重叠
 但有 import 关系"的冲突抓出来。这是 IDE、git、editor lock **都做不到**的。
+顺带演示 Alice 的一条 intent 可以**同时**与多个下游 importer 冲突。
 
 ### 脚本
 
@@ -171,33 +193,45 @@ Alice 在改。然后让 Alice 也点 **Yield**（或让 Claude `withdraw_intent
 
    ⚠ 故意不声明 symbols —— 演示"保守退回文件级"的文案。
 
-2. 等 Alice 的 intent 卡在浏览器出现，**Bob**：
+2. Alice 的 intent 卡出现后（展开看 payload 里 `extensions.impact` 应该
+   列了 `search.py / api.py / cli.py / exporter.py` 四个），**Bob**：
    > "在 `notes_app/api.py` 里给 `create_note` 加 try/except 错误处理，
    > 写失败时返回友好的错误。"
+
+3. 等 Bob 冲突卡出现后，**Carol**：
+   > "在 `notes_app/cli.py` 的 `bulk_import` 里加一个 `--dry-run` 开关，
+   > 开了就只打印不写入。"
 
 ### 期望观察
 
 - Alice announce `[db.py]` → 服务端**自动**算出 impact
   `[search.py, api.py, cli.py, exporter.py]`（scanner 爬 import graph）
-- Bob announce `[api.py]` → **冲突触发**！
-- Bob 的浏览器看到 `⚠ Dependency` 冲突卡（不再是 `scope_overlap`）：
+- Bob announce `[api.py]` → 冲突触发 #1（`Dependency`，Alice ↔ Bob）
+- Carol announce `[cli.py]` → 冲突触发 #2（`Dependency`，Alice ↔ Carol）
+- **Alice 的浏览器**：她一张 intent 卡上**列出两个对手** —— Bob（api.py）
+  和 Carol（cli.py）
+- **Bob / Carol 的浏览器**：各自只看到一条冲突卡，对手都是 Alice
+- 两张卡的文案都是笼统版（没有具体符号名）：
   ```
   ⚠ Dependency                                  [medium]
-  Alice ↔ Bob
+  Alice ↔ Bob  (or Carol)
 
   Alice is editing a file imported by — affects Bob's `notes_app/api.py`
   ```
-  文案退回"a file imported by"是因为 Alice 没声明 symbols —— 服务端不知
-  道具体哪个符号在动，保守告诉 Bob "有东西 Alice 在改、你这边是 importer"。
+  文案退回"a file imported by"是因为 Alice 没声明 symbols —— step 3 会对比。
 
 ### Debrief
 
-**关键点**：IDE 不会告诉你 "别人改了 db.py、你改的 api.py 会受影响" ——
-因为 IDE 没把文件 import 依赖当作协作信号。MPAC 明确建模了这一点。
+- **IDE 不会告诉你 "别人改了 db.py、你改的 api.py 会受影响"** —— 因为
+  IDE 没把文件 import 依赖当作协作信号。MPAC 明确建模了这一点
+- Alice 一条 intent 的**爆炸半径**（blast radius）= scanner 爬出的
+  importer 集合。Bob 和 Carol 各自落在半径里，两条冲突同时成立 ——
+  **不依赖 Bob 和 Carol 之间的关系**
+- 没声明 symbols 的"保守"代价：两张卡都只说"a file imported by"，不能
+  告诉 Bob / Carol 具体会撞哪个符号。step 3 就是来解这个
 
-清场：都点 **Acknowledge**（这次两人都保留 intent，仅表示"我知道了"），
-或者让 Bob / Alice 点 Yield 撤一个也行。为了 step 3 的洁净状态，建议**都
-Yield**。
+清场：三人都 Yield 或 withdraw —— 让 Alice、Bob、Carol 的 intent 都退，
+状态归零进 step 3。
 
 ---
 
@@ -284,88 +318,125 @@ Yield**。
 
 ---
 
-## Step 4 — 冲突解决：Yield / Acknowledge / withdraw（~2 分钟）
+## Step 4 — 冲突解决：Yield / Acknowledge / withdraw（三人各走一条出口，~2 分钟）
 
-**目的**：让内测者**亲手**用一次状态机的三个出口，知道什么时候用哪个。
+**目的**：让三个人**各自亲手**走一条状态机出口，下次遇到类似局面知道选哪个。
+
+前置：从 step 3 的"Alice-Bob 冲突 + Carol 无事"状态继续（不要 step 4 前清场）。
 
 ### 脚本
 
-从 step 3 的冲突状态继续：
+1. **Bob 点 Yield**（冲突卡右下"Yield"按钮）
+   - Bob 的 intent 被撤，Bob 的 Claude 收到 `intent_withdrawn` 事件
+   - Alice-Bob 冲突卡**从三人浏览器同时消失**
+   - Alice 的 intent 卡变成"单人"（无对手）
+   - 语义：**"让"** —— 我不做这个了，对方继续
 
-1. **Bob 点 Yield**（冲突卡右下）：Bob 的 intent 被撤掉，Bob 的 Claude
-   收到 `intent_withdrawn` 事件。Bob 和 Carol 的浏览器看到冲突卡**消失**，
-   Alice 的 intent 卡变成"单人"。
-
-2. **Alice** 对 Claude 说：
+2. **Carol 对 Claude 说**（她本来没冲突，但任务也做完了）：
    > "我改完了，把我的 intent 撤掉。"
+   - Carol 的 Claude 应该调 `withdraw_intent(intent_id)` MCP tool
+   - Carol 的 intent 卡消失
+   - 语义：**完成式的 withdraw** —— 任务结束、没冲突也主动退
 
-   Claude 应该调 `withdraw_intent(intent_id)` MCP tool。Alice 的 intent
-   卡从浏览器消失。
+3. **Alice 对 Claude 说**：
+   > "我也改完了，撤 intent。"
+   - Alice 的 Claude 调 `withdraw_intent()`
+   - Alice 的 intent 卡消失
+   - 所有 intent 卡清空，项目状态回到空白
 
-3. *(二选一)* 如果想试试 **Acknowledge**：step 3 之前重来一次，Bob 这次
-   不 Yield 而是点 **Acknowledge**。Acknowledge 的语义是："我知道撞了，
-   但我们都继续干活"——双方 intent 都留着，冲突卡变灰（不再是红色警告）。
+### 可选：回放 Acknowledge
+
+如果 step 1 里 Carol 点 **Acknowledge** 那次没看明白行为，可以重来一遍
+step 3 然后让 Bob 这次不点 Yield 而点 **Acknowledge** —— 冲突卡**不消失**，
+但从红色警告变灰色备忘，两边 intent 都保留。语义是"我们都知道会撞、但都
+继续干"。
 
 ### Debrief
 
-| 动作 | 语义 | 何时用 |
-|---|---|---|
-| **Yield** | 撤掉自己的 intent | "算了我晚点做，让对方先" |
-| **Acknowledge** | 保留双方 intent、静音冲突 | "我们讨论过了，都知道风险，继续" |
-| **withdraw_intent** (MCP tool) | 完成/放弃 | Claude 或 agent 自己收尾 |
+| 出口 | 谁触发 | UI 入口 / tool | 语义 |
+|---|---|---|---|
+| **Yield** | 自己 | 冲突卡上的 Yield 按钮 | "我让，别人先" |
+| **Acknowledge** | 自己 | 冲突卡上的 Acknowledge 按钮 | "双方都知、都继续" |
+| **withdraw_intent** | 自己 | MCP tool（Claude 调）或 UI cancel | "任务完成/放弃、无关冲突" |
 
-这三个出口共同覆盖了协议 §15 里 intent 生命周期的全部退出点。
+三个出口覆盖协议 §15 里 intent 生命周期的全部退出点。日常里最常用的
+是 **withdraw**（完成）和 **Yield**（主动让）；**Acknowledge** 在"我知道
+有风险但值得承担"的场景用得更多（比如两人在同一文件的不同部分紧急 hotfix，
+都必须继续）。
 
 ---
 
-## Step 5 —（可选）Dotted-import gotcha（反面教材，~2 分钟）
+## Step 5 — Dotted-import 对照 vs from-import 精度（两张并排看，~3 分钟）
 
-**目的**：亲眼看到"**一行写法差别**导致 MPAC 精度完全失效"的例子。这是
-日后内测者在自己真实项目里最可能踩的一个坑。
+**目的**：**同一个 Alice intent，Bob 和 Carol 两种 import 写法 → 两张完
+全不同质量的冲突卡**。这个对照是日后内测者在自己项目里最值得带走的一条
+经验 —— "import 的写法会直接决定 MPAC 给你的协调精度"。
 
 ### 脚本
 
-Alice 重新 announce 和 step 3 一样的事（`db.save` + symbols）。
+前置：step 4 之后所有 intent 已清空。
 
-**Dave**（或 Bob 二次上场）对 Claude 说：
+1. **Alice 重新 announce**（完全复制 step 3）：
+   > "给 `notes_app/db.py` 里的 **`save`** 函数加一个 idempotency key 参
+   > 数 —— 写之前如果已经存在 key 就跳过。**只改 save**，不要碰 load /
+   > delete / list_all。调用 `announce_intent` 时把 `symbols` 参数设成
+   > `["notes_app.db.save"]`。"
 
-> "改 `notes_app/exporter.py` 的 `export_all`，把输出从 TSV 改成 JSON。"
+2. 等 Alice 的 intent 卡确认 `extensions.affects_symbols` 带值，**Bob**：
+   > "改 `notes_app/exporter.py` 里的 `export_all`，把输出从 TSV 换成
+   > JSON。"
 
-exporter.py 里写的是 `import notes_app.db` + `notes_app.db.list_all(...)`
-—— dotted-import。
+   （exporter.py 里是 `import notes_app.db` + `notes_app.db.list_all()`
+   —— **dotted-import**。）
 
-### 期望观察
+3. 等 Bob 冲突卡出现，**Carol**：
+   > "改 `notes_app/cli.py` 里的 `bulk_import`，加一个"如果行数超过 1000
+   > 就分批"的逻辑。"
 
-Dave 看到的冲突卡：
+   （cli.py 里是 `from notes_app.db import save, load, delete` ——
+   **multi-symbol from-import**。）
 
+### 期望观察 —— 两张卡并排对比
+
+**Bob 看到**（dotted import，**wildcard 退回**）：
 ```
 ⚠ Dependency                                  [medium]
-Alice ↔ Dave
+Alice ↔ Bob
 
-Alice is editing a file imported by — affects Dave's `notes_app/exporter.py`
+Alice is editing a file imported by — affects Bob's `notes_app/exporter.py`
 ```
+文案**笼统** —— 尽管 Alice 精确声明了只改 save，且 exporter.py 其实只
+用 `list_all`（跟 save 毫不相干），Bob **还是被拦了**、而且看不到具体符号。
 
-**注意**：尽管 Alice 精确声明了只改 `save`，且 exporter.py 其实**只调用
-`list_all`**（和 save 毫无关系），Dave **还是被拦了**。而且文案也退回到
-了"a file imported by"这种笼统说法，**不像 step 3 Bob 那样看到具体符号**。
+**Carol 看到**（multi-symbol from-import，**精确**）：
+```
+⚠ Dependency                                  [medium]
+Alice ↔ Carol
+
+Alice is changing `notes_app.db.save` — affects Carol's `notes_app/cli.py`
+```
+文案**精确到符号**。因为 cli.py 里 `from notes_app.db import save, load,
+delete` scanner 能直接看到 save 在其中，冲突卡告诉 Carol 具体撞在哪。
 
 ### Debrief
 
-**根因**：`import notes_app.db` 这种 dotted 写法里，scanner 看到的是
-`notes_app` 被 bind 成了一个名字，然后 `.db.list_all` 是连着三层的属性
-访问。区分 "`notes_app.db` 是 submodule 还是 `notes_app` 这个 package 对
-象的属性" 需要解析整个 module 图 —— scanner 拒绝做这件事（性能 + 风险）
-→ 直接 wildcard。
+| Import 写法 | 例子 | MPAC 精度 | 日常推荐度 |
+|---|---|---|---|
+| **`from pkg.mod import sym[, sym...]`** | `from notes_app.db import save, load` | ★★★★★ 精确到具体 symbol | **最推荐** |
+| **`from pkg import mod` + `mod.attr()`** | `from notes_app import db; db.save()` | ★★★★☆ 精确（0.2.4+） | 推荐 |
+| **`import pkg.mod` + `pkg.mod.attr()`** | `import notes_app.db; notes_app.db.list_all()` | ★ wildcard | **不推荐**（step 5 Bob 亲历） |
+| **`import pkg.mod as m` + `m.attr()`** | `import notes_app.db as db; db.save()` | ★ wildcard（带 dot 的 import-as 没做 attr-chain） | **不推荐** |
 
-**推荐做法**（三种都比 dotted 好）：
-- `from notes_app import db` + `db.list_all()` ← 0.2.4 支持，精确到符号
-- `from notes_app.db import list_all` + `list_all()` ← 0.2.1 就支持，最
-  精确
-- `import notes_app.db as db` + `db.list_all()` ← 目前仍是 wildcard（带
-  dot 的 import-as 没做 attr-chain）**别用这条**
+**根因**：`import notes_app.db` 和 `import notes_app.db as db` 里，scanner
+看到的是带点的 import，要在"submodule 访问 vs package 对象属性访问"之间
+区分需要解析整个 module 图 —— scanner 拒绝做（性能 + 风险）→ 直接
+wildcard。
 
-**在 Modal / 团队规范里可以写一条**："import 时优先用 `from pkg import
-mod` 形式，避免 dotted import"—— 这样 MPAC 能给你最好的精度。
+**实操建议**：团队规范里写一条："import 时优先用 `from pkg import mod`
+或 `from pkg.mod import sym`，避免 dotted `import pkg.mod`。" 内测者把这
+条带回自己项目就能把 MPAC 的精度喂满。
+
+清场：三人 withdraw 或 Yield，状态归零。playbook 结束。
 
 ---
 
