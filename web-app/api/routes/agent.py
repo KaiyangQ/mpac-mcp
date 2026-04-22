@@ -518,8 +518,33 @@ say() {{ printf "\033[36m[mpac]\033[0m %s\n" "$*"; }}
 die() {{ printf "\033[31m[mpac]\033[0m ✗ %s\n" "$*" >&2; exit 1; }}
 
 # --- Hard prerequisites -------------------------------------------------
-command -v python3 >/dev/null 2>&1 \
-    || die "python3 not found. Install Python 3.9+: https://www.python.org/"
+# mpac-mcp's transitive dep ``mcp`` requires Python >= 3.10, so the macOS
+# Command Line Tools bundle (which ships python3 == 3.9.6) is NOT enough.
+# Scan for explicitly versioned python3.10+ first (how Homebrew + most
+# Linux package managers name them), then fall back to plain ``python3``
+# if it happens to be new enough. If nothing qualifies, give the user a
+# concrete install hint instead of drowning them in pip error output.
+PYTHON=""
+for cand in python3.13 python3.12 python3.11 python3.10; do
+    if command -v "$cand" >/dev/null 2>&1; then
+        PYTHON="$cand"
+        break
+    fi
+done
+if [ -z "$PYTHON" ] && command -v python3 >/dev/null 2>&1; then
+    if python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; then
+        PYTHON="python3"
+    fi
+fi
+if [ -z "$PYTHON" ]; then
+    die "No Python >= 3.10 found. mpac-mcp requires it.
+       macOS:    brew install python@3.12
+       Ubuntu:   sudo apt install python3.12
+       Fedora:   sudo dnf install python3.12
+       Or:       https://www.python.org/downloads/"
+fi
+say "Using $($PYTHON --version 2>&1) at $(command -v $PYTHON)"
+
 command -v npm >/dev/null 2>&1 \
     || die "npm not found. Install Node.js LTS: https://nodejs.org/"
 
@@ -544,31 +569,49 @@ if [ ! -d "$HOME/.claude" ]; then
 fi
 
 # --- mpac-mcp -----------------------------------------------------------
+# Some Python installs (macOS CLT on older systems, some Linux distros)
+# ship pip < 23 which doesn't know ``--break-system-packages``. Upgrade
+# pip first if it's that old. Failures here are non-fatal; we'll notice
+# again during the real install attempt and surface a useful message.
+PIP_MAJOR=$($PYTHON -c "import pip; print(pip.__version__.split('.')[0])" 2>/dev/null || echo 0)
+if [ "$PIP_MAJOR" -lt 23 ] 2>/dev/null; then
+    say "Upgrading pip (current < 23 doesn't know --break-system-packages)..."
+    $PYTHON -m pip install -q -U pip 2>/dev/null \
+        || $PYTHON -m pip install -q -U --user pip 2>/dev/null \
+        || true
+fi
+
 need_install=1
-if python3 -c "import importlib.metadata as m; import sys; sys.exit(0 if m.version('mpac-mcp') >= '$MIN_MPAC_MCP' else 1)" 2>/dev/null; then
+if $PYTHON -c "import importlib.metadata as m; import sys; sys.exit(0 if m.version('mpac-mcp') >= '$MIN_MPAC_MCP' else 1)" 2>/dev/null; then
     need_install=0
 fi
 
 if [ "$need_install" -eq 1 ]; then
-    say "Installing mpac-mcp >= $MIN_MPAC_MCP..."
+    say "Installing mpac-mcp >= $MIN_MPAC_MCP (via $PYTHON)..."
     # Order: plain → --user → --break-system-packages. Covers venv/conda
     # users (plain works), Linux system Python (plain or --user), and
     # macOS Homebrew/system Python 3.12+ (PEP 668 externally-managed).
-    if python3 -m pip install -q -U "mpac-mcp>=$MIN_MPAC_MCP" 2>/dev/null; then
+    if $PYTHON -m pip install -q -U "mpac-mcp>=$MIN_MPAC_MCP" 2>/dev/null; then
         :
-    elif python3 -m pip install --user -q -U "mpac-mcp>=$MIN_MPAC_MCP" 2>/dev/null; then
-        USER_BIN="$(python3 -m site --user-base)/bin"
+    elif $PYTHON -m pip install --user -q -U "mpac-mcp>=$MIN_MPAC_MCP" 2>/dev/null; then
+        USER_BIN="$($PYTHON -m site --user-base)/bin"
         case ":$PATH:" in
             *":$USER_BIN:"*) ;;
             *) export PATH="$USER_BIN:$PATH"
                say "Added $USER_BIN to PATH for this session." ;;
         esac
-    elif python3 -m pip install --break-system-packages -q -U "mpac-mcp>=$MIN_MPAC_MCP"; then
+    elif $PYTHON -m pip install --break-system-packages -q -U "mpac-mcp>=$MIN_MPAC_MCP"; then
         :
     else
         die "pip install failed. Try: pipx install --force mpac-mcp"
     fi
 fi
+
+# After install, the relay binary might be in the Python interpreter's
+# bin/ even if it's a Homebrew Python not on PATH. Add both the
+# interpreter's bin and the user-site bin to PATH so we find it.
+PY_BIN="$(dirname "$(command -v $PYTHON)")"
+case ":$PATH:" in *":$PY_BIN:"*) ;; *) export PATH="$PY_BIN:$PATH" ;; esac
 
 command -v mpac-mcp-relay >/dev/null 2>&1 \
     || die "mpac-mcp-relay not on PATH after install. Check pip output above."
@@ -619,10 +662,30 @@ function Say($m)  {{ Write-Host "[mpac] $m" -ForegroundColor Cyan }}
 function Die($m)  {{ Write-Host "[mpac] X $m" -ForegroundColor Red; exit 1 }}
 
 # --- Hard prerequisites -------------------------------------------------
+# mpac-mcp needs Python >= 3.10 (transitive dep on ``mcp``). Prefer an
+# explicitly versioned binary, then fall back to ``python`` / ``python3``
+# if they're new enough. On Windows the Python installer typically only
+# lays down ``python.exe`` (no python3.12.exe), so the fallback is the
+# common path; explicit versions are mostly macOS-via-Bash-on-Windows
+# or WSL setups.
 $python = $null
-if (Get-Command python -ErrorAction SilentlyContinue)  {{ $python = "python"  }}
-elseif (Get-Command python3 -ErrorAction SilentlyContinue) {{ $python = "python3" }}
-else {{ Die "python not found. Install Python 3.9+: https://www.python.org/" }}
+foreach ($cand in @("python3.13","python3.12","python3.11","python3.10")) {{
+    if (Get-Command $cand -ErrorAction SilentlyContinue) {{ $python = $cand; break }}
+}}
+if (-not $python) {{
+    foreach ($cmd in @("python","python3")) {{
+        if (Get-Command $cmd -ErrorAction SilentlyContinue) {{
+            & $cmd -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>$null
+            if ($LASTEXITCODE -eq 0) {{ $python = $cmd; break }}
+        }}
+    }}
+}}
+if (-not $python) {{
+    Die "No Python >= 3.10 found. mpac-mcp requires it.
+     Windows:  winget install Python.Python.3.12
+     Or:       https://www.python.org/downloads/"
+}}
+Say "Using $(& $python --version) ($python)"
 
 if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {{
     Die "npm not found. Install Node.js LTS: https://nodejs.org/"
@@ -650,6 +713,16 @@ if (-not (Test-Path $claudeDir)) {{
 }}
 
 # --- mpac-mcp -----------------------------------------------------------
+# Bump ancient pip first so --break-system-packages works on the fallback.
+try {{
+    $pipMajor = [int](& $python -c "import pip; print(pip.__version__.split('.')[0])" 2>$null)
+    if ($pipMajor -lt 23) {{
+        Say "Upgrading pip (current < 23 doesn't know --break-system-packages)..."
+        & $python -m pip install -q -U pip 2>$null
+        if ($LASTEXITCODE -ne 0) {{ & $python -m pip install -q -U --user pip 2>$null }}
+    }}
+}} catch {{ }}
+
 $needInstall = $true
 try {{
     $ver = & $python -c "import importlib.metadata as m; print(m.version('mpac-mcp'))" 2>$null
@@ -657,7 +730,7 @@ try {{
 }} catch {{ }}
 
 if ($needInstall) {{
-    Say "Installing mpac-mcp >= $MinMpacMcp..."
+    Say "Installing mpac-mcp >= $MinMpacMcp (via $python)..."
     & $python -m pip install -q -U "mpac-mcp>=$MinMpacMcp" 2>$null
     if ($LASTEXITCODE -ne 0) {{
         & $python -m pip install --user -q -U "mpac-mcp>=$MinMpacMcp" 2>$null
