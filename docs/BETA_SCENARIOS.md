@@ -65,10 +65,12 @@ iex (irm 'https://mpac-web.duckdns.org/api/projects/N/bootstrap.ps1?token=xxx')
 | 症状 | 解法 |
 |---|---|
 | `bash: command not found: npm` | 装 Node.js LTS：<https://nodejs.org/> |
-| `bash: command not found: python3` | 装 Python 3.9+ |
+| `No Python >= 3.10 found` | `brew install python@3.12`（macOS）／ `apt install python3.12`（Ubuntu 22+）／ `winget install Python.Python.3.12`（Windows） |
 | 浏览器自动跳出 Claude 登录但你关了 | 重新跑一次那条命令就好 |
 | Token 已过期 / 401 / 403 | 浏览器关 Modal 再点 Connect Claude，拿一条新命令 |
 | 脚本跑完终端日志停住了 | **那就对了**！这是 relay 长驻进程，别关终端窗口 |
+
+> **注意 macOS 系统 Python 不够用**：`/usr/bin/python3` 是 Command Line Tools 自带的 3.9.6，mpac-mcp 依赖 `mcp` 要求 ≥ 3.10。脚本会自动扫描 `python3.13 → 3.10` 然后才回退 `python3`；brew / pyenv / python.org 随便装一个 3.10+ 就能自动识别。
 
 **三个测试者都完成步骤 2**，项目页 WHO'S WORKING 面板里会看到**三个 🤖**。然后开始下面的场景剧本。
 
@@ -79,6 +81,8 @@ iex (irm 'https://mpac-web.duckdns.org/api/projects/N/bootstrap.ps1?token=xxx')
 本次内测主要验证 MPAC **协调能力**，不验证"能不能在 web 里跑代码"（那个功能我们没做）。四个场景从最简单的文件级冲突，一步步展到最新的符号级精度 + 前端具体冲突显示。
 
 **测试者每人要做的**：用 Claude Code 本地连进来（上面三步）→ 照剧本对 Claude 说话 → 肉眼在浏览器观察 MPAC 的反应是否符合预期。
+
+> **小 tip**：Files 面板现在支持**右键新建 / 删除文件**（VSCode 风格）。右键空白 = "New file"；右键文件夹 = "New file in pkg/"（自动预填路径）；右键文件 = New file + Delete。顶栏的 `+` 按钮还在。
 
 ---
 
