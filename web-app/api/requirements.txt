@@ -10,7 +10,8 @@ python-multipart>=0.0.9
 # Per-user BYOK Anthropic key encryption (Fernet)
 cryptography>=42.0
 # MPAC protocol core + MCP bridge (both on PyPI as of 2026-04-17)
-# mpac 0.2.3 adds attribute-chain resolution (`import X; X.foo()` no longer
-# wildcards) and dependency_detail in CONFLICT_REPORT for UI rendering.
-mpac>=0.2.3
+# mpac 0.2.4 extends attribute-chain resolution to `from pkg import mod`
+# + `mod.attr()` — the most common Python idiom for submodule access.
+# Without this, internal-beta scenario 4 would never flag the importer.
+mpac>=0.2.4
 mpac-mcp>=0.1.0
