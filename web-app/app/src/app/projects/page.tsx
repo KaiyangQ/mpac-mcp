@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { greenBtnClass } from "@/components/auth-shell";
+import { DestructiveConfirmModal } from "@/components/destructive-confirm-modal";
 
 export default function ProjectsPage() {
   const { user, isLoading: authLoading } = useRequireAuth("/projects");
@@ -24,6 +25,14 @@ export default function ProjectsPage() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+
+  // In-page destructive confirm — replaces window.confirm, which Chrome
+  // suppresses once a user opts out of this page's dialogs.
+  const [pendingAction, setPendingAction] = useState<
+    | { kind: "delete" | "leave"; project: Project }
+    | null
+  >(null);
+  const [actionBusy, setActionBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -42,52 +51,33 @@ export default function ProjectsPage() {
     if (user) refresh();
   }, [user, refresh]);
 
-  async function onDelete(p: Project) {
-    const ok = window.confirm(
-      `Delete project "${p.name}"?\n\n` +
-      `This permanently removes all files, invites, and tokens.\n` +
-      `Every member (including Claude agents) loses access immediately.\n\n` +
-      `This can't be undone.`
-    );
-    if (!ok) return;
+  async function runPendingAction() {
+    if (!pendingAction) return;
+    const { kind, project } = pendingAction;
+    setActionBusy(true);
     try {
-      await api.deleteProject(p.id);
-      // Optimistic local removal so the UI updates before the refresh
+      if (kind === "delete") {
+        await api.deleteProject(project.id);
+      } else {
+        await api.leaveProject(project.id);
+      }
+      // Optimistic local removal so the list updates before the refresh
       // round-trip completes — feels snappier and avoids a flash of the
       // now-gone project while the network call resolves.
-      setProjects((prev) => prev.filter((x) => x.id !== p.id));
+      setProjects((prev) => prev.filter((x) => x.id !== project.id));
+      setPendingAction(null);
       refresh();
     } catch (e) {
-      alert(
+      setListError(
         e instanceof ApiError
-          ? `Delete failed: ${e.message}`
-          : "Delete failed — see console."
+          ? `${kind === "delete" ? "Delete" : "Leave"} failed: ${e.message}`
+          : `${kind === "delete" ? "Delete" : "Leave"} failed — see console.`
       );
+      setPendingAction(null);
       // eslint-disable-next-line no-console
       console.error(e);
-    }
-  }
-
-  async function onLeave(p: Project) {
-    const ok = window.confirm(
-      `Leave "${p.name}"?\n\n` +
-      `Your browser session and any Claude relay you have running will ` +
-      `lose access. The project stays put for the owner and other members ` +
-      `— they can re-invite you later if needed.`
-    );
-    if (!ok) return;
-    try {
-      await api.leaveProject(p.id);
-      setProjects((prev) => prev.filter((x) => x.id !== p.id));
-      refresh();
-    } catch (e) {
-      alert(
-        e instanceof ApiError
-          ? `Leave failed: ${e.message}`
-          : "Leave failed — see console."
-      );
-      // eslint-disable-next-line no-console
-      console.error(e);
+    } finally {
+      setActionBusy(false);
     }
   }
 
@@ -246,7 +236,9 @@ export default function ProjectsPage() {
                       {isOwner ? (
                         <button
                           type="button"
-                          onClick={() => onDelete(p)}
+                          onClick={() =>
+                            setPendingAction({ kind: "delete", project: p })
+                          }
                           title="Delete this project for everyone"
                           className="p-2 rounded-md text-[var(--text-secondary)] hover:text-[var(--red)] hover:bg-[var(--red)]/10 transition-colors opacity-60 group-hover:opacity-100"
                           aria-label={`Delete ${p.name}`}
@@ -256,7 +248,9 @@ export default function ProjectsPage() {
                       ) : (
                         <button
                           type="button"
-                          onClick={() => onLeave(p)}
+                          onClick={() =>
+                            setPendingAction({ kind: "leave", project: p })
+                          }
                           title="Leave this project"
                           className="p-2 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors opacity-60 group-hover:opacity-100"
                           aria-label={`Leave ${p.name}`}
@@ -272,6 +266,33 @@ export default function ProjectsPage() {
           )}
         </div>
       </main>
+
+      <DestructiveConfirmModal
+        open={pendingAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingAction(null);
+        }}
+        title={
+          pendingAction?.kind === "delete"
+            ? `Delete project "${pendingAction.project.name}"?`
+            : pendingAction?.kind === "leave"
+              ? `Leave "${pendingAction.project.name}"?`
+              : ""
+        }
+        body={
+          pendingAction?.kind === "delete"
+            ? "This permanently removes all files, invites, and tokens.\n\n" +
+              "Every member (including Claude agents) loses access immediately.\n\n" +
+              "This can't be undone."
+            : pendingAction?.kind === "leave"
+              ? "Your browser session and any Claude relay you have running will lose access.\n\n" +
+                "The project stays put for the owner and other members — they can re-invite you later if needed."
+              : ""
+        }
+        confirmLabel={pendingAction?.kind === "delete" ? "Delete" : "Leave"}
+        onConfirm={runPendingAction}
+        busy={actionBusy}
+      />
     </div>
   );
 }

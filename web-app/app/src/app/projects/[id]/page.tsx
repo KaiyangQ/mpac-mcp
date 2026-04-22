@@ -23,6 +23,7 @@ import { useRequireAuth } from "@/lib/redirect-hooks";
 import { InviteModal } from "@/components/invite-modal";
 import { NewFileModal } from "@/components/new-file-modal";
 import { ConnectClaudeModal } from "@/components/connect-claude-modal";
+import { DestructiveConfirmModal } from "@/components/destructive-confirm-modal";
 import { CommandPalette } from "@/components/command-palette";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -792,6 +793,10 @@ export default function WorkspacePage({
   const [showPalette, setShowPalette] = useState(false);
   const [showNewFile, setShowNewFile] = useState(false);
   const [showConnectClaude, setShowConnectClaude] = useState(false);
+  // In-page destructive confirm (replaces window.confirm — see
+  // destructive-confirm-modal.tsx for why a real modal over native dialog).
+  const [pendingDanger, setPendingDanger] = useState<"delete" | "leave" | null>(null);
+  const [dangerBusy, setDangerBusy] = useState(false);
   const [agentConnected, setAgentConnected] = useState(false);
   const [activePath, setActivePath] = useState<string | null>(null);
 
@@ -1096,31 +1101,7 @@ export default function WorkspacePage({
             <Button
               size="sm"
               variant="ghost"
-              onClick={async () => {
-                // Keep the confirm copy **specific**: users mentally tune
-                // out "Are you sure?" dialogs; naming the consequence
-                // (everyone loses access, files deleted) is what actually
-                // saves a wrong click.
-                const ok = window.confirm(
-                  `Delete project "${project.name}"?\n\n` +
-                  `This permanently removes all files, invites, and tokens.\n` +
-                  `Every member (including Claude agents) loses access immediately.\n\n` +
-                  `This can't be undone.`
-                );
-                if (!ok) return;
-                try {
-                  await api.deleteProject(project.id);
-                  router.push("/projects");
-                } catch (e) {
-                  alert(
-                    e instanceof ApiError
-                      ? `Delete failed: ${e.message}`
-                      : "Delete failed — see console."
-                  );
-                  // eslint-disable-next-line no-console
-                  console.error(e);
-                }
-              }}
+              onClick={() => setPendingDanger("delete")}
               title="Delete this project for everyone (owner only)"
               className="gap-1.5 text-[var(--red)] hover:bg-[var(--red)]/15 border border-transparent hover:border-[var(--red)]/40"
             >
@@ -1131,27 +1112,7 @@ export default function WorkspacePage({
             <Button
               size="sm"
               variant="ghost"
-              onClick={async () => {
-                const ok = window.confirm(
-                  `Leave "${project.name}"?\n\n` +
-                  `Your browser session and any Claude relay you have running ` +
-                  `will lose access. The project stays put for the owner and ` +
-                  `other members — they can re-invite you later if needed.`
-                );
-                if (!ok) return;
-                try {
-                  await api.leaveProject(project.id);
-                  router.push("/projects");
-                } catch (e) {
-                  alert(
-                    e instanceof ApiError
-                      ? `Leave failed: ${e.message}`
-                      : "Leave failed — see console."
-                  );
-                  // eslint-disable-next-line no-console
-                  console.error(e);
-                }
-              }}
+              onClick={() => setPendingDanger("leave")}
               title="Remove yourself from this project"
               className="gap-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-transparent hover:border-[var(--border)]"
             >
@@ -1341,6 +1302,56 @@ export default function WorkspacePage({
         projectId={projectId}
         open={showConnectClaude}
         onOpenChange={setShowConnectClaude}
+      />
+
+      <DestructiveConfirmModal
+        open={pendingDanger !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDanger(null);
+        }}
+        title={
+          pendingDanger === "delete"
+            ? `Delete project "${project.name}"?`
+            : pendingDanger === "leave"
+              ? `Leave "${project.name}"?`
+              : ""
+        }
+        body={
+          pendingDanger === "delete"
+            ? "This permanently removes all files, invites, and tokens.\n\n" +
+              "Every member (including Claude agents) loses access immediately.\n\n" +
+              "This can't be undone."
+            : pendingDanger === "leave"
+              ? "Your browser session and any Claude relay you have running will lose access.\n\n" +
+                "The project stays put for the owner and other members — they can re-invite you later if needed."
+              : ""
+        }
+        confirmLabel={pendingDanger === "delete" ? "Delete" : "Leave"}
+        busy={dangerBusy}
+        onConfirm={async () => {
+          if (!pendingDanger) return;
+          setDangerBusy(true);
+          try {
+            if (pendingDanger === "delete") {
+              await api.deleteProject(project.id);
+            } else {
+              await api.leaveProject(project.id);
+            }
+            // Regardless of action, user no longer has access → dashboard.
+            router.push("/projects");
+          } catch (e) {
+            setLoadError(
+              e instanceof ApiError
+                ? `${pendingDanger === "delete" ? "Delete" : "Leave"} failed: ${e.message}`
+                : `${pendingDanger === "delete" ? "Delete" : "Leave"} failed — see console.`
+            );
+            setPendingDanger(null);
+            // eslint-disable-next-line no-console
+            console.error(e);
+          } finally {
+            setDangerBusy(false);
+          }
+        }}
       />
 
       <CommandPalette
