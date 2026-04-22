@@ -165,7 +165,11 @@ def check_overlap(files: list[str]) -> dict:
 
 
 @mcp.tool()
-def announce_intent(files: list[str], objective: str = "editing") -> dict:
+def announce_intent(
+    files: list[str],
+    objective: str = "editing",
+    symbols: list[str] | None = None,
+) -> dict:
     """Announce to the whole session that you're going to modify these files.
     Every browser will see your intent appear in the 'Who's working' panel
     with the file list. Returns {intent_id, accepted}. REMEMBER intent_id —
@@ -173,13 +177,26 @@ def announce_intent(files: list[str], objective: str = "editing") -> dict:
 
     Call check_overlap BEFORE this if you're not sure you have the field
     to yourself.
+
+    ``symbols`` (v0.2.1+, optional): a list of fully-qualified names you
+    actually plan to change, e.g. ``["utils.foo", "utils.Cache.get"]``.
+    When supplied, the coordinator can skip ``dependency_breakage``
+    conflicts against other agents whose files import only OTHER symbols
+    from yours. Prefer declaring symbols when you know them — it's how
+    you let a teammate editing a sibling file avoid an unnecessary
+    conflict. Use dotted names relative to the module (file with .py
+    stripped and / replaced by dot): ``utils.py::foo`` → ``utils.foo``;
+    ``pkg/sub.py::Bar.method`` → ``pkg.sub.Bar.method``. Omit if you
+    don't know yet or you're touching the file broadly; the server will
+    fall back to file-level detection and behaviour is identical to
+    v0.2.0.
     """
     pid = _project_id()
+    body: dict = {"project_id": pid, "files": files, "objective": objective}
+    if symbols:
+        body["symbols"] = symbols
     with _client() as c:
-        r = c.post(
-            "/api/agent/intents",
-            json={"project_id": pid, "files": files, "objective": objective},
-        )
+        r = c.post("/api/agent/intents", json=body)
         r.raise_for_status()
         return r.json()
 
