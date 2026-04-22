@@ -159,8 +159,20 @@ export function ConnectClaudeModal({
                 </Button>
               </div>
               <p className="text-[11px] text-[var(--text-secondary)] mt-2">
-                Prerequisites: <code className="font-mono">pip install mpac-mcp</code>{" "}
-                and one-time <code className="font-mono">claude /login</code>.
+                One-time setup: install{" "}
+                <a
+                  href="https://docs.anthropic.com/en/docs/claude-code/setup"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline hover:text-[var(--text-primary)]"
+                >
+                  Claude Code
+                </a>{" "}
+                on your laptop, then run{" "}
+                <code className="font-mono">claude /login</code> once.
+                Everything else (including{" "}
+                <code className="font-mono">mpac-mcp</code>) is installed
+                by the command above.
               </p>
             </div>
 

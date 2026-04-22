@@ -152,8 +152,18 @@ def mint_agent_token(
 
     ws_base = _public_ws_base()
     relay_url = f"{ws_base}/ws/relay/{project_id}"
+    # v0.2.4 UX: fold ``pip install`` into the command so beta testers only
+    # paste ONE thing. If mpac-mcp is already current, the install is a
+    # ~1-second no-op. The ``&&`` chain means relay only starts if pip
+    # succeeded — failure surfaces the pip error verbatim instead of the
+    # user seeing "command not found" a line later.
+    #
+    # We pin the version we actually need (>=0.2.2 for the symbols param
+    # on announce_intent + list_active_intents tool). Bump this constant
+    # when a new tool or required field lands so fresh users get it.
+    MIN_MPAC_MCP = "0.2.2"
     launch_command = (
-        f"mpac-mcp-relay \\\n"
+        f"pip install -U 'mpac-mcp>={MIN_MPAC_MCP}' && mpac-mcp-relay \\\n"
         f"  --project-url {relay_url} \\\n"
         f"  --token {token.token_value}"
     )

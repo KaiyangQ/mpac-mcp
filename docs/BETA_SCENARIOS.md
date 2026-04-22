@@ -7,42 +7,76 @@
 
 ---
 
+## 👋 先看这个：三步接上 Claude
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│ 1. 一次性设置 │ →  │ 2. 加入项目   │ →  │ 3. 接上 Claude│
+│   (~2 分钟)  │    │  (~30 秒)    │    │  (~20 秒)    │
+└─────────────┘    └─────────────┘    └─────────────┘
+```
+
+内测前**每人要跑一次完整的下面三步**。第 1 步是一次性的（下次内测跳过）；第 2、3 步每次加入新项目重复一遍。
+
+### 步骤 1：一次性设置你的 Mac / Linux（~2 分钟）
+
+用任何终端：
+
+```bash
+# (a) 装 Claude Code CLI — Anthropic 官方
+npm install -g @anthropic-ai/claude-code
+
+# (b) 登录你自己的 Claude Pro / Max 账号（浏览器会弹窗）
+claude /login
+```
+
+**这两条一辈子只跑一次**。Anthropic 的登录态保存在 `~/.claude/`，以后重启机器都还在。
+
+> 没有 `npm`？先装 Node.js：<https://nodejs.org/>（选 LTS 版）
+> 没有 Claude 订阅？内测要求 Pro 或 Max —— 这是每个测试者自己的账号
+
+### 步骤 2：加入测试项目（~30 秒）
+
+1. 打开你收到的 **invite 链接**（组织者会发给你，格式像 `https://mpac-web.duckdns.org/invite/xxx`）
+2. 如果还没账号：用 invite 码在 <https://mpac-web.duckdns.org/register> 注册
+3. 登录后自动跳到项目页，网址形如 `https://mpac-web.duckdns.org/projects/N`
+
+### 步骤 3：接上你本地的 Claude（~20 秒）
+
+在项目页点右上角的 **🤖 Connect Claude** 按钮。弹出的 Modal 里有**一整行命令**（包含 `pip install` + 启动 relay），长这样：
+
+```bash
+pip install -U 'mpac-mcp>=0.2.2' && mpac-mcp-relay \
+  --project-url wss://mpac-web.duckdns.org/ws/relay/N \
+  --token <一长串>
+```
+
+**操作**：
+1. 点 Modal 里的 **Copy** 按钮整条复制
+2. 打开一个新的终端窗口，粘贴、回车
+3. 看到终端持续打日志（不要关窗口！），同时浏览器 Modal 从 "Waiting for the relay..." 变成 **"Connected"**
+4. 关掉 Modal，你名字旁边会出现 🤖 图标
+
+**检查点**：项目页的 WHO'S WORKING 面板里，你自己那一行除了人名还多了一个 🤖，就说明 Claude 接上了。
+
+> ❌ 终端里报 `command not found: mpac-mcp-relay`？
+> → 新开一个终端窗口（pip 装完 PATH 需要刷新）
+>
+> ❌ macOS 报 `externally-managed-environment`？
+> → 改成 `pip install --user -U 'mpac-mcp>=0.2.2' && ...`，或用 `pipx install mpac-mcp`
+>
+> ❌ WS 握手 401 / 403？
+> → Token 已过期。浏览器关掉 Modal 再点一次 **Connect Claude**，会给一个新的
+
+**三个测试者都完成步骤 3**，WHO'S WORKING 面板里应该看到**三个 🤖**。这时才开始下面的场景剧本。
+
+---
+
 ## Why this doc exists
 
 本次内测主要验证 MPAC **协调能力**，不验证"能不能在 web 里跑代码"（那个功能我们没做）。四个场景从最简单的文件级冲突，一步步展到最新的符号级精度 + 前端具体冲突显示。
 
-**测试者每人要做的**：用 Claude Code 本地连进来 → 照剧本对 Claude 说话 → 肉眼在浏览器观察 MPAC 的反应是否符合预期。
-
----
-
-## 0. Prerequisites（每个测试者要做一次）
-
-### 0.1 Claude Code 本地要有
-
-```bash
-# 一次性
-npm install -g @anthropic-ai/claude-code
-claude /login      # 登你自己的 Claude Pro / Max 账号
-```
-
-### 0.2 MPAC 工具版本
-
-beta 要求 **`mpac-mcp >= 0.2.2`**（今天新发的，`announce_intent` 支持 `symbols` 参数 + 新增 `list_active_intents()` 工具让 Claude 能主动了解团队状态）：
-
-```bash
-pip install -U 'mpac-mcp>=0.2.2'
-mpac-mcp-relay --version   # sanity check
-```
-
-### 0.3 注册 + 加入测试项目
-
-1. 用 invite 码注册：<https://mpac-web.duckdns.org/register>
-2. 登录后进 Settings → Anthropic API Key（BYOK；不填也能跑 relay 场景）
-3. 进项目页（组织者会把 URL 丢给你，比如 `https://mpac-web.duckdns.org/projects/6`）
-4. 点项目页上的 **Connect Claude** → 弹出来的命令整条复制到本地 terminal 运行
-5. Terminal 会显示 `mpac-mcp-relay` 连上的日志；浏览器里你的名字边上会出现 🤖 表示 Claude 接上
-
-**三个测试者都做完上面这些，项目页 WHO'S WORKING 面板里应该能看到三个 🤖** —— 这时才开始剧本。
+**测试者每人要做的**：用 Claude Code 本地连进来（上面三步）→ 照剧本对 Claude 说话 → 肉眼在浏览器观察 MPAC 的反应是否符合预期。
 
 ---
 
