@@ -430,6 +430,107 @@ def test_detailed_scanner_wildcard_dominates_specific():
     assert scan_reverse_deps_detailed(["utils.py"], sources) == {"mixed.py": None}
 
 
+# ─── v0.2.4: from-import submodule + attribute chain ────────────
+
+
+def test_from_pkg_import_submodule_resolves_attr_chain():
+    """**The motivating case for v0.2.4.**
+
+    ``from pkg import cache`` + ``cache.store(...)`` is the most common
+    Python idiom for reaching into a submodule. Up through 0.2.3 the
+    scanner only bound ``cache`` as a plain symbol of ``pkg``, so when
+    the target module was ``pkg/cache.py`` the importer was missed
+    entirely (not even a wildcard fallback). 0.2.4 speculatively treats
+    each imported name as a submodule alias and runs the attribute-
+    chain pass on it."""
+    sources = {
+        "pkg/__init__.py": "",
+        "pkg/cache.py": "def store(k, v): pass\n",
+        "service.py": (
+            "from pkg import cache\n"
+            "def save(k, v):\n"
+            "    cache.store(k, v)\n"
+        ),
+    }
+    assert scan_reverse_deps_detailed(["pkg/cache.py"], sources) == {
+        "service.py": ["pkg.cache.store"],
+    }
+
+
+def test_from_pkg_import_submodule_with_alias():
+    """``from pkg import cache as c`` + ``c.store()`` — the local
+    alias is what the attribute-chain pass walks, but the module
+    name in the emitted symbol uses the original submodule name."""
+    sources = {
+        "pkg/__init__.py": "",
+        "pkg/cache.py": "def store(k, v): pass\n",
+        "service.py": (
+            "from pkg import cache as c\n"
+            "def save(k, v):\n"
+            "    c.store(k, v)\n"
+        ),
+    }
+    assert scan_reverse_deps_detailed(["pkg/cache.py"], sources) == {
+        "service.py": ["pkg.cache.store"],
+    }
+
+
+def test_from_pkg_import_symbol_not_submodule_drops_silently():
+    """If ``cache`` in ``from pkg import cache`` is actually a symbol
+    (function / class) of ``pkg/__init__.py``, not a submodule, the
+    speculative ``(pkg.cache, [...])`` emit won't match any target and
+    must be silently dropped — zero false positives.
+
+    Here the target is ``pkg/__init__.py``, so the importer should
+    show up as editing that module with symbol ``cache`` (via the
+    legacy ``(pkg, [cache])`` emit) — but NOT gain a phantom
+    ``pkg.cache.store`` entry from the speculation."""
+    sources = {
+        "pkg/__init__.py": "def cache(): return object()\n",
+        "service.py": (
+            "from pkg import cache\n"
+            "def save():\n"
+            "    cache().store(1, 2)\n"  # cache() returns something attr-chained
+        ),
+    }
+    # Target is pkg/__init__.py (module name = "pkg"). The legacy
+    # emit `(pkg, [cache])` hits, giving impact=["pkg.cache"]. The
+    # speculative `(pkg.cache, [...])` emit points at a non-existent
+    # target module so it's dropped.
+    assert scan_reverse_deps_detailed(["pkg/__init__.py"], sources) == {
+        "service.py": ["pkg.cache"],
+    }
+
+
+def test_from_pkg_import_submodule_bare_reference_drops_silently():
+    """Bare reference to the submodule-alias taints attribute-chain
+    precision. For the SPECULATIVE ``from pkg import mod`` path we
+    drop rather than emitting wildcard: the legacy ``(pkg, [mod])``
+    tuple already handles the file-level hit at the pkg-level, and
+    injecting a wildcard ``(pkg.mod, None)`` would get absorbed by
+    the submodule-of-target branch when the target happens to be
+    ``pkg/__init__.py`` (see next test), overwriting a precise result.
+
+    Net effect: when the target is ``pkg/mod.py`` and the importer
+    taints the alias, we fall back to pre-0.2.4 behavior (missed
+    importer). No regression vs. pre-0.2.4, just no precision gain
+    in this edge case."""
+    sources = {
+        "pkg/__init__.py": "",
+        "pkg/cache.py": "def store(k, v): pass\n",
+        "service.py": (
+            "from pkg import cache\n"
+            "ref = cache\n"                 # bare reference — taints alias
+            "def save(k, v):\n"
+            "    cache.store(k, v)\n"
+        ),
+    }
+    # Target is pkg/cache.py (module "pkg.cache"). Legacy emit
+    # `(pkg, [cache])` doesn't match "pkg.cache". Speculative path
+    # drops due to taint. Result: importer not flagged.
+    assert scan_reverse_deps_detailed(["pkg/cache.py"], sources) == {}
+
+
 # ─── v0.2.2: scope_dependency_conflict with symbol precision ────
 
 

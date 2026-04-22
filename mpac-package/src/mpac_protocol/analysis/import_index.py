@@ -93,15 +93,24 @@ def _path_to_module(rel_path: str) -> Optional[str]:
 def _extract_imports_detailed(
     source: str,
     filename: str = "<unknown>",
-) -> List[Tuple[str, Optional[List[str]]]]:
+) -> List[Tuple[str, Optional[List[str]], bool]]:
     """Parse ``source`` into a list of ``(module, symbols_or_None)`` tuples.
 
-    ``symbols`` is:
-    * a list of symbol names (the ORIGINAL names, not their ``as`` aliases)
-      for ``from X import a, b as c`` → returns ``[("X", ["a", "b"])]``
-    * ``None`` when we can't pin which symbols are used — covers
-      ``from X import *`` and the conservative path for ``import X`` when
-      attribute-chain resolution sees a bare use of the alias.
+    Returns tuples of ``(module, symbols, is_speculative)``:
+
+    * ``module`` — the dotted module name being imported (or a relative
+      path prefixed with leading dots, resolved later by the caller).
+    * ``symbols`` — list of symbol names (ORIGINAL names, not ``as``
+      aliases) for ``from X import a, b as c`` → ``["a", "b"]``. ``None``
+      when we can't pin which symbols are used — covers
+      ``from X import *`` and the conservative path for ``import X``
+      when attribute-chain resolution sees a bare use of the alias.
+    * ``is_speculative`` — True only for v0.2.4's ``from pkg import mod``
+      attribute-chain entries, where we guessed that ``mod`` is a
+      submodule and followed ``mod.attr`` uses. Speculative entries
+      match only via EXACT module equality in the scan loop; they must
+      never trigger the "submodule of target package" wildcard branch,
+      which is reserved for real ``import pkg.sub`` statements.
 
     v0.2.3 adds attribute-chain resolution: for plain ``import X`` (and
     ``import X as Y``), we walk subsequent attribute accesses like
@@ -123,13 +132,24 @@ def _extract_imports_detailed(
         # ValueError covers null-byte-in-source on some platforms.
         return []
 
-    out: List[Tuple[str, Optional[List[str]]]] = []
+    out: List[Tuple[str, Optional[List[str]], bool]] = []
 
     # alias_name (what the file binds locally) → module_name (the actual
     # dotted import target). Used for the attribute-chain pass below.
     # We only populate for ``import X`` / ``import X as Y`` without dots
     # in the target — ``import pkg.sub`` stays wildcard up-front.
     alias_to_module: Dict[str, str] = {}
+    # Aliases added *speculatively* from ``from pkg import mod`` (v0.2.4).
+    # Flow with these differs in two places:
+    #   1. If attribute-chain resolution taints the alias (bare reference)
+    #      or finds no usage, we drop rather than emitting wildcard —
+    #      the legacy ``(pkg, [mod])`` emit above already covers the
+    #      file-level hit.
+    #   2. When we DO emit (clean attr-chain usage), the tuple is tagged
+    #      ``is_speculative=True`` so the scan loop accepts it only via
+    #      exact target-module match — never via the "submodule of target
+    #      package" branch (which is for real ``import pkg.sub``).
+    speculative_aliases: Set[str] = set()
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -138,7 +158,7 @@ def _extract_imports_detailed(
                 if "." in module:
                     # ``import pkg.sub`` — submodule semantics are ambiguous
                     # without the module graph. Stay conservative.
-                    out.append((module, _WILDCARD))
+                    out.append((module, _WILDCARD, False))
                     continue
                 local_name = alias.asname or alias.name
                 alias_to_module[local_name] = module
@@ -148,17 +168,52 @@ def _extract_imports_detailed(
             qualified = "." * level + mod
             has_star = any(a.name == "*" for a in node.names)
             if has_star:
-                out.append((qualified, _WILDCARD))
+                out.append((qualified, _WILDCARD, False))
             else:
                 symbols = [a.name for a in node.names]
-                out.append((qualified, symbols))
+                out.append((qualified, symbols, False))
+                # v0.2.4: ``from pkg import mod`` is the most common
+                # Python idiom for pulling in a submodule, and writers
+                # then reach through it as ``mod.attr()``. Up through
+                # 0.2.3 this bound ``mod`` only as a plain name, so the
+                # attribute-chain pass below never saw ``mod.attr``
+                # — the importer was invisible to the scanner when the
+                # target module was ``pkg/mod.py``.
+                #
+                # Fix: speculatively register each imported name as a
+                # submodule alias (``{mod}.{name}``). If the guess is
+                # wrong (the name is actually a function/class, not a
+                # submodule), the attribute-chain pass may still emit
+                # ``(pkg.name, [...])``, but no target module will match
+                # it at scan time and it drops silently. The legacy
+                # ``(pkg, [name])`` emit above is untouched, so the
+                # ``from pkg import fn`` + plain ``fn()`` path keeps its
+                # exact pre-0.2.4 behavior.
+                #
+                # Absolute-only: relative imports (``from . import x``)
+                # need importer-path resolution before they can be
+                # turned into a dotted alias. Out of scope for 0.2.4;
+                # tracked in backlog.
+                if level == 0 and mod:
+                    for a in node.names:
+                        if a.name == "*":
+                            continue
+                        local_name = a.asname or a.name
+                        # Don't clobber an existing ``import X``
+                        # binding — that one has an exact resolution
+                        # and should win.
+                        if local_name not in alias_to_module:
+                            alias_to_module[local_name] = f"{mod}.{a.name}"
+                            speculative_aliases.add(local_name)
 
     # Attribute-chain pass: for each plain ``import X`` binding we didn't
     # resolve above, try to prove every use is ``X.attr``; if so, collect
     # attrs and emit as a precise symbol list. One bare use anywhere in
     # the file → wildcard.
     if alias_to_module:
-        resolved_pairs = _resolve_attribute_chains(tree, alias_to_module)
+        resolved_pairs = _resolve_attribute_chains(
+            tree, alias_to_module, speculative_aliases
+        )
         out.extend(resolved_pairs)
 
     return out
@@ -167,7 +222,8 @@ def _extract_imports_detailed(
 def _resolve_attribute_chains(
     tree: ast.AST,
     alias_to_module: Dict[str, str],
-) -> List[Tuple[str, Optional[List[str]]]]:
+    speculative_aliases: Set[str],
+) -> List[Tuple[str, Optional[List[str]], bool]]:
     """Walk ``tree`` and for each alias in ``alias_to_module`` decide:
 
     * All references are attribute-base (``alias.attr``) → emit
@@ -206,21 +262,35 @@ def _resolve_attribute_chains(
             # attribute-chain precision for this alias.
             wildcarded.add(node.id)
 
-    out: List[Tuple[str, Optional[List[str]]]] = []
+    out: List[Tuple[str, Optional[List[str]], bool]] = []
     for alias, module in alias_to_module.items():
+        is_speculative = alias in speculative_aliases
         if alias in wildcarded or not attrs_by_alias[alias]:
             # Fallback: either bare use OR import was unused (can't rule
             # out future dynamic access in the same file).
-            out.append((module, _WILDCARD))
+            #
+            # Speculative aliases from ``from pkg import mod`` must NOT
+            # emit anything here: the legacy ``(pkg, [mod])`` emit
+            # already captured the file-level hit correctly, and any
+            # additional ``(pkg.mod, None)`` entry could either
+            # (a) not match any target (harmless but wasted work) or
+            # (b) match the "submodule of target package" branch at
+            # scan time when the target is ``pkg/__init__.py``,
+            # overwriting a precise pkg-level symbol result with None.
+            # Dropping here matches the pre-0.2.4 behavior for tainted
+            # from-imports — no regression, just no precision gain.
+            if is_speculative:
+                continue
+            out.append((module, _WILDCARD, False))
         else:
-            out.append((module, sorted(attrs_by_alias[alias])))
+            out.append((module, sorted(attrs_by_alias[alias]), is_speculative))
     return out
 
 
 def _extract_imports(source: str, filename: str = "<unknown>") -> List[str]:
     """Legacy wrapper — module names only. Kept so older callers keep
     working; new code should use :func:`_extract_imports_detailed`."""
-    return [m for m, _ in _extract_imports_detailed(source, filename)]
+    return [t[0] for t in _extract_imports_detailed(source, filename)]
 
 
 def _resolve_relative(rel_import: str, importer_rel_path: str) -> Optional[str]:
@@ -299,7 +369,9 @@ def scan_reverse_deps_detailed(
         if rel in targets_norm:
             continue
 
-        for imp_mod, imp_symbols in _extract_imports_detailed(content, filename=rel):
+        for imp_mod, imp_symbols, is_speculative in _extract_imports_detailed(
+            content, filename=rel,
+        ):
             resolved = (
                 _resolve_relative(imp_mod, rel)
                 if imp_mod.startswith(".")
@@ -314,7 +386,14 @@ def scan_reverse_deps_detailed(
                 if resolved == tmod:
                     hit_module = tmod
                 # Submodule of a target package (target is pkg/__init__.py).
-                elif resolved.startswith(tmod + "."):
+                # Only real ``import pkg.sub`` statements are allowed to
+                # trigger this; speculative entries from
+                # ``from pkg import mod`` are rejected here because the
+                # legacy ``(pkg, [mod])`` tuple from the SAME import
+                # statement has already been counted for the pkg-level
+                # target, and a wildcard here would overwrite that
+                # precise result.
+                elif resolved.startswith(tmod + ".") and not is_speculative:
                     hit_module = tmod
                     # Treat "from pkg.sub import x" as accessing both the
                     # submodule and the name — wildcard for the package
