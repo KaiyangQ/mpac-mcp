@@ -308,6 +308,15 @@ function ConflictCard({
         ? "Dependency"
         : conflict.category;
 
+  // scope_overlap = same file, byte-level collision risk on save.
+  // Acknowledge is a receipt (CONFLICT_ACK per SPEC §17.3), NOT a
+  // resolution — if both sides Ack and keep writing, last-write-wins
+  // silently eats one side's work. Yield (INTENT_WITHDRAW) is the
+  // actual resolution. The UI below reflects this by promoting Yield
+  // and demoting Ack with a tooltip; for dependency_breakage the two
+  // buttons stay peers since different files don't byte-collide.
+  const isScopeOverlap = conflict.category === "scope_overlap";
+
   // Flatten dependency_detail (ab/ba directions) into render-friendly
   // rows with the editor + consumer names resolved. Each row describes
   // "[editor]'s edits to [symbols] affect [consumer]'s [file]".
@@ -392,16 +401,49 @@ function ConflictCard({
           ))}
         </div>
       )}
+      {isScopeOverlap && (
+        <div className="text-[10px] text-[var(--text-secondary)] mb-1.5 italic leading-tight">
+          Same file — one side should <strong>Yield</strong> to release the
+          editing claim. Acknowledge alone doesn&apos;t resolve it (both
+          writing the same file =&gt; last save wins).
+        </div>
+      )}
       <div className="flex gap-1.5">
+        {/*
+          For scope_overlap: Yield is the primary action (left, yellow),
+          Acknowledge is demoted (ghost + tooltip). For other categories
+          (dependency_breakage, etc.) the two are peers in the original
+          order — Ack first, then Yield — because writes in those cases
+          target different files and can safely co-exist.
+        */}
+        {isScopeOverlap && myIntentInConflict && (
+          <Button
+            size="xs"
+            variant="secondary"
+            onClick={onYield}
+            className="bg-[var(--yellow)]/20 hover:bg-[var(--yellow)]/30 border border-[var(--yellow)]/40 text-[var(--yellow)]"
+          >
+            Yield
+          </Button>
+        )}
         <Button
           size="xs"
           variant="secondary"
           onClick={onAck}
-          className="bg-[var(--bg-tertiary)] hover:bg-[var(--border)] border border-[var(--border)] text-[var(--text-primary)]"
+          title={
+            isScopeOverlap
+              ? "Acknowledge is only a receipt — it doesn't release your claim on the file. For same-file overlaps, Yield is the resolution."
+              : undefined
+          }
+          className={
+            isScopeOverlap
+              ? "bg-transparent hover:bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-secondary)] opacity-70"
+              : "bg-[var(--bg-tertiary)] hover:bg-[var(--border)] border border-[var(--border)] text-[var(--text-primary)]"
+          }
         >
           Acknowledge
         </Button>
-        {myIntentInConflict && (
+        {!isScopeOverlap && myIntentInConflict && (
           <Button
             size="xs"
             variant="secondary"

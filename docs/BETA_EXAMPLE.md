@@ -56,10 +56,10 @@ iex (irm 'https://mpac-web.duckdns.org/api/projects/N/bootstrap.ps1?token=xxx')
 | Step | 在演示什么 | 三人分工 | MPAC 分类 | 协议版本 |
 |---|---|---|---|---|
 | 0  | 全局感知 baseline | 三人并行 list | `list_active_intents` | `mpac-mcp 0.2.2` |
-| 1  | **3-way** 同文件冲突 + Yield/Ack 对照 | 3 个函数、3 人各一 | `scope_overlap` | `mpac 0.2.0+` |
-| 2  | 跨文件依赖，**两个**同时踩进 Alice 爆炸半径 | A=重构 db.py, B=api.py, C=cli.py | `dependency_breakage` 文件级 | `mpac 0.2.1` |
+| 1  | **3-way** 同文件冲突 → **全员 Yield** 才安全 | 3 个函数、3 人各一 → Bob/Carol 先后 Yield | `scope_overlap`（**不适合 Ack**） | `mpac 0.2.0+` |
+| 2  | 跨文件依赖，**两个**同时踩进 Alice 爆炸半径 + **Ack 合法**演示 | A=重构 db.py, B=api.py, C=cli.py → 三人都 Ack | `dependency_breakage` 文件级 | `mpac 0.2.1` |
 | 3  | **符号级精度 hero**（Carol 安全） | A=db.save+symbols, B=api.py 精确冲突, C=search.py 无冲突 | `dependency_breakage` 带 `dependency_detail` | `mpac 0.2.2` + `0.2.4` |
-| 4  | 解决冲突：三人各走一条出口 | B=Yield, C=withdraw, A=withdraw | 状态机 | `mpac 0.2.0+` |
+| 4  | 解决冲突：三人各走一条 withdraw 出口 | B=Yield, C=withdraw, A=withdraw | 状态机 | `mpac 0.2.0+` |
 | 5  | Dotted-import vs from-import **并排对照** | A=db.save+symbols, B=exporter.py(dotted→wildcard), C=cli.py(from-import→精确) | wildcard fallback vs 精确 | 边界教学 |
 
 ---
@@ -123,11 +123,15 @@ relay 连上的标志。没有的话先修 Connect Claude 再继续。
 
 ---
 
-## Step 1 — 3-way 同文件冲突（scope_overlap + 演 Yield / Acknowledge，~3 分钟）
+## Step 1 — 3-way 同文件冲突（scope_overlap → **全员 Yield** 才安全，~3 分钟）
 
 **目的**：见证最糙的一类冲突 —— 声明要编辑**同一个文件**，哪怕是不同函数，
-MPAC 也报警。同时让 **Yield** 和 **Acknowledge** 两个解决按钮在 3-way 冲突
-里各被用一次，教学含金量比"按说明点按钮"高。
+MPAC 也报警。**核心教学**：`scope_overlap` 的唯一正确出口是 **Yield**，
+Acknowledge 虽然有按钮但**只是收条**（MPAC SPEC §17.3 的 `CONFLICT_ACK`
+本意就是 receipt），两个人都 Ack 了还继续写同一文件 → 谁后 save 谁的
+版本覆盖前一个人，对方的改动 silent 丢失（没有 file-level diff/lock）。
+所以本 step 让 Bob 和 Carol 都 Yield，留 Alice 一人在改 —— "同一时间同一
+文件只有一个 agent" 这个状态，是**用 Yield 达成的**，不是用 Ack。
 
 ### 脚本
 
@@ -156,26 +160,51 @@ MPAC 也报警。同时让 **Yield** 和 **Acknowledge** 两个解决按钮在 3
 - Alice 的 intent 卡上会列出 **两个**对手；Bob 和 Carol 各有两个对手
 - 同一文件 + 不同函数 + 三人 → MPAC 依旧报警（scope_overlap 文件级）
 
-### 解决演示
+### 解决演示（**两步 Yield**，别点 Acknowledge）
 
-- **Bob 点 Yield**（冲突卡右下）：Bob 的 intent 被撤 → Alice-Bob 和
-  Bob-Carol 两对冲突都**消失**（因为 Bob 这边没 intent 了）。剩 Alice
-  和 Carol 还在对峙。
+1. **Bob 点 Yield**（scope_overlap 冲突卡里 Yield 是主按钮、黄色、在左边）：
+   Bob 的 intent 被撤 → Alice-Bob 和 Bob-Carol 两对冲突都**消失**（Bob
+   这边没 intent 了）。剩 Alice 和 Carol 还在对峙 —— 仍然是"两人同文件"
+   的不安全状态。
 
-- **Carol 点 Acknowledge**（冲突卡右下另一个按钮）：**两人都保留 intent**，
-  冲突卡变灰（不再红色警告），语义是"我们都知道会撞，但都继续干"。
+2. **Carol 也点 Yield**：Alice-Carol 冲突消失 → **只剩 Alice 一人在改
+   `auth.py`** → 安全状态。Alice 可以让 Claude 放心改 `hash_password`。
+
+（旧版本的 playbook 教"Carol 点 Acknowledge、两人都继续" —— 那是**错误
+示范**。Ack 只是 `CONFLICT_ACK` 收条，不释放编辑权；两人都 Ack 后继续
+写同一文件 = 谁后 save 谁的版本覆盖另一人，**对方的改动静默丢失**。
+scope_overlap 的正确出口**只有 Yield**。）
+
+### UI 对 scope_overlap 的提示
+
+冲突卡在 `category === "scope_overlap"` 时会：
+- **Yield 放在第一位**（主 CTA，黄色）
+- **Acknowledge 按钮变淡**（ghost 样式、透明度低），鼠标悬上显示 tooltip：
+  > "Acknowledge is only a receipt — it doesn't release your claim on
+  > the file. For same-file overlaps, Yield is the resolution."
+- 卡片顶部多一行说明：**"Same file — one side should Yield to release
+  the editing claim. Acknowledge alone doesn't resolve it (both writing
+  the same file => last save wins)."**
+
+这个 UI 推力**不是硬网关**（web-app 目前不做 SPEC §18.6 的 frozen-scope
+写入拦截；该网关留到 v0.3+ 真实用户面广了再做）。内测阶段三个知道彼此
+的测试者会沟通，**口头规范 + UI 推力**就够让人走对路径。
 
 ### Debrief
 
-- 同文件 = **N^2 对**两两冲突，UI 每对一张卡
+- 同文件 = **N² 对**两两冲突，UI 每对一张卡
 - MPAC 0.2.2+ 的**符号级精度只在跨文件依赖里生效**，同文件 overlap 永远
   文件级 —— 因为即使函数不同，git merge / IDE 行级锁 / 人工 review 都会
   撞上
-- **Yield = "让"** (撤自己 intent) vs **Acknowledge = "知道了、都干"**
-  (保留双方 intent、静音卡片)
+- **Yield** = `INTENT_WITHDRAW`，撤自己的 intent、释放编辑声明、冲突消失
+  → 这是 `scope_overlap` 的**合法**出口
+- **Acknowledge** = `CONFLICT_ACK`（SPEC §17.3），ack_type 是 `seen` /
+  `accepted` / `disputed` —— 字面意思"我看到了"，**不解决冲突、不释放
+  资源**。scope_overlap 下几乎没合理用场景
+- Acknowledge 的**合法用法**在 step 2 演示 —— dep_breakage 下不同文件
+  不撞字节，Ack 合适
 
-清场：让 Alice 告诉 Claude "我改完了，撤 intent" → Claude 调
-`withdraw_intent()`；Carol 同操作。状态归零进入 step 2。
+清场：Alice 也让 Claude `withdraw_intent()`。三人 intent 全部归零进入 step 2。
 
 ---
 
@@ -230,8 +259,29 @@ MPAC 也报警。同时让 **Yield** 和 **Acknowledge** 两个解决按钮在 3
 - 没声明 symbols 的"保守"代价：两张卡都只说"a file imported by"，不能
   告诉 Bob / Carol 具体会撞哪个符号。step 3 就是来解这个
 
-清场：三人都 Yield 或 withdraw —— 让 Alice、Bob、Carol 的 intent 都退，
-状态归零进 step 3。
+### 这里演示 Acknowledge 的**合法**用法
+
+和 step 1 不同：这一步三人写的是**不同文件**（Alice 写 `db.py`，Bob 写
+`api.py`，Carol 写 `cli.py`）。**字节级别不撞** —— 即使都继续干，DB 里
+三个文件各自的 `content` 独立存，last-save 不覆盖别人。MPAC 在这里警告
+的是**运行时语义风险**（Alice 改 `db.save` 的签名，Bob 的 `api.py` 如果没
+同步改调用方，运行时会崩）—— 这种风险**值不值得承担是业务判断**，协议
+只负责让你看见。
+
+**三人都点 Acknowledge**：
+- Bob 在他的 Alice-Bob 卡上点 Ack
+- Carol 在她的 Alice-Carol 卡上点 Ack
+- Alice 在她的两张卡（Alice-Bob, Alice-Carol）上各点一次 Ack
+- 冲突卡**全部变灰**（不再红色警告），**三人 intent 全部保留，都能继续写**
+- 他们 out-of-band 沟通（Slack / 口头）"Alice 你改完告诉我们，我们重新
+  跑一下测试" —— 这就是 Acknowledge 的典型合理用法
+
+**对比 step 1 的关键区别**：step 1 点 Ack 会丢数据，这里点 Ack 只把运行
+时语义风险暴露给开发者自己判断。**同一个按钮、不同 category 下语义差距
+极大** —— 这也是 step 4 Debrief 表把 Ack 按 category 分类讲解的原因。
+
+清场（为 step 3 准备干净状态）：三人**都 withdraw**（让 Claude 调
+`withdraw_intent()`），状态归零。不要留残余 intent 进 step 3。
 
 ---
 
@@ -344,25 +394,27 @@ MPAC 也报警。同时让 **Yield** 和 **Acknowledge** 两个解决按钮在 3
    - Alice 的 intent 卡消失
    - 所有 intent 卡清空，项目状态回到空白
 
-### 可选：回放 Acknowledge
-
-如果 step 1 里 Carol 点 **Acknowledge** 那次没看明白行为，可以重来一遍
-step 3 然后让 Bob 这次不点 Yield 而点 **Acknowledge** —— 冲突卡**不消失**，
-但从红色警告变灰色备忘，两边 intent 都保留。语义是"我们都知道会撞、但都
-继续干"。
-
 ### Debrief
 
-| 出口 | 谁触发 | UI 入口 / tool | 语义 |
-|---|---|---|---|
-| **Yield** | 自己 | 冲突卡上的 Yield 按钮 | "我让，别人先" |
-| **Acknowledge** | 自己 | 冲突卡上的 Acknowledge 按钮 | "双方都知、都继续" |
-| **withdraw_intent** | 自己 | MCP tool（Claude 调）或 UI cancel | "任务完成/放弃、无关冲突" |
+三个出口 + 按 category 区分的安全性：
 
-三个出口覆盖协议 §15 里 intent 生命周期的全部退出点。日常里最常用的
-是 **withdraw**（完成）和 **Yield**（主动让）；**Acknowledge** 在"我知道
-有风险但值得承担"的场景用得更多（比如两人在同一文件的不同部分紧急 hotfix，
-都必须继续）。
+| 出口 | 谁触发 | UI / tool | 对协议的影响 | 安全地用在 |
+|---|---|---|---|---|
+| **Yield** | 自己 | 冲突卡的 Yield 按钮（scope_overlap 下是主 CTA） | `INTENT_WITHDRAW` —— 撤自己的 intent、释放所有声明过的资源 | **所有 category**（永远安全） |
+| **Acknowledge** | 自己 | 冲突卡的 Acknowledge 按钮 | `CONFLICT_ACK`（SPEC §17.3）—— 只是**收条**，不释放任何资源、不撤 intent | **dep_breakage**（不同文件不撞字节）；`semantic_goal_conflict` / `policy_violation` 等同理。**不要用在 `scope_overlap`** —— 两人都 Ack 继续写同一文件 = last-save-wins，对方工作悄无声息被覆盖 |
+| **withdraw_intent** | 自己 | MCP tool（Claude 在"我干完了"时自己调）/ UI "Cancel intent" | 和 Yield 同样走 `INTENT_WITHDRAW`，区别只是**触发语境**（完成 vs. 让） | **所有 category** |
+
+**实操口诀**：
+- 你在 scope_overlap 冲突里 → **只点 Yield**，不点 Ack（UI 也会把 Ack 变
+  淡劝你不要点）
+- 你在 dep_breakage 冲突里、且确实想冒语义风险继续 → 点 Ack，后续靠
+  out-of-band 沟通
+- 你任务干完了 → 让 Claude 调 `withdraw_intent()`（Acknowledge 不关闭
+  intent，Ack 完 intent 照样 live）
+
+UI 层目前**没有**硬网关拦截 scope_overlap 下的写入（SPEC §18.6 frozen
+scope 留到 v0.3+）—— 全靠 UX 提示 + 人沟通。对内测的 3 人小闭环足够；
+未来面向陌生用户再加。
 
 ---
 
