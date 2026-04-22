@@ -66,63 +66,117 @@ ciphertext decrypts identically for each account.
 
 ## 🤖 Connect Claude (local-bridge mode, no API key needed)
 
-Shipped 2026-04-19. Users on the beta can now route the in-browser AI
-chat through their **local Claude Code subscription** instead of filling
-in an Anthropic API key. Zero cost to them beyond the Claude Pro / Max
-subscription they already have.
+Originally shipped 2026-04-19 (3-step paste). Heavily streamlined
+2026-04-21 deep-night sprint: **one-line `bash <(curl ...)` bootstrap**
+that server-side-renders a setup script, plus a PowerShell variant
+for Windows with an OS toggle in the Modal. Bootstrap hardened 2026-04-22
+morning to scan for Python 3.10+ (macOS system `/usr/bin/python3` is
+3.9.6 and won't satisfy `mpac-mcp`'s `mcp` dependency) and auto-upgrade
+old pip (< 23 doesn't know `--break-system-packages`).
 
-### One-time laptop setup
+Users route the in-browser AI chat through their **local Claude Code
+subscription** instead of filling in an Anthropic API key. Zero cost
+beyond the Claude Pro / Max they already have.
 
-```bash
-# 1. Claude Code CLI
-npm install -g @anthropic-ai/claude-code
+### Prerequisites (one-time, on the tester's laptop)
 
-# 2. Bind the subscription to this machine (OAuth in browser)
-claude /login
+- **Node.js LTS** (the bootstrap script uses `npm install -g
+  @anthropic-ai/claude-code`; it needs `npm` already on PATH)
+- **Python ≥ 3.10** — bootstrap scans `python3.13 → 3.12 → 3.11 → 3.10`
+  and falls back to `python3` only if that one ≥ 3.10. **macOS system
+  `/usr/bin/python3` (3.9.6) won't work**; use `brew install python@3.12`
+  or pyenv or python.org
+- **Claude Pro or Max subscription** — the bootstrap runs `claude /login`
+  in a subprocess if `~/.claude/sessions/` is empty (browser OAuth, one
+  time only)
 
-# 3. Install the MPAC bridge package
-pip install mpac-mcp   # needs >= 0.2.0 for the `mpac-mcp-relay` command
-```
+No Anthropic API key anywhere in the loop. `claude -p` reads session
+credentials set by `claude /login`.
 
-No API key anywhere in the loop. `claude -p` reads
-`~/.claude/sessions/` credential files which are set by step 2.
-
-### Per-project connect flow
+### Per-project connect flow (current — one line, ~20 s after prereqs)
 
 1. Log into <https://mpac-web.duckdns.org>, open a project.
-2. Click **"Connect Claude"** in the header (to the left of Invite).
-3. The modal shows a ready-to-run command like:
+2. Click **"🤖 Connect Claude"** in the project header.
+3. Modal auto-detects your OS from the user-agent (toggle if wrong) and
+   shows the one-line command keyed to it:
+
+   **macOS / Linux / WSL / Git Bash**:
    ```bash
-   mpac-mcp-relay \
-     --project-url wss://mpac-web.duckdns.org/ws/relay/<project_id> \
-     --token <opaque-44-char-token>
+   bash <(curl -fsSL 'https://mpac-web.duckdns.org/api/projects/<pid>/bootstrap.sh?token=<opaque-token>')
    ```
-4. Paste into a terminal and run. The modal status strip flips to
-   green **`● Connected`** within ~2 s.
-5. Leave the `mpac-mcp-relay` process running in the background. The
-   in-browser AI chat now routes to Claude running on that laptop.
 
-Inside the chat, Claude has six MPAC-aware tools:
-`list_project_files`, `read_project_file`, `write_project_file`,
-`check_overlap`, `announce_intent`, `withdraw_intent`. It uses them
-to actually read and edit the shared project files (not your local
-filesystem), and its intents are visible to everyone else in the
-session's WHO'S WORKING panel.
+   **Windows PowerShell**:
+   ```powershell
+   iex (irm 'https://mpac-web.duckdns.org/api/projects/<pid>/bootstrap.ps1?token=<opaque-token>')
+   ```
 
-### Stopping / switching
+4. Copy, paste into a terminal, Enter. First run takes **1-3 minutes**
+   (npm install, Claude login OAuth if needed, pip install mpac-mcp);
+   subsequent runs are seconds. Modal status auto-flips to green
+   **`● Connected`** and a 🤖 appears next to the user's name in the
+   WHO'S WORKING panel.
 
-- **Stop your relay:** `Ctrl+C` the running process. Claude's avatar
-  goes offline in the session within seconds.
-- **Rotate your token:** reopening the modal while a relay is already
-  connected simply shows the existing command again (we intentionally
-  don't rotate to avoid killing the running relay). To force a new
-  token, stop the relay first, then reopen the modal.
-- **Quota:** each user's chat messages consume THEIR OWN Claude Code
+5. Leave the `mpac-mcp-relay` process running in the foreground. The
+   terminal "hangs" after install logs — that's correct, it's a
+   long-lived relay. Don't close the window.
+
+**What the bootstrap script does** (the reason we don't paste 4 commands
+anymore):
+1. Scan for `npm`; fail fast if missing
+2. Scan for Python 3.10+ via `python3.13 → 3.10` ladder; fail fast if none
+3. Upgrade old pip (< 23) so `--break-system-packages` fallback works
+4. Install Claude Code CLI if missing (`npm install -g @anthropic-ai/claude-code`)
+5. Run `claude /login` in a subprocess if not already logged in
+6. `pip install mpac-mcp` with fallback ladder: plain → `--user` →
+   `--break-system-packages` (covers venv, Linux system, macOS PEP 668)
+7. `exec mpac-mcp-relay --project-url wss://... --token <opaque>`
+
+> We use `bash <(curl ...)` not `curl | bash` on purpose —
+> process-substitution preserves stdin as a TTY so `claude /login` can
+> prompt interactively. A pipe would eat stdin.
+
+### MCP tools Claude gets
+
+**7 MPAC-aware tools** (`mpac-mcp >= 0.2.2`, the current PyPI version):
+
+| Tool | What Claude can do |
+|---|---|
+| `list_project_files` | Discover what files exist in the shared project |
+| `read_project_file(path)` | Read one file's content |
+| `write_project_file(path, content)` | Overwrite or create a file (full content, not diffs) |
+| `check_overlap(files)` | Ask "is anyone else already working on these files?" before announcing |
+| `announce_intent(files, objective, symbols=[...])` | Claim an editing intent; optional `symbols` pins symbol-level precision (0.2.1+) so MPAC can tell if another agent's `save` conflicts with my `load` |
+| `withdraw_intent(intent_id)` | Release the claim when done (or yielding) |
+| `list_active_intents()` | **Poll what everyone else is doing right now** — new in 0.2.2, great as the first call Claude makes each task to build a global picture |
+
+These operate on DB-backed shared files (not the tester's local
+filesystem). Intents Claude announces appear in everyone else's
+WHO'S WORKING panel; conflicts light up red cards in all connected
+browsers.
+
+### Stopping / switching / troubleshooting
+
+- **Stop your relay**: `Ctrl+C` the running process. Claude's 🤖 goes
+  offline in everyone's WHO'S WORKING within ~2 s.
+- **Rotate your token**: reopening the Modal while a relay is already
+  connected shows the existing command (we intentionally don't rotate
+  to avoid killing a running relay). To force a new token, stop the
+  relay first, then reopen.
+- **Quota**: each user's chat messages consume THEIR OWN Claude Code
   subscription quota. Nobody shares a pool.
+
+| Symptom | Fix |
+|---|---|
+| `bash: command not found: npm` | Install Node.js LTS: <https://nodejs.org/> |
+| `No Python >= 3.10 found` | `brew install python@3.12` (mac) / `apt install python3.12` (Ubuntu 22+) / `winget install Python.Python.3.12` (Windows) |
+| Browser-opened Claude login but tester closed it | Rerun the one-liner — `claude /login` will prompt again |
+| Token expired / 401 / 403 | Close Modal, reopen "Connect Claude" for a fresh command |
+| Terminal hanging after install logs | That's correct — relay is a long-lived foreground process. Don't close the window |
+| Modal stays on "Waiting for relay..." forever | Check `sudo docker logs aws-lightsail-api-1 --tail 100` for a `ws /ws/relay/<pid>` line; if absent, relay never reached the server (network / token issue) |
 
 ### Fallback
 
-If no relay is connected and the user has a BYOK Anthropic key on file,
+If no relay is connected AND the user has a BYOK Anthropic key on file,
 `/api/chat` falls back to the old API-key path. If neither is set, the
 chat returns `HTTP 402` with a hint to either Connect Claude or add a
 key.
