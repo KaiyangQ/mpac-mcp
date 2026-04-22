@@ -170,6 +170,20 @@ class SessionRegistry:
     def get(self, project_id: int) -> Optional[ProjectSession]:
         return self._sessions.get(project_id)
 
+    def drop(self, project_id: int) -> bool:
+        """Remove the in-memory session for ``project_id`` — called when
+        the project is deleted in the DB. Any live WS clients still
+        connected will operate against the stale reference until they
+        disconnect, which is fine: they can't reconnect because the
+        membership check on ``/ws/session`` will fail once the tokens
+        are gone. Returns True if a session was present and dropped.
+        """
+        existed = project_id in self._sessions
+        self._sessions.pop(project_id, None)
+        if existed:
+            log.info("Dropped MPAC session for deleted project_id=%s", project_id)
+        return existed
+
 
 # Singleton for this process.
 registry = SessionRegistry()

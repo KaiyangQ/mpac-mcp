@@ -12,8 +12,10 @@ import {
   ChevronLeft,
   File as FileIcon,
   Folder,
+  LogOut,
   Pencil,
   Share2,
+  Trash2,
 } from "lucide-react";
 import { api, ApiError, type Project, type TokenResponse } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -1088,6 +1090,73 @@ export default function WorkspacePage({
             >
               <Share2 className="size-3.5" />
               Invite
+            </Button>
+          )}
+          {isOwner ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={async () => {
+                // Keep the confirm copy **specific**: users mentally tune
+                // out "Are you sure?" dialogs; naming the consequence
+                // (everyone loses access, files deleted) is what actually
+                // saves a wrong click.
+                const ok = window.confirm(
+                  `Delete project "${project.name}"?\n\n` +
+                  `This permanently removes all files, invites, and tokens.\n` +
+                  `Every member (including Claude agents) loses access immediately.\n\n` +
+                  `This can't be undone.`
+                );
+                if (!ok) return;
+                try {
+                  await api.deleteProject(project.id);
+                  router.push("/projects");
+                } catch (e) {
+                  alert(
+                    e instanceof ApiError
+                      ? `Delete failed: ${e.message}`
+                      : "Delete failed — see console."
+                  );
+                  // eslint-disable-next-line no-console
+                  console.error(e);
+                }
+              }}
+              title="Delete this project for everyone (owner only)"
+              className="gap-1.5 text-[var(--red)] hover:bg-[var(--red)]/15 border border-transparent hover:border-[var(--red)]/40"
+            >
+              <Trash2 className="size-3.5" />
+              Delete
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={async () => {
+                const ok = window.confirm(
+                  `Leave "${project.name}"?\n\n` +
+                  `Your browser session and any Claude relay you have running ` +
+                  `will lose access. The project stays put for the owner and ` +
+                  `other members — they can re-invite you later if needed.`
+                );
+                if (!ok) return;
+                try {
+                  await api.leaveProject(project.id);
+                  router.push("/projects");
+                } catch (e) {
+                  alert(
+                    e instanceof ApiError
+                      ? `Leave failed: ${e.message}`
+                      : "Leave failed — see console."
+                  );
+                  // eslint-disable-next-line no-console
+                  console.error(e);
+                }
+              }}
+              title="Remove yourself from this project"
+              className="gap-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-transparent hover:border-[var(--border)]"
+            >
+              <LogOut className="size-3.5" />
+              Leave
             </Button>
           )}
           <Link

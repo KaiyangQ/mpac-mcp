@@ -1,6 +1,7 @@
 """Project CRUD + invite routes."""
 from __future__ import annotations
 import json
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,11 +9,15 @@ from sqlalchemy.orm import Session
 
 from ..auth import get_current_user
 from ..database import get_db
-from ..models import Project, Token, Invite, User
+from ..models import Project, ProjectFile, Token, Invite, User
+from ..mpac_bridge import registry as session_registry
 from ..schemas import (
     ProjectCreate, ProjectResponse, ProjectListResponse,
     InviteCreate, InviteResponse, InviteAccept, InvitePreview, TokenResponse,
 )
+
+
+log = logging.getLogger("mpac.projects")
 
 router = APIRouter()
 
@@ -162,6 +167,96 @@ def accept_invite(
         session_id=project.session_id,
         roles=json.loads(token.roles),
     )
+
+
+@router.delete("/projects/{project_id}", status_code=204)
+def delete_project(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Destroy the project for everyone — owner only.
+
+    Cascades all child rows in explicit order (files → tokens → invites
+    → project) because the FKs don't carry an ON DELETE CASCADE. Also
+    drops the in-memory MPAC session so any live WS clients lose the
+    coordinator on their next reconnect; existing connections operate
+    against a stale reference until they disconnect, then fail
+    membership check (no tokens left) and can't re-join.
+
+    Members who just want to leave the project should call
+    ``POST /api/projects/{id}/leave`` instead. Owners cannot "leave" —
+    they must delete or transfer ownership (transfer isn't implemented).
+    """
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    if project.owner_id != user.id:
+        raise HTTPException(403, "Only the project owner can delete this project")
+
+    # Cascade in dependency order.
+    n_files = db.query(ProjectFile).filter(
+        ProjectFile.project_id == project_id
+    ).delete(synchronize_session=False)
+    n_tokens = db.query(Token).filter(
+        Token.project_id == project_id
+    ).delete(synchronize_session=False)
+    n_invites = db.query(Invite).filter(
+        Invite.project_id == project_id
+    ).delete(synchronize_session=False)
+    db.delete(project)
+    db.commit()
+
+    # Evict in-memory MPAC session AFTER commit so a concurrent request
+    # that's about to create state sees the DB already-gone.
+    session_registry.drop(project_id)
+
+    log.info(
+        "Project deleted: id=%s name=%s owner=%s files=%d tokens=%d invites=%d",
+        project_id, project.name, user.id, n_files, n_tokens, n_invites,
+    )
+    # 204 No Content — FastAPI will skip the response body.
+    return None
+
+
+@router.post("/projects/{project_id}/leave", status_code=204)
+def leave_project(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove the caller's own membership from a project.
+
+    Membership = any live (non-revoked) Token for (user_id, project_id).
+    We revoke ALL of that user's tokens on this project, including the
+    agent-relay token — so leaving also kills the Claude relay if it's
+    running. Owners can't leave (must delete); returns 403.
+
+    Idempotent: calling leave when you're not a member returns 204
+    anyway (no tokens to revoke).
+    """
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    if project.owner_id == user.id:
+        raise HTTPException(
+            403,
+            "Owners can't leave their own project — delete it instead "
+            "(DELETE /api/projects/{id}).",
+        )
+
+    n = db.query(Token).filter(
+        Token.user_id == user.id,
+        Token.project_id == project_id,
+        Token.is_revoked == False,  # noqa: E712
+    ).update({Token.is_revoked: True}, synchronize_session=False)
+    db.commit()
+
+    log.info(
+        "User %s left project %s (revoked %d token(s))",
+        user.id, project_id, n,
+    )
+    return None
 
 
 @router.get("/projects/{project_id}", response_model=ProjectResponse)

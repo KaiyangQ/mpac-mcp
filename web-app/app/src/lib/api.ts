@@ -174,6 +174,14 @@ export const api = {
   getProject: (projectId: number) =>
     request<Project>("GET", `/api/projects/${projectId}`),
 
+  /** Owner-only. Destroys the project + all files, tokens, invites. */
+  deleteProject: (projectId: number) =>
+    request<void>("DELETE", `/api/projects/${projectId}`),
+
+  /** Non-owner-only. Revokes the caller's tokens for this project. */
+  leaveProject: (projectId: number) =>
+    request<void>("POST", `/api/projects/${projectId}/leave`),
+
   // ── Tokens ──────────────────────────────────────────────
 
   getMpacToken: (projectId: number) =>
