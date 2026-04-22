@@ -135,7 +135,21 @@ export function ConnectClaudeModal({
                 Run this on your laptop
               </label>
               <div className="relative">
-                <pre className="rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] p-3 text-xs font-mono leading-relaxed overflow-x-auto text-[var(--text-primary)]">
+                {/*
+                  Visual wrap on long commands (the curl URL + token is ~160
+                  chars and blew past the modal before). Using
+                  ``whitespace-pre-wrap`` + ``break-all`` wraps anywhere a
+                  break is needed — but because the clipboard write pulls
+                  from ``agentToken.launch_command`` directly, the copied
+                  text is still the pristine single-line command (verified
+                  manually: the DOM has no inserted whitespace, it's just
+                  a CSS rendering hint).
+
+                  ``pr-20`` reserves space so the absolutely-positioned
+                  Copy button never sits on top of the command text, even
+                  on the very first (top) line.
+                */}
+                <pre className="rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] p-3 pr-20 text-xs font-mono leading-relaxed whitespace-pre-wrap break-all text-[var(--text-primary)]">
 {agentToken.launch_command}
                 </pre>
                 <Button
