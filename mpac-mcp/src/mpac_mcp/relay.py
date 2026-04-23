@@ -199,14 +199,24 @@ async def handle_chat(ctx: RelayContext, message: str) -> str:
                 "Read", "Edit", "Write", "Bash", "Glob", "Grep", "NotebookEdit",
                 "--dangerously-skip-permissions",
                 "--append-system-prompt", _SYSTEM_PROMPT,
-                message,
+                # NOTE: `message` is sent via stdin, NOT as a positional argv.
+                # On Windows the `claude` CLI is `claude.cmd` (npm shim), so
+                # subprocess goes through `cmd.exe /c claude.cmd ...`, and
+                # cmd.exe's argv quoting eats user-typed chat messages that
+                # contain &, |, %, parens, or embedded newlines — claude then
+                # sees `-p` with no positional and bails with "Input must be
+                # provided either through stdin or as a prompt argument".
+                # Stdin sidesteps cmd.exe's argv parsing entirely; works the
+                # same on macOS / Linux. Verified on Windows / Python 3.14.
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
             try:
                 stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=CLAUDE_TIMEOUT_SEC,
+                    proc.communicate(input=message.encode("utf-8")),
+                    timeout=CLAUDE_TIMEOUT_SEC,
                 )
             except asyncio.TimeoutError:
                 proc.kill()

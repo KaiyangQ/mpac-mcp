@@ -484,7 +484,7 @@ async def agent_list_active_intents(
 # Minimum mpac-mcp version the bootstrap script will install. Bump when a
 # new tool or required field lands so fresh users get it. Kept as a module
 # constant so the agent-token response and the rendered script agree.
-_MIN_MPAC_MCP = "0.2.2"
+_MIN_MPAC_MCP = "0.2.3"
 
 
 def _render_bootstrap_sh(relay_url: str, token_value: str) -> str:
