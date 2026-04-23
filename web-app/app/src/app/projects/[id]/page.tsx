@@ -1043,25 +1043,24 @@ export default function WorkspacePage({
     enabled: !!user && !!project,
   });
 
-  // When the user opens a file, automatically announce an intent.
-  // Any previously held intent on OTHER files gets yielded so we have exactly
-  // one "editing this file" intent at a time — this mirrors how a real IDE
-  // focuses on one file and keeps the UX simple for the demo.
-  useEffect(() => {
-    if (!session.joined || !activePath) return;
-    // Already holding an intent on this file? Nothing to do.
-    const existing = myIntentOnFile(activePath, session.myIntents);
-    if (existing) return;
-    // Yield any intents on other files first (fire-and-forget).
-    for (const intent of Object.values(session.myIntents)) {
-      if (!intent.scope?.resources?.includes(activePath)) {
-        session.yieldTask(intent.intent_id, "switched file");
-      }
-    }
-    session.beginTask([activePath], `editing ${activePath}`);
-    // We intentionally don't depend on `session.myIntents` to avoid loops.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.joined, activePath]);
+  // Intent announcement is owned by Claude's MCP `announce_intent`
+  // tool, NOT by the browser. In the actual usage pattern, humans
+  // browse files in the panel and ask Claude (via chat) to edit;
+  // Claude announces, writes, and withdraws via MCP. The browser is
+  // a viewer + chat surface, not an editor.
+  //
+  // The previous useEffect here auto-announced an intent every time
+  // ``activePath`` changed — i.e. every time someone merely OPENED a
+  // file. That was a demo-era crutch from when humans were expected
+  // to type into the editor directly; with Claude doing the editing,
+  // it just produced false ``scope_overlap`` conflicts whenever two
+  // people happened to open the same file to read. Removed.
+  //
+  // If a human ever needs to edit directly in the browser (rare in
+  // the current beta — they go through Claude), the `handleEditorChange`
+  // path below still saves keystrokes but no longer broadcasts intent.
+  // A future "Take edit lock" button can re-introduce explicit
+  // human-side announce when there's actual demand.
 
   if (authLoading || !user || loading) {
     return (
