@@ -750,9 +750,22 @@ try {{
 
 if ($needInstall) {{
     Say "Installing mpac-mcp >= $MinMpacMcp (via $python)..."
-    & $python -m pip install -q -U "mpac-mcp>=$MinMpacMcp"
+    # Install ladder, ordered by what works for the most users first:
+    #   1. --user — works for every non-venv setup (Windows non-admin global
+    #      Python, macOS brew Python, Linux global Python). Inside a venv pip
+    #      errors with "Can not perform a '--user' install" — that triggers
+    #      step 2. --no-warn-script-location suppresses the noisy "scripts
+    #      are not on PATH" line since we prepend the dir ourselves below.
+    #   2. plain — catches the venv case (where --user is invalid).
+    #   3. --break-system-packages — catches PEP 668 distros (Ubuntu 23+
+    #      system Python, Debian 12 system Python) where both above fail.
+    # Putting --user first instead of plain dodges a transient PyPI/CDN
+    # race right after a publish (plain install can briefly see only old
+    # versions and emit a scary "No matching distribution" ERROR before
+    # a fallback retry succeeds 1-2 s later).
+    & $python -m pip install --user --no-warn-script-location -q -U "mpac-mcp>=$MinMpacMcp"
     if ($LASTEXITCODE -ne 0) {{
-        & $python -m pip install --user -q -U "mpac-mcp>=$MinMpacMcp"
+        & $python -m pip install -q -U "mpac-mcp>=$MinMpacMcp"
         if ($LASTEXITCODE -ne 0) {{
             & $python -m pip install --break-system-packages -q -U "mpac-mcp>=$MinMpacMcp"
             if ($LASTEXITCODE -ne 0) {{ Die "pip install failed. Try: pipx install --force mpac-mcp" }}
@@ -761,17 +774,14 @@ if ($needInstall) {{
 }}
 
 # Make sure the user-site scripts dir is on PATH for the rest of this
-# session. Why this is unconditional (not just inside the --user fallback):
-# on Windows with a system-wide Python 3.x install, plain `pip install`
-# (no --user) often *still* drops scripts into the user-site Scripts dir
-# when the system site-packages isn't admin-writable — pip silently
-# fallbacks and emits "WARNING: The scripts are installed in ... which
-# is not on PATH" to stderr. Previously this prepend lived only in the
-# --user fallback branch, so plain-install would succeed (exit 0) but
-# the very next `Get-Command mpac-mcp-relay` would fail and we'd Die.
-# We use sysconfig.get_path('scripts','nt_user') for the canonical path
-# (`%APPDATA%\Python\PythonXY\Scripts`) — `site --user-base + 'Scripts'`
-# gives the wrong parent dir on Windows.
+# session. Unconditional because the install ladder above prefers --user,
+# which lays scripts down in `%APPDATA%\Python\PythonXY\Scripts` — that
+# dir is *not* on PATH by default on Windows. Test-Path makes this a
+# no-op when an earlier ladder step (plain in venv, or --break-system-
+# packages) put the scripts somewhere already on PATH.
+# We use sysconfig.get_path('scripts','nt_user') for the canonical path;
+# `python -m site --user-base + 'Scripts'` gives the wrong parent dir on
+# Windows (`%APPDATA%\Python\Scripts` — no version suffix).
 $userScripts = & $python -c "import sysconfig, sys; print(sysconfig.get_path('scripts', 'nt_user' if sys.platform == 'win32' else 'posix_user'))"
 if ((Test-Path $userScripts) -and -not ($env:PATH -split ';' -contains $userScripts)) {{
     $env:PATH = "$userScripts;$env:PATH"
