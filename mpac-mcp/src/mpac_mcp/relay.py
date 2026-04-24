@@ -234,16 +234,30 @@ async def handle_chat(ctx: RelayContext, message: str) -> str:
 
         if proc.returncode != 0:
             err = stderr.decode("utf-8", errors="replace").strip()
-            log.warning("claude -p exit=%s stderr=%r",
-                        proc.returncode, err[:500])
-            if "login" in err.lower() or "auth" in err.lower():
+            out = stdout.decode("utf-8", errors="replace").strip()
+            log.warning("claude -p exit=%s stderr=%r stdout=%r",
+                        proc.returncode, err[:500], out[:500])
+            # The Claude Code CLI writes several user-facing errors to
+            # STDOUT, not stderr — notably "Claude Code on Windows requires
+            # git-bash" and "Not logged in · Please run /login". If we
+            # only surfaced stderr the user would see "[relay] Claude
+            # Code failed (exit 1):" with an empty body — the most
+            # frustrating possible UX. Combine both streams; stderr
+            # first (convention), stdout second (where the real
+            # diagnostic often lives).
+            if err and out:
+                body = f"{err}\n{out}"
+            else:
+                body = err or out or "(no output on stderr or stdout)"
+            hay = (err + " " + out).lower()
+            if "login" in hay or "auth" in hay:
                 return (
                     f"[relay] Claude Code isn't authenticated on this machine.\n"
                     f"Run `claude /login` in a terminal, then retry.\n\n"
-                    f"Raw error: {err[:400]}"
+                    f"Raw error: {body[:400]}"
                 )
             return (f"[relay] Claude Code failed "
-                    f"(exit {proc.returncode}): {err[:400]}")
+                    f"(exit {proc.returncode}): {body[:400]}")
 
         reply = stdout.decode("utf-8", errors="replace").rstrip()
         log.info("claude -p completed reply_len=%d", len(reply))
