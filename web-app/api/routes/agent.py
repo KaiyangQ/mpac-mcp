@@ -885,25 +885,52 @@ if (-not $env:CLAUDE_CODE_GIT_BASH_PATH) {{
 # this terminal. The test runs with the same env the relay inherits, so
 # a passing smoke implies the chat path will succeed; a failing one
 # prints claude's actual stdout for the user to act on.
-Say "Smoke-testing claude -p (pre-relay sanity check)..."
-$smokeExit = 0
-$smokeOut = ""
-try {{
-    $smokeOut = ("ping" | & claude -p --dangerously-skip-permissions 2>&1 | Out-String).Trim()
-    $smokeExit = $LASTEXITCODE
-}} catch {{
-    $smokeOut = "INVOCATION FAILED: $($_.Exception.Message)"
-    $smokeExit = -1
+function Invoke-ClaudeSmoke {{
+    $out = ""
+    $code = 0
+    try {{
+        $out = ("ping" | & claude -p --dangerously-skip-permissions 2>&1 | Out-String).Trim()
+        $code = $LASTEXITCODE
+    }} catch {{
+        $out = "INVOCATION FAILED: $($_.Exception.Message)"
+        $code = -1
+    }}
+    return @{{ Exit = $code; Output = $out }}
 }}
-if ($smokeExit -ne 0) {{
-    Write-Host "[mpac] X claude -p smoke test FAILED (exit=$smokeExit)." -ForegroundColor Red
+
+Say "Smoke-testing claude -p (pre-relay sanity check)..."
+$smoke = Invoke-ClaudeSmoke
+
+# The .claude/sessions heuristic above is a LOWER BOUND on "ever logged
+# in on this box" — stale sessions live there long after an OAuth token
+# expires. The definitive test is actually running claude -p, which is
+# what we're doing here. If it reports "Not logged in", trigger the
+# login flow now (while the user is still watching this terminal) and
+# retry — infinitely better than having every chat message silently fail.
+if ($smoke.Exit -ne 0 -and $smoke.Output -match "(?i)not logged in|run /login|please log\s*in") {{
+    Say "Claude reports Not Logged In. Running claude /login now (browser will open)..."
+    Say "Complete the login flow, then this script continues automatically."
+    $loginOk = $false
+    try {{
+        claude /login
+        $loginOk = ($? -and ($LASTEXITCODE -eq 0))
+    }} catch {{
+        Die "claude /login invocation failed: $($_.Exception.Message)"
+    }}
+    if (-not $loginOk) {{ Die "claude /login failed or was cancelled (exit=$LASTEXITCODE)." }}
+    Say "Re-running smoke after login..."
+    $smoke = Invoke-ClaudeSmoke
+}}
+
+if ($smoke.Exit -ne 0) {{
+    Write-Host "[mpac] X claude -p smoke test FAILED (exit=$($smoke.Exit))." -ForegroundColor Red
     Write-Host "[mpac]   Output from claude:" -ForegroundColor Red
-    Write-Host ($smokeOut -split "`n" | ForEach-Object {{ "[mpac]     $_" }}) -ForegroundColor Yellow
+    ($smoke.Output -split "`n") | ForEach-Object {{ Write-Host "[mpac]     $_" -ForegroundColor Yellow }}
     Write-Host "[mpac]   Env: CLAUDE_CODE_GIT_BASH_PATH=$env:CLAUDE_CODE_GIT_BASH_PATH" -ForegroundColor Red
     Write-Host "[mpac]   The relay will fail on every chat message until this is fixed." -ForegroundColor Red
     Write-Host "[mpac]   Proceeding to launch relay anyway so you can see the live failure pattern." -ForegroundColor Red
 }} else {{
-    Say "Smoke OK (claude replied $($smokeOut.Length) chars)."
+    Say "Smoke OK (claude replied $($smoke.Output.Length) chars)."
 }}
 
 # --- Go -----------------------------------------------------------------
