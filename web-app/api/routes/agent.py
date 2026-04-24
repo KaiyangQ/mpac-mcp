@@ -876,6 +876,36 @@ if (-not $env:CLAUDE_CODE_GIT_BASH_PATH) {{
     }}
 }}
 
+# --- Smoke-test claude -p before launching the relay ------------------
+# mpac-mcp 0.2.3's relay logs "exit=1 stderr=''" when claude fails because
+# it only decodes stderr — but the Claude Code CLI writes some user-facing
+# errors (git-bash missing, login needed, etc.) to STDOUT instead. By the
+# time a chat message hits the relay it's too late to see those. Smoke-
+# test here so the real error surfaces while the user is still looking at
+# this terminal. The test runs with the same env the relay inherits, so
+# a passing smoke implies the chat path will succeed; a failing one
+# prints claude's actual stdout for the user to act on.
+Say "Smoke-testing claude -p (pre-relay sanity check)..."
+$smokeExit = 0
+$smokeOut = ""
+try {{
+    $smokeOut = ("ping" | & claude -p --dangerously-skip-permissions 2>&1 | Out-String).Trim()
+    $smokeExit = $LASTEXITCODE
+}} catch {{
+    $smokeOut = "INVOCATION FAILED: $($_.Exception.Message)"
+    $smokeExit = -1
+}}
+if ($smokeExit -ne 0) {{
+    Write-Host "[mpac] X claude -p smoke test FAILED (exit=$smokeExit)." -ForegroundColor Red
+    Write-Host "[mpac]   Output from claude:" -ForegroundColor Red
+    Write-Host ($smokeOut -split "`n" | ForEach-Object {{ "[mpac]     $_" }}) -ForegroundColor Yellow
+    Write-Host "[mpac]   Env: CLAUDE_CODE_GIT_BASH_PATH=$env:CLAUDE_CODE_GIT_BASH_PATH" -ForegroundColor Red
+    Write-Host "[mpac]   The relay will fail on every chat message until this is fixed." -ForegroundColor Red
+    Write-Host "[mpac]   Proceeding to launch relay anyway so you can see the live failure pattern." -ForegroundColor Red
+}} else {{
+    Say "Smoke OK (claude replied $($smokeOut.Length) chars)."
+}}
+
 # --- Go -----------------------------------------------------------------
 Say "Connecting to $ProjectUrl"
 Say "Keep this window open. Press Ctrl+C to disconnect."
