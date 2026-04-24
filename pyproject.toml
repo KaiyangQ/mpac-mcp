@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mpac-mcp"
-version = "0.1.0"
+version = "0.2.3"
 description = "MCP bridge for MPAC: coordinate coding agents working on the same repository"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,7 +31,11 @@ classifiers = [
 dependencies = [
     "websockets>=12.0",
     "mcp>=1.0.0",
-    "mpac>=0.2.0",
+    # 0.2.2+: extensions.affects_symbols needed for the `symbols` param on
+    # announce_intent to actually affect conflict detection.
+    "mpac>=0.2.2",
+    # relay_tools uses httpx to talk to the web app's file + intent APIs.
+    "httpx>=0.27",
 ]
 
 [project.urls]
@@ -51,6 +55,7 @@ mpac-mcp-smoke-governance = "mpac_mcp.smoke_governance:main"
 mpac-mcp-smoke-takeover = "mpac_mcp.smoke_takeover:main"
 mpac-mcp-smoke-remote = "mpac_mcp.smoke_remote:main"
 mpac-mcp-claude-setup = "mpac_mcp.claude_setup:main"
+mpac-mcp-relay = "mpac_mcp.relay:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
