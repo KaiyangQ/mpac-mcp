@@ -839,6 +839,43 @@ if (-not (Get-Command mpac-mcp-relay -ErrorAction SilentlyContinue)) {{
     Die "mpac-mcp-relay not on PATH after install. Check pip output above."
 }}
 
+# --- git-bash for Claude Code ------------------------------------------
+# Claude Code CLI on Windows shells out to posix `bash` (git-bash) for some
+# internal operations. Without it, `claude -p <msg>` exits 1 with the
+# string "Claude Code on Windows requires git-bash" written to STDOUT
+# (not stderr — yes really), which the relay surfaces as a confusing
+# "Claude Code failed (exit 1): " with an empty error body. The CLI only
+# auto-finds bash.exe when Git's bin dir is on $env:Path, which isn't
+# the default when Git is installed to a non-C: drive. Set the env var
+# explicitly so the relay's child claude.cmd inherits it.
+if (-not $env:CLAUDE_CODE_GIT_BASH_PATH) {{
+    $bashCandidates = @(
+        "$env:ProgramFiles\Git\bin\bash.exe",
+        "${{env:ProgramFiles(x86)}}\Git\bin\bash.exe",
+        "$env:LOCALAPPDATA\Programs\Git\bin\bash.exe"
+    )
+    # Registry wins for non-standard install drives (e.g. D:\Program Files\Git).
+    try {{
+        $gitRoot = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\GitForWindows' -Name InstallPath -ErrorAction SilentlyContinue).InstallPath
+        if ($gitRoot) {{ $bashCandidates += (Join-Path $gitRoot 'bin\bash.exe') }}
+    }} catch {{ }}
+    # Last resort: bash on PATH, filtered to only accept a Git-shipped one
+    # (avoids picking up WSL's /usr/bin/bash, which doesn't satisfy claude).
+    $onPath = (Get-Command bash.exe -ErrorAction SilentlyContinue).Source
+    if ($onPath -and ($onPath -match 'Git[\\/]bin')) {{ $bashCandidates += $onPath }}
+
+    $bashFound = $bashCandidates | Where-Object {{ $_ -and (Test-Path $_) }} | Select-Object -First 1
+    if ($bashFound) {{
+        $env:CLAUDE_CODE_GIT_BASH_PATH = $bashFound
+        Say "git-bash: $bashFound"
+    }} else {{
+        Die "git-bash not found — Claude Code CLI on Windows requires it.
+     Install Git for Windows: winget install --id Git.Git -e
+     Or:                      https://git-scm.com/downloads/win
+     Non-standard location?   Set `$env:CLAUDE_CODE_GIT_BASH_PATH manually, then re-run."
+    }}
+}}
+
 # --- Go -----------------------------------------------------------------
 Say "Connecting to $ProjectUrl"
 Say "Keep this window open. Press Ctrl+C to disconnect."
