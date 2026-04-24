@@ -137,7 +137,7 @@ anymore):
 
 ### MCP tools Claude gets
 
-**7 MPAC-aware tools** (`mpac-mcp >= 0.2.2`, the current PyPI version):
+**7 MPAC-aware tools** (`mpac-mcp >= 0.2.4`, the current PyPI version):
 
 | Tool | What Claude can do |
 |---|---|

@@ -933,6 +933,86 @@ if ($smoke.Exit -ne 0) {{
     Say "Smoke OK (claude replied $($smoke.Output.Length) chars)."
 }}
 
+# --- MCP smoke (Stage 2) ------------------------------------------------
+# The bare `claude -p` smoke above proves the CLI itself runs end-to-end.
+# It does NOT exercise the path the relay actually uses, which adds
+# `--mcp-config <path> --strict-mcp-config` so claude spawns
+# `python -m mpac_mcp.relay_tools` as a stdio MCP server before sending
+# the prompt. That spawn can fail independently — wrong Python on PATH,
+# mpac_mcp not importable in this venv, MCP_CONNECTION_BLOCKING off and
+# the server racing — and bare-CLI smoke would never see it. Run a
+# second smoke with a minimal mcp-config so the install error surfaces
+# here, not on the user's first chat message.
+function Invoke-ClaudeMcpSmoke {{
+    $cfg = New-TemporaryFile
+    try {{
+        $py = (Get-Command python -ErrorAction SilentlyContinue).Source
+        if (-not $py) {{
+            return @{{ Exit = -2; Output = "python not on PATH (unexpected — bootstrap installed mpac-mcp into it earlier)" }}
+        }}
+        # Same shape as mpac-mcp/src/mpac_mcp/relay.py:_build_mcp_config.
+        # Fake env values are fine — relay_tools only hits the web-app on
+        # tool invocation, not on the initial tools/list RPC that
+        # --strict-mcp-config waits for.
+        $mcpConfig = @{{
+            mcpServers = @{{
+                "mpac-coding" = @{{
+                    command = $py
+                    args    = @("-m", "mpac_mcp.relay_tools")
+                    env     = @{{
+                        MPAC_WEB_URL     = "https://smoke.invalid/"
+                        MPAC_AGENT_TOKEN = "smoke-fake-token"
+                        MPAC_PROJECT_ID  = "0"
+                    }}
+                }}
+            }}
+        }} | ConvertTo-Json -Depth 6 -Compress
+        $mcpConfig | Set-Content -Path $cfg -Encoding UTF8
+
+        # MCP_CONNECTION_BLOCKING=1 makes claude wait for tools/list before
+        # the prompt — without it, MCP server failures vanish silently.
+        $prevBlocking = $env:MCP_CONNECTION_BLOCKING
+        $env:MCP_CONNECTION_BLOCKING = "1"
+        try {{
+            $out = ("ping" | & claude -p `
+                --mcp-config $cfg.FullName `
+                --strict-mcp-config `
+                --dangerously-skip-permissions 2>&1 | Out-String).Trim()
+            $code = $LASTEXITCODE
+        }} catch {{
+            $out  = "INVOCATION FAILED: $($_.Exception.Message)"
+            $code = -1
+        }} finally {{
+            if ($null -eq $prevBlocking) {{ Remove-Item Env:MCP_CONNECTION_BLOCKING -EA SilentlyContinue }}
+            else                         {{ $env:MCP_CONNECTION_BLOCKING = $prevBlocking }}
+        }}
+        return @{{ Exit = $code; Output = $out }}
+    }} finally {{
+        Remove-Item $cfg -ErrorAction SilentlyContinue
+    }}
+}}
+
+# Only run MCP smoke if Stage 1 passed — otherwise the failure here would
+# just be a noisier copy of the same bare-CLI error.
+if ($smoke.Exit -eq 0) {{
+    Say "Smoke-testing claude -p with MCP config (catches relay_tools spawn failures)..."
+    $mcpSmoke = Invoke-ClaudeMcpSmoke
+    if ($mcpSmoke.Exit -ne 0) {{
+        Write-Host "[mpac] X MCP smoke test FAILED (exit=$($mcpSmoke.Exit))." -ForegroundColor Red
+        Write-Host "[mpac]   This means claude can run, but spawning the mpac_mcp.relay_tools" -ForegroundColor Red
+        Write-Host "[mpac]   MCP server (which the relay also does on every chat) failed." -ForegroundColor Red
+        Write-Host "[mpac]   Output:" -ForegroundColor Red
+        ($mcpSmoke.Output -split "`n") | ForEach-Object {{ Write-Host "[mpac]     $_" -ForegroundColor Yellow }}
+        Write-Host "[mpac]   Common causes:" -ForegroundColor Red
+        Write-Host "[mpac]     * mpac_mcp installed into a different Python than 'python' on PATH" -ForegroundColor Red
+        Write-Host "[mpac]     * stale mpac-mcp wheel that doesn't have relay_tools (pre-0.2.0)" -ForegroundColor Red
+        Write-Host "[mpac]   Try:  python -m mpac_mcp.relay_tools  (should print nothing then wait on stdin)" -ForegroundColor Red
+        Write-Host "[mpac]   Proceeding to launch relay anyway so you can see the live failure." -ForegroundColor Red
+    }} else {{
+        Say "MCP smoke OK (mpac_mcp.relay_tools loaded + tools/list returned)."
+    }}
+}}
+
 # --- Go -----------------------------------------------------------------
 Say "Connecting to $ProjectUrl"
 Say "Keep this window open. Press Ctrl+C to disconnect."

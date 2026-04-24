@@ -1,0 +1,196 @@
+name: CI
+
+# Cross-platform smoke. Catches the class of bugs that hit every Windows
+# beta tester between 2026-04-22 and 2026-04-24 — install path resolution,
+# PowerShell EP gates, $LASTEXITCODE on .NET exceptions, etc. — by running
+# the actual tests on a real Windows runner before they reach a real user.
+#
+# Three jobs:
+#   * tests       — pytest matrix on Ubuntu/macOS/Windows for the three
+#                   Python packages (mpac-package, ref-impl/python, mpac-mcp).
+#   * bootstrap   — render bootstrap.ps1 from the live agent.py code, then
+#                   parse + PSScriptAnalyzer it on a Windows runner. Catches
+#                   syntax / lint regressions in the most-edited script of
+#                   the past week WITHOUT trying to run a real `claude /login`
+#                   in CI (no browser, no OAuth).
+#   * web-app-api — uvicorn smoke import. Catches "I broke a route file"
+#                   without spinning the full server.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same PR/branch — saves runner minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests · ${{ matrix.os }} · py${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.12']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      # ── mpac-package (the `mpac` PyPI package) ──────────────────────
+      - name: Install mpac-package
+        run: |
+          cd mpac-package
+          pip install -e .
+          pip install pytest
+
+      - name: Test mpac-package
+        run: |
+          cd mpac-package
+          pytest tests/ -v
+
+      # ── ref-impl/python (the v0.1.13 reference implementation) ─────
+      - name: Install ref-impl/python
+        run: |
+          cd ref-impl/python
+          pip install -e .
+          pip install pytest
+
+      - name: Test ref-impl/python
+        run: |
+          cd ref-impl/python
+          pytest tests/ -v
+
+      # ── mpac-mcp (the `mpac-mcp` PyPI package) ──────────────────────
+      - name: Install mpac-mcp
+        run: |
+          cd mpac-mcp
+          pip install -e .
+          pip install pytest
+
+      - name: Test mpac-mcp
+        run: |
+          cd mpac-mcp
+          pytest tests/ -v
+
+  bootstrap:
+    name: bootstrap.ps1 syntax + analyzer
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install web-app API deps
+        run: |
+          cd web-app/api
+          pip install -r requirements.txt
+
+      - name: Render bootstrap.ps1 from agent.py
+        shell: bash
+        run: |
+          cd web-app
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from api.routes.agent import _render_bootstrap_ps1
+          script = _render_bootstrap_ps1(
+              relay_url='wss://example.test/ws/relay/1',
+              token_value='ci-fake-token-not-real',
+          )
+          print(script)
+          " > /tmp/bootstrap.ps1
+          echo "rendered $(wc -l < /tmp/bootstrap.ps1) lines, $(wc -c < /tmp/bootstrap.ps1) bytes"
+
+      - name: PowerShell parse check (catches syntax errors)
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+              '/tmp/bootstrap.ps1',
+              [ref]$null,
+              [ref]$errors
+          ) | Out-Null
+          if ($errors -and $errors.Count -gt 0) {
+              Write-Host "::error::bootstrap.ps1 has $($errors.Count) parse error(s):"
+              $errors | ForEach-Object {
+                  Write-Host "  line $($_.Extent.StartLineNumber): $($_.Message)"
+              }
+              exit 1
+          }
+          Write-Host "bootstrap.ps1 parsed OK"
+
+      - name: PSScriptAnalyzer (catches lint warnings + errors)
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+              Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -ErrorAction Stop
+          }
+          $issues = Invoke-ScriptAnalyzer -Path /tmp/bootstrap.ps1 `
+              -Severity Error,Warning `
+              -ExcludeRule PSUseShouldProcessForStateChangingFunctions
+          if ($issues) {
+              $issues | Format-Table Severity,Line,RuleName,Message -AutoSize
+              $errorCount = ($issues | Where-Object { $_.Severity -eq 'Error' }).Count
+              if ($errorCount -gt 0) {
+                  Write-Host "::error::PSScriptAnalyzer found $errorCount Error-severity issue(s)"
+                  exit 1
+              }
+              Write-Host "::warning::PSScriptAnalyzer found warnings (not failing build)"
+          } else {
+              Write-Host "PSScriptAnalyzer: clean"
+          }
+
+  web-app-api:
+    name: web-app api · uvicorn import smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install API deps
+        run: |
+          cd web-app/api
+          pip install -r requirements.txt
+
+      - name: Import smoke (every route file loads, no syntax errors)
+        run: |
+          cd web-app
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          # Importing main loads every router module — catches syntax /
+          # name errors regardless of whether routes are exercised.
+          from api.main import app
+          # Sanity: assert a known router is mounted.
+          paths = {r.path for r in app.routes}
+          assert '/api/login' in paths, f'login route missing — got {paths}'
+          print(f'OK: {len(paths)} routes mounted')
+          "

@@ -14,4 +14,8 @@ cryptography>=42.0
 # + `mod.attr()` — the most common Python idiom for submodule access.
 # Without this, internal-beta scenario 4 would never flag the importer.
 mpac>=0.2.4
-mpac-mcp>=0.1.0
+# Pinned to match `_MIN_MPAC_MCP` in api/routes/agent.py — bootstrap
+# auto-upgrades clients to this floor. Server install must satisfy the
+# same minimum or stale dev wheels can bypass the 0.2.4 relay error
+# decoding (stderr+stdout merge). Bump both together.
+mpac-mcp>=0.2.4
