@@ -661,6 +661,26 @@ def _render_bootstrap_ps1(relay_url: str, token_value: str) -> str:
 # checks below to decide success/failure.
 $ErrorActionPreference = "Continue"
 
+# --- Execution Policy ---------------------------------------------------
+# Windows client SKUs default to ExecutionPolicy=Restricted, which blocks
+# .ps1 scripts. That matters because both `npm` and `claude` on Windows
+# are .ps1 shims, not .exes. Worse, the block surfaces as a
+# PSSecurityException that does NOT set $LASTEXITCODE — so naive "if
+# ($LASTEXITCODE -ne 0)" checks downstream miss a total failure and
+# let the script "succeed" with nothing installed. Override to Bypass
+# at Process scope; evaporates on shell exit, no lingering policy change.
+try {{
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction Stop
+}} catch {{
+    $curr = Get-ExecutionPolicy
+    if ($curr -in 'Restricted','AllSigned','Undefined') {{
+        Write-Host "[mpac] X Group Policy pins ExecutionPolicy=$curr; Process-scope override denied." -ForegroundColor Red
+        Write-Host "[mpac]   Run once (no admin needed), then re-try the iex command:" -ForegroundColor Red
+        Write-Host "[mpac]     Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force" -ForegroundColor Red
+        exit 1
+    }}
+}}
+
 $ProjectUrl = "{relay_url}"
 $Token = "{token}"
 $MinMpacMcp = "{ver}"
@@ -701,9 +721,27 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {{
 # --- Claude Code CLI ----------------------------------------------------
 if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {{
     Say "Installing Claude Code globally (npm install -g @anthropic-ai/claude-code)..."
-    npm install -g @anthropic-ai/claude-code
-    if ($LASTEXITCODE -ne 0) {{
-        Die "npm install failed. If this was a permissions error, open PowerShell as Administrator and re-run."
+    # npm.ps1 and npm.cmd can both fail in ways $LASTEXITCODE doesn't
+    # capture (PSSecurityException, CommandNotFoundException) — wrap
+    # in try/catch and AND $? into success detection so a silent
+    # throw can't look like success.
+    $npmOk = $false
+    try {{
+        npm install -g @anthropic-ai/claude-code
+        $npmOk = ($? -and ($LASTEXITCODE -eq 0))
+    }} catch {{
+        Die "npm install failed to invoke: $($_.Exception.Message)"
+    }}
+    if (-not $npmOk) {{
+        Die "npm install failed (exit=$LASTEXITCODE). If this was a permissions error, open PowerShell as Administrator and re-run."
+    }}
+    # npm drops claude.cmd/claude.ps1 in %APPDATA%\npm. The Node.js
+    # installer adds that dir to the User-scope Path registry value,
+    # but that update only reaches a *new* shell. Rebuild $env:PATH
+    # from the registry in-process so claude becomes findable right now.
+    $env:PATH = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
+    if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {{
+        Die "npm install exited 0 but 'claude' isn't on PATH. Expected it in $env:APPDATA\npm — check that npm-global dir is on your User Path."
     }}
 }}
 
@@ -726,8 +764,17 @@ $loggedIn = $claudeInstalled -and $sessions -and $sessions.Count -gt 0
 if (-not $loggedIn) {{
     Say "Claude Code not yet authenticated on this machine. Running 'claude /login' (browser will open)..."
     Say "Complete the login flow, then this script continues automatically."
-    claude /login
-    if ($LASTEXITCODE -ne 0) {{ Die "claude /login failed or was cancelled." }}
+    # Same pattern as npm install above: `claude` is a .ps1 shim that
+    # can throw instead of setting $LASTEXITCODE. $? catches the throw,
+    # $LASTEXITCODE catches a normal non-zero exit.
+    $loginOk = $false
+    try {{
+        claude /login
+        $loginOk = ($? -and ($LASTEXITCODE -eq 0))
+    }} catch {{
+        Die "claude /login invocation failed: $($_.Exception.Message)"
+    }}
+    if (-not $loginOk) {{ Die "claude /login failed or was cancelled (exit=$LASTEXITCODE)." }}
     Say "Claude authenticated."
 }}
 
