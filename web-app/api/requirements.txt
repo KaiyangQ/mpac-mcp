@@ -18,4 +18,6 @@ mpac>=0.2.4
 # auto-upgrades clients to this floor. Server install must satisfy the
 # same minimum or stale dev wheels can bypass the 0.2.4 relay error
 # decoding (stderr+stdout merge). Bump both together.
-mpac-mcp>=0.2.4
+# 0.2.5: relay /ws/relay auth via Authorization header instead of
+# ``?token=`` query — closes the URL-leak surface the v3 review flagged.
+mpac-mcp>=0.2.5

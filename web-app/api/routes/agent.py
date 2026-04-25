@@ -516,7 +516,13 @@ async def agent_list_active_intents(
 # Minimum mpac-mcp version the bootstrap script will install. Bump when a
 # new tool or required field lands so fresh users get it. Kept as a module
 # constant so the agent-token response and the rendered script agree.
-_MIN_MPAC_MCP = "0.2.4"
+#
+# 0.2.5: relay switched ``/ws/relay`` auth from ``?token=`` query to an
+# Authorization header. Server side accepts both for back-compat, but
+# bumping the floor here is what actually flushes ``?token=`` out of
+# fresh installs — without this bump, bootstrap accepts an existing
+# 0.2.4 wheel and the URL leak persists for new users too.
+_MIN_MPAC_MCP = "0.2.5"
 
 
 def _render_bootstrap_sh(relay_url: str, token_value: str) -> str:

@@ -326,7 +326,21 @@ async def run_relay(args: argparse.Namespace) -> int:
     # rollout window: header (preferred) AND query (back-compat for relays
     # built against pre-0.2.5 mpac-mcp). Once we're sure no clients are on
     # the old path, the query fallback can come out.
-    auth_headers = {"Authorization": f"Bearer {args.token}"}
+    #
+    # Header-kwarg name compat: the websockets library renamed
+    # ``extra_headers`` → ``additional_headers`` in v14. Our pyproject still
+    # allows ``websockets>=12.0`` for environments that pinned an older
+    # version, so we pick the right kwarg at runtime — same pattern
+    # ``coordinator_bridge._WS_HEADER_KWARG`` uses. Hard-coding
+    # ``additional_headers=`` would break any user with v12/13 already
+    # satisfying the constraint (pip won't upgrade past a satisfied pin).
+    auth_headers = [("Authorization", f"Bearer {args.token}")]
+    try:
+        _ws_major = int(websockets.__version__.split(".")[0])
+    except (AttributeError, ValueError):
+        _ws_major = 0
+    _ws_header_kwarg = "additional_headers" if _ws_major >= 14 else "extra_headers"
+    ws_connect_extra: dict = {_ws_header_kwarg: auth_headers}
 
     # Reconnect loop with exponential backoff (capped at 60 s). A production
     # backend restart or a brief network blip should NOT require the user to
@@ -338,10 +352,10 @@ async def run_relay(args: argparse.Namespace) -> int:
         try:
             async with websockets.connect(
                 uri, max_size=4 * 1024 * 1024,
-                additional_headers=auth_headers,
                 open_timeout=15,
                 close_timeout=5,
                 ping_interval=20, ping_timeout=20,
+                **ws_connect_extra,
             ) as ws:
                 # Successful connect — reset backoff counter.
                 attempts = 0
