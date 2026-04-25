@@ -14,6 +14,7 @@ import {
   Folder,
   LogOut,
   Pencil,
+  RotateCcw,
   Share2,
   Trash2,
 } from "lucide-react";
@@ -875,7 +876,7 @@ export default function WorkspacePage({
   >(null);
   // In-page destructive confirm (replaces window.confirm — see
   // destructive-confirm-modal.tsx for why a real modal over native dialog).
-  const [pendingDanger, setPendingDanger] = useState<"delete" | "leave" | null>(null);
+  const [pendingDanger, setPendingDanger] = useState<"delete" | "leave" | "reset" | null>(null);
   const [dangerBusy, setDangerBusy] = useState(false);
   const [agentConnected, setAgentConnected] = useState(false);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -1176,6 +1177,18 @@ export default function WorkspacePage({
               Invite
             </Button>
           )}
+          {isOwner && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setPendingDanger("reset")}
+              title="Restore notes_app demo files to seed state (owner only)"
+              className="gap-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-transparent hover:border-[var(--border)]"
+            >
+              <RotateCcw className="size-3.5" />
+              Reset
+            </Button>
+          )}
           {isOwner ? (
             <Button
               size="sm"
@@ -1459,7 +1472,9 @@ export default function WorkspacePage({
             ? `Delete project "${project.name}"?`
             : pendingDanger === "leave"
               ? `Leave "${project.name}"?`
-              : ""
+              : pendingDanger === "reset"
+                ? `Reset "${project.name}" to seed?`
+                : ""
         }
         body={
           pendingDanger === "delete"
@@ -1469,26 +1484,46 @@ export default function WorkspacePage({
             : pendingDanger === "leave"
               ? "Your browser session and any Claude relay you have running will lose access.\n\n" +
                 "The project stays put for the owner and other members — they can re-invite you later if needed."
-              : ""
+              : pendingDanger === "reset"
+                ? "Overwrites the 8 canonical notes_app files (auth.py, db.py, models.py, search.py, api.py, cli.py, exporter.py, __init__.py) back to the BETA_EXAMPLE.md seed state.\n\n" +
+                  "Project URL, members, invites, and any non-canonical files you added are unchanged. Active intents clear on next relay reconnect.\n\n" +
+                  "Other members will need to refresh their browser to see the restored content."
+                : ""
         }
-        confirmLabel={pendingDanger === "delete" ? "Delete" : "Leave"}
+        confirmLabel={
+          pendingDanger === "delete"
+            ? "Delete"
+            : pendingDanger === "reset"
+              ? "Reset"
+              : "Leave"
+        }
         busy={dangerBusy}
         onConfirm={async () => {
           if (!pendingDanger) return;
+          const action = pendingDanger;
           setDangerBusy(true);
           try {
-            if (pendingDanger === "delete") {
+            if (action === "delete") {
               await api.deleteProject(project.id);
-            } else {
+              router.push("/projects");
+            } else if (action === "leave") {
               await api.leaveProject(project.id);
+              router.push("/projects");
+            } else {
+              // reset — stay on page, refresh file tree + clear content cache
+              await api.resetProjectToSeed(project.id);
+              const files = await api.listProjectFiles(project.id);
+              setFilePaths(files.files.map((f) => f.path));
+              setFileContents({});
+              setPendingDanger(null);
             }
-            // Regardless of action, user no longer has access → dashboard.
-            router.push("/projects");
           } catch (e) {
+            const label =
+              action === "delete" ? "Delete" : action === "reset" ? "Reset" : "Leave";
             setLoadError(
               e instanceof ApiError
-                ? `${pendingDanger === "delete" ? "Delete" : "Leave"} failed: ${e.message}`
-                : `${pendingDanger === "delete" ? "Delete" : "Leave"} failed — see console.`
+                ? `${label} failed: ${e.message}`
+                : `${label} failed — see console.`
             );
             setPendingDanger(null);
             // eslint-disable-next-line no-console

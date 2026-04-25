@@ -182,6 +182,11 @@ export const api = {
   deleteProject: (projectId: number) =>
     request<void>("DELETE", `/api/projects/${projectId}`),
 
+  /** Owner-only. Overwrites the canonical notes_app demo files back
+   * to seed state. URL/members/invites unchanged. */
+  resetProjectToSeed: (projectId: number) =>
+    request<void>("POST", `/api/projects/${projectId}/reset-to-seed`),
+
   /** Non-owner-only. Revokes the caller's tokens for this project. */
   leaveProject: (projectId: number) =>
     request<void>("POST", `/api/projects/${projectId}/leave`),

@@ -15,6 +15,7 @@ from ..schemas import (
     ProjectCreate, ProjectResponse, ProjectListResponse,
     InviteCreate, InviteResponse, InviteAccept, InvitePreview, TokenResponse,
 )
+from ..seed_data.notes_app import FILES as NOTES_APP_SEED
 
 
 log = logging.getLogger("mpac.projects")
@@ -216,6 +217,52 @@ def delete_project(
         project_id, project.name, user.id, n_files, n_tokens, n_invites,
     )
     # 204 No Content — FastAPI will skip the response body.
+    return None
+
+
+@router.post("/projects/{project_id}/reset-to-seed", status_code=204)
+def reset_project_to_seed(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Owner-only. Overwrite the canonical ``notes_app`` demo files
+    in PROJECT_ID back to seed state.
+
+    Project URL, members, invite codes, and any non-canonical files
+    the user added are unchanged. Active intents clear naturally on
+    next relay reconnect — we don't touch the in-memory session.
+
+    Designed for the unified internal-beta playbook where each test
+    pass mutates ``auth.py`` / ``db.py`` etc. and the next pass needs
+    a clean slate without re-creating the project (URL + invites
+    would all churn).
+    """
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    if project.owner_id != user.id:
+        raise HTTPException(403, "Only the project owner can reset this project")
+
+    n_overwritten = 0
+    n_created = 0
+    for path, content in NOTES_APP_SEED.items():
+        row = db.query(ProjectFile).filter(
+            ProjectFile.project_id == project_id,
+            ProjectFile.path == path,
+        ).first()
+        if row:
+            row.content = content
+            n_overwritten += 1
+        else:
+            db.add(ProjectFile(project_id=project_id, path=path, content=content))
+            n_created += 1
+    db.commit()
+
+    log.info(
+        "Project reset to seed: id=%s name=%s owner=%s overwritten=%d created=%d",
+        project_id, project.name, user.id, n_overwritten, n_created,
+    )
     return None
 
 
