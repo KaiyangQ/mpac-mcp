@@ -98,6 +98,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     clearStoredJwt();
     setHasToken(false);
     setUser(null);
+    // Drop the WS-auth cookie too. We don't await — the response is
+    // 204 and any failure (network blip, server down) doesn't change
+    // what we want client-side: the localStorage-resident JWT is gone,
+    // so HTTP routes already fail; the server-side cookie is at worst
+    // dangling for 72h and ``_origin_allowed`` still blocks cross-site
+    // use of it. Best-effort fire-and-forget keeps logout snappy.
+    void fetch(
+      `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001"}/api/logout`,
+      { method: "POST", credentials: "include" },
+    ).catch(() => {
+      /* noop */
+    });
   }, []);
 
   const refresh = useCallback(async () => {

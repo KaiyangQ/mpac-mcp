@@ -26,7 +26,7 @@ import os
 import secrets
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from ..auth import AuthCtx, assert_token_scope, get_current_user, get_user_or_agent
@@ -174,23 +174,37 @@ def mint_agent_token(
     # substitution keeps the script's stdin as a real TTY so the
     # interactive ``claude /login`` prompt works. With a pipe, claude
     # would lose access to the terminal.
+    #
+    # 2026-04-25 v2 — token now travels in an ``Authorization: Bearer``
+    # header instead of ``?token=`` query param. Same blast-radius
+    # benefit as the WS cookie switch: the URL no longer carries a
+    # credential, so any intermediary proxy or diagnostic log (``curl
+    # -v``, browser history if anyone opens the URL directly, etc.)
+    # stops capturing it. The bootstrap route still accepts ?token= for
+    # back-compat with already-pasted commands; new modal output uses
+    # the header form.
     bootstrap_sh_url = (
         f"{http_base}/api/projects/{project_id}/bootstrap.sh"
-        f"?token={token.token_value}"
     )
     bootstrap_ps1_url = (
         f"{http_base}/api/projects/{project_id}/bootstrap.ps1"
-        f"?token={token.token_value}"
     )
     # ``bash <(…)`` (process substitution) keeps stdin as a real TTY so
     # the interactive ``claude /login`` prompt works. ``curl | bash`` would
     # consume stdin and leave claude unable to read the paste-back code.
-    launch_command = f"bash <(curl -fsSL '{bootstrap_sh_url}')"
+    launch_command = (
+        f'bash <(curl -fsSL -H "Authorization: Bearer {token.token_value}" '
+        f"'{bootstrap_sh_url}')"
+    )
     # PowerShell equivalent: download to memory, invoke as a script block.
     # ``iex (irm …)`` is the classic form and works for our use case
     # because ``claude /login`` opens an OS browser — it doesn't need
-    # stdin in the PS pipeline.
-    launch_command_windows = f"iex (irm '{bootstrap_ps1_url}')"
+    # stdin in the PS pipeline. ``-Headers`` sets Authorization without
+    # putting the token in the URL.
+    launch_command_windows = (
+        f"iex (irm '{bootstrap_ps1_url}' "
+        f"-Headers @{{Authorization='Bearer {token.token_value}'}})"
+    )
 
     return AgentTokenResponse(
         token_value=token.token_value,
@@ -363,13 +377,23 @@ async def agent_check_overlap(
     # matches the fallback-to-path-overlap semantics we promised.
     my_impact = set(compute_scope_impact(db, req.project_id, list(req.files)))
     overlaps: list[dict] = []
-    # Coordinator.intents is the source of truth for live intents (the conn
-    # objects don't carry intent state — frontends derive it from broadcasts).
+    # Same live-state filter as agent_list_active_intents below — using
+    # ``current_state`` against the IntentState enum, NOT a hypothetical
+    # ``state`` string attribute (the latter is None on every intent and
+    # would let any non-running scenario throw at the line below). The
+    # bug here was an AttributeError waiting to fire as soon as a peer
+    # had any in-flight intent: ``check_overlap`` is the very tool agents
+    # call BEFORE announcing, so the failure mode was "Claude can't even
+    # ask whether it's safe to start work." Using the enum + the
+    # is_terminal helper matches what coordinator.py:351 / :615 / :711
+    # all do internally.
+    live_states = {
+        IntentState.ANNOUNCED, IntentState.ACTIVE, IntentState.SUSPENDED,
+    }
     for intent_id, intent in session.coordinator.intents.items():
         if intent.principal_id == conn.principal_id:
             continue
-        # Only consider intents that are still active (not terminated).
-        if intent.state_machine.state in ("Withdrawn", "Completed", "Terminated"):
+        if intent.state_machine.current_state not in live_states:
             continue
         scope = intent.scope
         their_files = set(scope.resources) if scope else set()
@@ -1033,6 +1057,23 @@ Say "Keep this window open. Press Ctrl+C to disconnect."
     )
 
 
+def _resolve_bootstrap_token(
+    authorization: str | None, token_query: str | None,
+) -> str | None:
+    """Pull the agent bearer out of either ``Authorization: Bearer …`` (the
+    new header-based path, see /agent-token launch_command) or the legacy
+    ``?token=`` query param. Header wins when both are present.
+
+    Returns ``None`` if neither is supplied — the route then renders an
+    error script telling the user to re-Connect.
+    """
+    if authorization and authorization.startswith("Bearer "):
+        return authorization[len("Bearer "):].strip() or None
+    if token_query:
+        return token_query
+    return None
+
+
 @router.get(
     "/projects/{project_id}/bootstrap.ps1",
     include_in_schema=False,
@@ -1040,17 +1081,34 @@ Say "Keep this window open. Press Ctrl+C to disconnect."
 )
 def bootstrap_ps1(
     project_id: int,
-    token: str,
+    token: str | None = None,
+    authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
     """Windows/PowerShell counterpart to :func:`bootstrap_sh`.
 
     Served as ``text/plain`` so PowerShell's ``Invoke-RestMethod`` /
     ``Invoke-WebRequest`` both treat it as raw text. Clients fetch via
-    ``iex (irm 'URL')`` which downloads + parses + executes in one step.
+    ``iex (irm 'URL' -Headers @{Authorization='Bearer …'})`` (preferred,
+    header form keeps the token out of URLs / proxy logs) or the legacy
+    ``iex (irm 'URL?token=…')`` for back-compat with already-pasted
+    commands.
     """
+    bearer = _resolve_bootstrap_token(authorization, token)
+    if not bearer:
+        return Response(
+            content=(
+                "Write-Host '[mpac] Connect token missing.' "
+                "-ForegroundColor Red\n"
+                "Write-Host '[mpac] Re-open the Connect Claude modal to get "
+                "a fresh command.' -ForegroundColor Red\n"
+                "exit 1\n"
+            ),
+            media_type="text/plain; charset=utf-8",
+            status_code=200,
+        )
     row = db.query(Token).filter(
-        Token.token_value == token,
+        Token.token_value == bearer,
         Token.project_id == project_id,
         Token.is_agent == True,  # noqa: E712
         Token.is_revoked == False,  # noqa: E712
@@ -1070,7 +1128,7 @@ def bootstrap_ps1(
 
     ws_base = _public_ws_base()
     relay_url = f"{ws_base}/ws/relay/{project_id}"
-    script = _render_bootstrap_ps1(relay_url, token)
+    script = _render_bootstrap_ps1(relay_url, bearer)
     return Response(
         content=script,
         media_type="text/plain; charset=utf-8",
@@ -1084,16 +1142,20 @@ def bootstrap_ps1(
 )
 def bootstrap_sh(
     project_id: int,
-    token: str,
+    token: str | None = None,
+    authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
     """Return a rendered ``bash`` bootstrap script for this project.
 
-    Authentication is the ``token`` query parameter — a live agent bearer
-    for this project. We deliberately DON'T require a logged-in session
-    cookie or Authorization header here: the user will be running this
-    from a clean terminal via ``bash <(curl ...)``, so cookies aren't
-    available and adding headers would make the copy-paste longer.
+    Authentication accepts EITHER an ``Authorization: Bearer …`` header
+    (the new default — generated launch_command uses ``curl -fsSL -H
+    "Authorization: Bearer …"``) OR the legacy ``?token=`` query
+    parameter. The header form is preferred because it keeps the agent
+    bearer out of URLs, which means out of intermediary proxy logs,
+    ``curl -v`` debug dumps, browser history, etc. The query form stays
+    for back-compat with already-pasted commands; expect a future hard
+    cut once we're confident no one is on the old path.
 
     The token itself is short-lived and single-connection: once the relay
     authenticates with it, subsequent ``/agent-token`` calls will reuse
@@ -1104,8 +1166,20 @@ def bootstrap_sh(
     Response is ``text/plain`` — matters for ``curl | bash`` not to mung
     line-endings or inject a BOM.
     """
+    bearer = _resolve_bootstrap_token(authorization, token)
+    if not bearer:
+        return Response(
+            content=(
+                "#!/usr/bin/env bash\n"
+                "echo '[mpac] Connect token missing.' >&2\n"
+                "echo '[mpac] Re-open the Connect Claude modal to get a fresh command.' >&2\n"
+                "exit 1\n"
+            ),
+            media_type="text/plain; charset=utf-8",
+            status_code=200,
+        )
     row = db.query(Token).filter(
-        Token.token_value == token,
+        Token.token_value == bearer,
         Token.project_id == project_id,
         Token.is_agent == True,  # noqa: E712
         Token.is_revoked == False,  # noqa: E712
@@ -1126,7 +1200,7 @@ def bootstrap_sh(
 
     ws_base = _public_ws_base()
     relay_url = f"{ws_base}/ws/relay/{project_id}"
-    script = _render_bootstrap_sh(relay_url, token)
+    script = _render_bootstrap_sh(relay_url, bearer)
     return Response(
         content=script,
         media_type="text/plain; charset=utf-8",

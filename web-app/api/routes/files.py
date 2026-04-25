@@ -18,7 +18,12 @@ from sqlalchemy.orm import Session
 # as a claude -p MCP server) read/write the same files as the user's browser.
 # We also pull AuthCtx + assert_token_scope so each route can refuse a leaked
 # agent token from project A being replayed against project B (P1.1 fix).
-from ..auth import AuthCtx, assert_token_scope, get_user_or_agent
+from ..auth import (
+    AuthCtx,
+    assert_token_scope,
+    caller_principal_id,
+    get_user_or_agent,
+)
 from ..database import get_db
 from ..models import Project, ProjectFile, Token, User
 from ..mpac_bridge import broadcast_project_event
@@ -76,8 +81,10 @@ def _assert_caller_holds_intent(
     where nobody has ever connected a WS — there's no one to coordinate
     with. The first WS HELLO turns the gate on.
     """
-    # Local import to avoid pulling the bridge into module-load order.
+    # Local imports to avoid pulling the bridge / protocol enums into
+    # module-load order; both are cheap once cached.
     from ..mpac_bridge import registry as session_registry
+    from mpac_protocol.core.models import IntentState
 
     session = session_registry.get(project_id)
     if session is None:
@@ -88,13 +95,22 @@ def _assert_caller_holds_intent(
         f"agent:user-{user_id}" if is_agent else f"user:{user_id}"
     )
 
+    # Live = announced/active/suspended; intents in any other state (including
+    # WITHDRAWN, COMPLETED, TERMINATED, SUPERSEDED) no longer authorize
+    # writes. Bug pre-2026-04-25 v2: this used ``getattr(state_machine,
+    # "state", None)`` against a string list, but the field is
+    # ``current_state`` (an IntentState enum). The getattr always returned
+    # None, so terminal intents were never filtered — a withdrawn intent
+    # whose 800ms-debounced autosave PUT followed the yield could still
+    # sneak through.
+    live_states = {
+        IntentState.ANNOUNCED, IntentState.ACTIVE, IntentState.SUSPENDED,
+    }
+
     for intent in session.coordinator.intents.values():
         if intent.principal_id != expected_principal:
             continue
-        # Skip terminated intents — coordinator keeps them around for audit
-        # but they don't carry edit rights.
-        state_name = getattr(intent.state_machine, "state", None)
-        if state_name in ("Withdrawn", "Completed", "Terminated", "Superseded"):
+        if intent.state_machine.current_state not in live_states:
             continue
         scope = getattr(intent, "scope", None)
         resources = list(getattr(scope, "resources", []) or []) if scope else []
@@ -228,11 +244,16 @@ def upsert_file(
         db.add(row)
     db.commit()
     db.refresh(row)
+    # Exclude only the caller's actual principal — when the relay (agent
+    # token) writes a file, the same user's BROWSER (``user:{id}``) still
+    # needs the event so its file viewer refreshes. Pre-fix this was
+    # hard-coded to ``user:{id}`` regardless of caller, which silently
+    # dropped every Claude commit's notification on the owner's tab.
     broadcast_project_event(
         project_id,
         "file_changed",
         {"path": norm, "updated_at": row.updated_at.isoformat()},
-        exclude_principal=f"user:{user.id}",
+        exclude_principal=caller_principal_id(ctx),
     )
     return ProjectFileContent(
         path=row.path,
@@ -262,6 +283,8 @@ def delete_file(
     db.delete(row)
     db.commit()
     broadcast_project_event(
-        project_id, "file_deleted", {"path": norm}, exclude_principal=f"user:{user.id}",
+        project_id, "file_deleted",
+        {"path": norm},
+        exclude_principal=caller_principal_id(ctx),
     )
     return {"status": "deleted", "path": norm}

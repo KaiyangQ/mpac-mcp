@@ -157,10 +157,18 @@ def _origin_allowed(origin: str | None) -> bool:
 async def ws_session(ws: WebSocket, project_id: int, token: str = ""):
     """Bridge a browser to this project's in-process MPAC coordinator.
 
-    Auth: JWT passed via `?token=` query param (WebSocket handshake can't
-    send custom headers reliably from the browser). We then look up the
-    user's MPAC bearer token in our DB and synthesize a HELLO on their
-    behalf.
+    Auth: JWT carried in an HttpOnly cookie set on /login + /register
+    (``mpac_jwt``). The browser sends it automatically on the WS upgrade
+    so the URL no longer needs ``?token=<jwt>`` — that path is still
+    accepted as a fallback for back-compat with any tab opened before
+    the 2026-04-25-v2 cut, but the frontend stops generating it.
+
+    Why bother: ``?token=`` lands in nginx access log (we now ``access_log
+    off`` /ws/, but other proxies between client and server may still
+    log), browser history (for direct navigation), and ``curl -v`` /
+    diagnostic dumps. Cookie + Origin pin closes the URL-leak surface
+    without giving up CSRF protection (Origin is checked below + the
+    cookie is ``SameSite=Lax``).
 
     Browser protocol:
       - Sends JSON actions: ``{"action": "begin_task", ...}`` etc.
@@ -174,8 +182,12 @@ async def ws_session(ws: WebSocket, project_id: int, token: str = ""):
         await ws.close(code=4403, reason="origin not allowed")
         return
 
-    # 1. JWT → user
-    payload = decode_jwt(token) if token else None
+    # 1. JWT → user. Cookie wins over ?token= when both are present (so
+    #    a stale tab with a copy-pasted query token still works while we
+    #    transition, but new sessions stop putting the JWT on the wire).
+    cookie_jwt = ws.cookies.get("mpac_jwt")
+    raw_jwt = cookie_jwt or token
+    payload = decode_jwt(raw_jwt) if raw_jwt else None
     if not payload:
         await ws.close(code=4401, reason="invalid token")
         return

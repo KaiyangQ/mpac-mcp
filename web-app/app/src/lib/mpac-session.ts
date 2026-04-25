@@ -360,10 +360,16 @@ export function useMpacSession({
 
   const connect = useCallback(() => {
     if (!enabled) return;
+    // We still gate on getStoredJwt() so we don't open a doomed WS before
+    // the user has logged in — but the JWT itself no longer rides in the
+    // URL. The browser sends the ``mpac_jwt`` HttpOnly cookie set on
+    // /login + /register automatically on the upgrade; the backend reads
+    // it instead of ``?token=``. Closes the URL-leak surface flagged in
+    // the 2026-04-25 v2 review (proxy logs, browser history, ``curl -v``).
     const jwt = getStoredJwt();
     if (!jwt) return;
 
-    const url = `${wsUrlFromApi(API_URL)}/ws/session/${projectId}?token=${encodeURIComponent(jwt)}`;
+    const url = `${wsUrlFromApi(API_URL)}/ws/session/${projectId}`;
     setStatus(attemptRef.current === 0 ? "connecting" : "reconnecting");
 
     const ws = new WebSocket(url);

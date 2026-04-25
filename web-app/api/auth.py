@@ -45,6 +45,30 @@ def assert_token_scope(ctx: "AuthCtx", project_id: int) -> None:
         )
 
 
+def caller_principal_id(ctx: "AuthCtx") -> str:
+    """Synthesize the MPAC ``principal_id`` for the authenticated caller.
+
+    Used by HTTP routes that broadcast a side-effect (file_changed,
+    file_deleted, etc.) and want to exclude only the connection that
+    initiated the change — not all of that user's connections. The MPAC
+    coordinator routes by principal_id and a single user has TWO live
+    principals at most (``user:42`` for the browser, ``agent:user-42``
+    for the relay). Excluding the wrong one means either:
+
+      * (was the bug pre-2026-04-25 v2) excluding ``user:42`` when the
+        caller was the agent — the agent's user's own browser missed the
+        file_changed event and showed stale content.
+      * excluding ``agent:user-42`` when the caller was the browser — no
+        functional issue (relays ignore PROJECT_EVENT) but the relay still
+        receives the event over the wire.
+
+    JWT path → ``user:{id}``; agent-token path → ``agent:user-{id}``.
+    """
+    if ctx.token_project_id is None:
+        return f"user:{ctx.user.id}"
+    return f"agent:user-{ctx.user.id}"
+
+
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 

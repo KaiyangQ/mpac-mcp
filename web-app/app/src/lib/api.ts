@@ -140,6 +140,12 @@ async function request<T>(
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    // Send + accept cookies on every request. Required for the WS-auth
+    // cookie set on /login + /register to actually land in the browser
+    // jar in dev (frontend :3000 ↔ backend :8001 are cross-origin and the
+    // default ``credentials: "same-origin"`` would drop Set-Cookie). Prod
+    // is same-origin so this is a no-op there.
+    credentials: "include",
   });
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
