@@ -124,7 +124,17 @@ relay_registry = RelayRegistry()
 
 @router.websocket("/ws/relay/{project_id}")
 async def ws_relay(ws: WebSocket, project_id: int, token: str = ""):
-    """Relay connects here with ?token=<agent_token>.
+    """Agent relay connects here.
+
+    Auth (preferred): ``Authorization: Bearer <agent_token>`` header on
+    the WebSocket upgrade. mpac-mcp 0.2.5+ sends this. Same rationale as
+    the browser-WS cookie: keep the agent bearer out of URLs / access
+    logs / proxy logs / ``curl -v`` dumps.
+
+    Auth (back-compat): ``?token=<agent_token>`` query param. Older
+    relays (mpac-mcp < 0.2.5) still send this; the soft-rollout window
+    keeps them working until we're confident no one is on the old path.
+    Header wins when both are present.
 
     Protocol (JSON text frames):
       Server → client:  {"type":"chat", "message_id":..., "message":"..."}
@@ -142,12 +152,24 @@ async def ws_relay(ws: WebSocket, project_id: int, token: str = ""):
     session = None
 
     try:
-        # ── 1. Authenticate the token ────────────────────────────────
-        if not token:
+        # ── 1. Authenticate the token (header preferred, query fallback) ─
+        # Starlette's WebSocket exposes upgrade headers via ``ws.headers``;
+        # the canonical name is lowercase. We accept either case for
+        # robustness against odd intermediaries.
+        auth_header = (
+            ws.headers.get("authorization")
+            or ws.headers.get("Authorization")
+            or ""
+        )
+        bearer_from_header = ""
+        if auth_header.startswith("Bearer "):
+            bearer_from_header = auth_header[len("Bearer "):].strip()
+        bearer = bearer_from_header or token
+        if not bearer:
             await ws.close(code=4401, reason="missing token")
             return
         t = db.query(Token).filter(
-            Token.token_value == token,
+            Token.token_value == bearer,
             Token.is_revoked == False,  # noqa: E712
             Token.is_agent == True,  # noqa: E712
             Token.project_id == project_id,
@@ -212,7 +234,7 @@ async def ws_relay(ws: WebSocket, project_id: int, token: str = ""):
             principal_type="agent",
             display_name=relay.display_name,
             roles=["agent"],
-            credential_value=token,
+            credential_value=bearer,
             send=send_to_ws,
             is_agent=True,
             close_ws=close_ws,

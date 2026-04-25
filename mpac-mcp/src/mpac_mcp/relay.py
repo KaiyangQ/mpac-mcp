@@ -317,9 +317,16 @@ async def run_relay(args: argparse.Namespace) -> int:
     )
 
     uri = args.project_url
-    sep = "&" if "?" in uri else "?"
-    full_uri = f"{uri}{sep}token={args.token}"
     log.info("Connecting to %s", uri)
+
+    # Auth via Authorization header instead of ``?token=`` in the URL — keeps
+    # the agent bearer out of any access log / proxy log / browser-history
+    # surface that records request URLs (web-app v3, 2026-04-25). The web
+    # backend's ``/ws/relay`` endpoint accepts BOTH paths during the soft-
+    # rollout window: header (preferred) AND query (back-compat for relays
+    # built against pre-0.2.5 mpac-mcp). Once we're sure no clients are on
+    # the old path, the query fallback can come out.
+    auth_headers = {"Authorization": f"Bearer {args.token}"}
 
     # Reconnect loop with exponential backoff (capped at 60 s). A production
     # backend restart or a brief network blip should NOT require the user to
@@ -330,7 +337,8 @@ async def run_relay(args: argparse.Namespace) -> int:
     while True:
         try:
             async with websockets.connect(
-                full_uri, max_size=4 * 1024 * 1024,
+                uri, max_size=4 * 1024 * 1024,
+                additional_headers=auth_headers,
                 open_timeout=15,
                 close_timeout=5,
                 ping_interval=20, ping_timeout=20,

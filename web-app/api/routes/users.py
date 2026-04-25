@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
@@ -137,8 +137,31 @@ def logout(response: Response):
 
 
 @router.get("/me", response_model=MeResponse)
-def me(user: User = Depends(get_current_user)):
-    """Bootstrap: verify a stored JWT and return current user info."""
+def me(
+    response: Response,
+    authorization: str | None = Header(default=None),
+    user: User = Depends(get_current_user),
+):
+    """Bootstrap: verify a stored JWT and return current user info.
+
+    Side-effect: if the caller authenticated via Authorization header but
+    has no ``mpac_jwt`` cookie yet, mirror the JWT into a cookie. This
+    upgrades pre-cookie sessions transparently — beta users who logged in
+    BEFORE the cookie scheme landed only have the JWT in localStorage; on
+    their next page load AuthProvider hits /me to validate, and we use
+    that round-trip to plant the cookie so the subsequent WS upgrade
+    doesn't 4401 (the WS URL no longer carries ``?token=``).
+
+    Re-mirroring on every /me call is fine: ``set_cookie`` is idempotent
+    in the browser and we use the same value the client sent us, so the
+    cookie's contents don't change. We don't re-mint a fresh JWT here —
+    keeping cookie-side and localStorage-side values identical avoids a
+    sliding-window discrepancy where one expires before the other.
+    """
+    if authorization and authorization.startswith("Bearer "):
+        raw_jwt = authorization[len("Bearer "):].strip()
+        if raw_jwt:
+            _set_jwt_cookie(response, raw_jwt)
     return MeResponse(
         user_id=user.id,
         email=user.email,
