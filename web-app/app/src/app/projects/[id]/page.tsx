@@ -278,14 +278,12 @@ function FileTree({
 function ConflictCard({
   conflict,
   participants,
-  selfPrincipalId,
   myIntentId,
   onAck,
   onYield,
 }: {
   conflict: LiveConflict;
   participants: LiveParticipant[];
-  selfPrincipalId: string;
   myIntentId?: string;
   onAck: () => void;
   onYield: () => void;
@@ -462,14 +460,12 @@ function ConflictCard({
 function CollabPanel({
   participants,
   conflicts,
-  selfPrincipalId,
   myIntents,
   onAck,
   onYield,
 }: {
   participants: LiveParticipant[];
   conflicts: LiveConflict[];
-  selfPrincipalId: string;
   myIntents: Record<string, { intent_id: string; scope?: { resources?: string[] } }>;
   onAck: (id: string) => void;
   onYield: (intentId: string) => void;
@@ -578,7 +574,6 @@ function CollabPanel({
                 key={c.conflict_id}
                 conflict={c}
                 participants={participants}
-                selfPrincipalId={selfPrincipalId}
                 myIntentId={myIntentId}
                 onAck={() => onAck(c.conflict_id)}
                 onYield={() => myIntentId && onYield(myIntentId)}
@@ -1357,7 +1352,6 @@ export default function WorkspacePage({
               <CollabPanel
                 participants={session.participants}
                 conflicts={session.conflicts}
-                selfPrincipalId={selfPrincipalId}
                 myIntents={session.myIntents}
                 onAck={session.ackConflict}
                 onYield={session.yieldTask}
@@ -1526,7 +1520,6 @@ export default function WorkspacePage({
                 : `${label} failed — see console.`
             );
             setPendingDanger(null);
-            // eslint-disable-next-line no-console
             console.error(e);
           } finally {
             setDangerBusy(false);

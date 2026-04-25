@@ -47,10 +47,6 @@ export function FileContextMenu({
     left: x,
     top: y,
   });
-  const [mounted, setMounted] = useState(false);
-
-  // Portal needs a DOM target — wait for client mount.
-  useEffect(() => setMounted(true), []);
 
   // After paint, measure and clamp into viewport so the menu doesn't
   // spill off-screen when right-clicking near bottom/right edges.
@@ -82,7 +78,8 @@ export function FileContextMenu({
     };
   }, [onClose]);
 
-  if (!mounted) return null;
+  const portalTarget = typeof document === "undefined" ? null : document.body;
+  if (!portalTarget) return null;
 
   return createPortal(
     <div
@@ -119,6 +116,6 @@ export function FileContextMenu({
         </button>
       ))}
     </div>,
-    document.body,
+    portalTarget,
   );
 }

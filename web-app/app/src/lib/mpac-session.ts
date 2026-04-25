@@ -111,6 +111,7 @@ export function useMpacSession({
   const attemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closedByUserRef = useRef(false);
+  const connectRef = useRef<() => void>(() => {});
   // Stable refs so send() doesn't stale-close.
   const selfPrincipalRef = useRef(selfPrincipalId);
   useEffect(() => {
@@ -364,15 +365,20 @@ export function useMpacSession({
         ];
       attemptRef.current += 1;
       setStatus("reconnecting");
-      reconnectTimerRef.current = setTimeout(connect, delay);
+      reconnectTimerRef.current = setTimeout(() => connectRef.current(), delay);
     };
   }, [enabled, projectId, handleEnvelope]);
 
   useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
+
+  useEffect(() => {
     closedByUserRef.current = false;
-    connect();
+    const startupTimer = setTimeout(() => connectRef.current(), 0);
     return () => {
       closedByUserRef.current = true;
+      clearTimeout(startupTimer);
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;

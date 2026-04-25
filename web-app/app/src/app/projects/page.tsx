@@ -74,7 +74,6 @@ export default function ProjectsPage() {
           : `${kind === "delete" ? "Delete" : "Leave"} failed — see console.`
       );
       setPendingAction(null);
-      // eslint-disable-next-line no-console
       console.error(e);
     } finally {
       setActionBusy(false);
