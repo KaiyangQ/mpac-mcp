@@ -200,6 +200,12 @@ async def ws_relay(ws: WebSocket, project_id: int, token: str = ""):
                 "envelope": envelope,
             }))
 
+        async def close_ws(code: int, reason: str) -> None:
+            try:
+                await ws.close(code=code, reason=reason)
+            except Exception:  # noqa: BLE001
+                log.debug("relay ws.close failed", exc_info=True)
+
         conn = await register_and_hello(
             session,
             principal_id=principal_id,
@@ -209,6 +215,7 @@ async def ws_relay(ws: WebSocket, project_id: int, token: str = ""):
             credential_value=token,
             send=send_to_ws,
             is_agent=True,
+            close_ws=close_ws,
         )
         if conn is None:
             await ws.close(code=4403, reason="credential rejected by coordinator")

@@ -36,7 +36,6 @@ def get_my_token(
         )
     project = db.get(Project, project_id)
     return TokenResponse(
-        token_value=token.token_value,
         session_id=project.session_id,
         roles=json.loads(token.roles),
     )

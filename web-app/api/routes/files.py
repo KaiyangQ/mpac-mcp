@@ -16,9 +16,12 @@ from sqlalchemy.orm import Session
 # get_user_or_agent accepts both the user's browser JWT and an MPAC agent
 # bearer token. That lets the mpac-mcp-relay's relay_tools subprocess (running
 # as a claude -p MCP server) read/write the same files as the user's browser.
-from ..auth import get_user_or_agent as get_current_user
+# We also pull AuthCtx + assert_token_scope so each route can refuse a leaked
+# agent token from project A being replayed against project B (P1.1 fix).
+from ..auth import AuthCtx, assert_token_scope, get_user_or_agent
 from ..database import get_db
 from ..models import Project, ProjectFile, Token, User
+from ..mpac_bridge import broadcast_project_event
 from ..schemas import (
     ProjectFileContent, ProjectFileListItem, ProjectFileListResponse,
     ProjectFileUpsert,
@@ -47,6 +50,62 @@ def _assert_member(db: Session, user_id: int, project_id: int) -> Project:
     if not membership:
         raise HTTPException(403, "You are not a member of this project")
     return project
+
+
+def _assert_caller_holds_intent(
+    project_id: int,
+    user_id: int,
+    path: str,
+    token_project_id: int | None,
+) -> None:
+    """Refuse the write if the caller has no active intent covering ``path``.
+
+    This is the gate that closes the autosave-bypass hole — without it, a
+    human typing in the editor (or any HTTP client with a valid token) can
+    silently overwrite an agent's in-flight work, defeating MPAC's central
+    promise. Frontends MUST call ``begin_task`` over WS (or the relay MUST
+    call POST /api/agent/intents) before hitting this PUT/DELETE.
+
+    The caller's MPAC principal_id is one of:
+      * ``user:{user_id}`` for browser editors (JWT auth, ``token_project_id``
+        is None)
+      * ``agent:user-{user_id}`` for the local Claude relay (agent token)
+
+    Greenfield carve-out: if no live coordinator session exists for the
+    project, we let the write through. This covers brand-new projects
+    where nobody has ever connected a WS — there's no one to coordinate
+    with. The first WS HELLO turns the gate on.
+    """
+    # Local import to avoid pulling the bridge into module-load order.
+    from ..mpac_bridge import registry as session_registry
+
+    session = session_registry.get(project_id)
+    if session is None:
+        return  # No live coordinator → no peers to protect → allow.
+
+    is_agent = token_project_id is not None
+    expected_principal = (
+        f"agent:user-{user_id}" if is_agent else f"user:{user_id}"
+    )
+
+    for intent in session.coordinator.intents.values():
+        if intent.principal_id != expected_principal:
+            continue
+        # Skip terminated intents — coordinator keeps them around for audit
+        # but they don't carry edit rights.
+        state_name = getattr(intent.state_machine, "state", None)
+        if state_name in ("Withdrawn", "Completed", "Terminated", "Superseded"):
+            continue
+        scope = getattr(intent, "scope", None)
+        resources = list(getattr(scope, "resources", []) or []) if scope else []
+        if path in resources:
+            return  # Found a covering intent — write is coordinated.
+
+    raise HTTPException(
+        409,
+        f"INTENT_REQUIRED: caller has no active intent covering {path!r}. "
+        "Call begin_task (browser) or POST /api/agent/intents (relay) first.",
+    )
 
 
 def _normalize_path(raw: str) -> str:
@@ -83,9 +142,11 @@ def _seed_demo_if_empty(db: Session, project_id: int) -> None:
 @router.get("/projects/{project_id}/files", response_model=ProjectFileListResponse)
 def list_files(
     project_id: int,
-    user: User = Depends(get_current_user),
+    ctx: AuthCtx = Depends(get_user_or_agent),
     db: Session = Depends(get_db),
 ):
+    assert_token_scope(ctx, project_id)
+    user = ctx.user
     _assert_member(db, user.id, project_id)
     _seed_demo_if_empty(db, project_id)
     rows = db.query(ProjectFile).filter(
@@ -104,9 +165,11 @@ def list_files(
 def read_file(
     project_id: int,
     path: str = Query(..., description="POSIX path, e.g. src/api.py"),
-    user: User = Depends(get_current_user),
+    ctx: AuthCtx = Depends(get_user_or_agent),
     db: Session = Depends(get_db),
 ):
+    assert_token_scope(ctx, project_id)
+    user = ctx.user
     _assert_member(db, user.id, project_id)
     norm = _normalize_path(path)
     row = db.query(ProjectFile).filter(
@@ -129,12 +192,29 @@ def read_file(
 def upsert_file(
     project_id: int,
     req: ProjectFileUpsert,
-    user: User = Depends(get_current_user),
+    ctx: AuthCtx = Depends(get_user_or_agent),
     db: Session = Depends(get_db),
 ):
-    """Create if missing, otherwise overwrite. Editor autosave hits this."""
+    """Create if missing, otherwise overwrite. Editor autosave hits this.
+
+    Coordination invariant (enforced below): the caller MUST hold an active
+    (non-withdrawn) intent whose scope includes ``req.path``. This is what
+    stops a human typing in the editor from silently overwriting an agent's
+    in-flight work — the browser editor announces an intent before it lets
+    the user edit, and the relay's submit_change tool announces before
+    committing. If you hit ``409 INTENT_REQUIRED`` here, that means the
+    caller forgot to announce first.
+
+    Greenfield carve-out: if no live MPAC session exists for the project
+    yet (no participants ever connected), we allow the write — there's no
+    one to coordinate with. Once any participant has joined, the gate
+    becomes active.
+    """
+    assert_token_scope(ctx, project_id)
+    user = ctx.user
     _assert_member(db, user.id, project_id)
     norm = _normalize_path(req.path)
+    _assert_caller_holds_intent(project_id, user.id, norm, ctx.token_project_id)
     if len(req.content.encode("utf-8", errors="ignore")) > MAX_FILE_BYTES:
         raise HTTPException(413, f"File exceeds {MAX_FILE_BYTES} bytes")
     row = db.query(ProjectFile).filter(
@@ -148,6 +228,12 @@ def upsert_file(
         db.add(row)
     db.commit()
     db.refresh(row)
+    broadcast_project_event(
+        project_id,
+        "file_changed",
+        {"path": norm, "updated_at": row.updated_at.isoformat()},
+        exclude_principal=f"user:{user.id}",
+    )
     return ProjectFileContent(
         path=row.path,
         content=row.content,
@@ -159,11 +245,14 @@ def upsert_file(
 def delete_file(
     project_id: int,
     path: str = Query(..., description="POSIX path, e.g. src/api.py"),
-    user: User = Depends(get_current_user),
+    ctx: AuthCtx = Depends(get_user_or_agent),
     db: Session = Depends(get_db),
 ):
+    assert_token_scope(ctx, project_id)
+    user = ctx.user
     _assert_member(db, user.id, project_id)
     norm = _normalize_path(path)
+    _assert_caller_holds_intent(project_id, user.id, norm, ctx.token_project_id)
     row = db.query(ProjectFile).filter(
         ProjectFile.project_id == project_id,
         ProjectFile.path == norm,
@@ -172,4 +261,7 @@ def delete_file(
         raise HTTPException(404, "File not found")
     db.delete(row)
     db.commit()
+    broadcast_project_event(
+        project_id, "file_deleted", {"path": norm}, exclude_principal=f"user:{user.id}",
+    )
     return {"status": "deleted", "path": norm}

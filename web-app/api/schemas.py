@@ -47,7 +47,15 @@ class ProjectListResponse(BaseModel):
 # ── Tokens ──
 
 class TokenResponse(BaseModel):
-    token_value: str
+    """Membership descriptor returned to browsers after invite-accept and
+    project membership lookup. Pre-2026-04-25 this also carried the raw
+    MPAC bearer ``token_value`` so the frontend could in theory speak to
+    the coordinator directly — but the browser never used it (it speaks
+    over /ws/session with its JWT), and any leak risked elevating an XSS
+    into a long-lived capability. The field is gone now; agent tokens
+    still come back from POST /api/projects/{id}/agent-token, which is
+    the only legitimate carrier of a long-lived bearer.
+    """
     session_id: str
     roles: list[str]
 

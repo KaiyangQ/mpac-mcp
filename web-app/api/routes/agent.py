@@ -29,7 +29,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
-from ..auth import get_current_user, get_user_or_agent
+from ..auth import AuthCtx, assert_token_scope, get_current_user, get_user_or_agent
 from ..config import IS_PRODUCTION
 from ..database import get_db
 from ..models import Project, Token, User
@@ -258,13 +258,15 @@ def _get_agent_conn(project_id: int, user_id: int):
 @router.post("/agent/intents", response_model=AgentAnnounceIntentResponse)
 async def agent_announce_intent(
     req: AgentAnnounceIntent,
-    user: User = Depends(get_user_or_agent),
+    ctx: AuthCtx = Depends(get_user_or_agent),
     db: Session = Depends(get_db),
 ):
     """Agent (via its local claude -p MCP subprocess) declares it intends to
     edit the given files. Broadcasts INTENT_ANNOUNCE through the coordinator
     so every connected browser sees the agent's active_intent + scope.
     """
+    assert_token_scope(ctx, req.project_id)
+    user = ctx.user
     # Membership
     member = db.query(Token).filter(
         Token.user_id == user.id,
@@ -303,10 +305,12 @@ async def agent_announce_intent(
 @router.delete("/agent/intents")
 async def agent_withdraw_intent(
     req: AgentWithdrawIntent,
-    user: User = Depends(get_user_or_agent),
+    ctx: AuthCtx = Depends(get_user_or_agent),
     db: Session = Depends(get_db),
 ):
     """Withdraw a previously-announced agent intent (when Claude is done)."""
+    assert_token_scope(ctx, req.project_id)
+    user = ctx.user
     member = db.query(Token).filter(
         Token.user_id == user.id,
         Token.project_id == req.project_id,
@@ -330,7 +334,7 @@ async def agent_withdraw_intent(
 @router.post("/agent/overlap", response_model=AgentOverlapResponse)
 async def agent_check_overlap(
     req: AgentOverlapQuery,
-    user: User = Depends(get_user_or_agent),
+    ctx: AuthCtx = Depends(get_user_or_agent),
     db: Session = Depends(get_db),
 ):
     """Check which OTHER active participants have intents overlapping with
@@ -340,6 +344,8 @@ async def agent_check_overlap(
     Claude can decide to yield or escalate if a human is already editing the
     same file.
     """
+    assert_token_scope(ctx, req.project_id)
+    user = ctx.user
     member = db.query(Token).filter(
         Token.user_id == user.id,
         Token.project_id == req.project_id,
@@ -398,7 +404,7 @@ async def agent_check_overlap(
 )
 async def agent_list_active_intents(
     project_id: int,
-    user: User = Depends(get_user_or_agent),
+    ctx: AuthCtx = Depends(get_user_or_agent),
     db: Session = Depends(get_db),
 ):
     """v0.2.4: return every live intent in the project EXCEPT the caller's.
@@ -415,6 +421,8 @@ async def agent_list_active_intents(
 
     Read-only. No side effects. Safe to call as often as an agent wants.
     """
+    assert_token_scope(ctx, project_id)
+    user = ctx.user
     member = db.query(Token).filter(
         Token.user_id == user.id,
         Token.project_id == project_id,

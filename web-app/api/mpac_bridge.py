@@ -63,6 +63,43 @@ _UNICAST_RESPONSE_TYPES = frozenset({
 })
 
 
+def _synth_project_event_envelope(
+    session_id: str,
+    kind: str,
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build a bridge-synthesized PROJECT_EVENT envelope.
+
+    PROJECT_EVENT is a non-MPAC-spec wrapper used to notify all browsers in
+    a session about backend-side state changes that aren't part of the core
+    coordination protocol — e.g. a file was overwritten via the HTTP file
+    API, the project was deleted, the owner clicked "Reset to seed".
+    Frontends switch on ``payload.kind`` to decide what to refresh.
+
+    Kinds currently in use:
+      * ``file_changed`` — payload also has ``path``, ``updated_at``
+      * ``file_deleted`` — payload also has ``path``
+      * ``reset_to_seed`` — file tree should be re-fetched wholesale
+      * ``project_deleted`` — frontend should redirect to /projects
+    """
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    body = {"kind": kind, **payload}
+    return {
+        "protocol": "MPAC",
+        "version": "0.1.13",
+        "message_type": "PROJECT_EVENT",
+        "message_id": str(uuid.uuid4()),
+        "session_id": session_id,
+        "sender": {
+            "principal_id": f"service:bridge-{session_id}",
+            "principal_type": "coordinator",
+            "sender_instance_id": f"service:bridge-{session_id}",
+        },
+        "ts": now,
+        "payload": body,
+    }
+
+
 def _synth_participant_update(
     session_id: str, conn: "_ConnectedParticipant", status: str,
 ) -> Dict[str, Any]:
@@ -108,6 +145,12 @@ class _ConnectedParticipant:
     principal_type: str
     roles: List[str]
     is_agent: bool = False
+    # Optional ws-close callback so the bridge can force-close the underlying
+    # WebSocket on project_deleted / kick. Browser handlers (ws_session) and
+    # the relay handler (ws_relay) install this when they accept a socket.
+    # ``None`` means "the producer didn't expose a close hook" — broadcast
+    # still works, just no force-close.
+    close_ws: Optional[Callable[[int, str], Awaitable[None]]] = None
 
 
 @dataclass
@@ -139,6 +182,23 @@ class SessionRegistry:
     def __init__(self) -> None:
         self._sessions: Dict[int, ProjectSession] = {}
         self._lock = asyncio.Lock()
+        # Captured on first async entry; sync routes use this to schedule
+        # broadcast coroutines onto the right loop via run_coroutine_threadsafe.
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def _capture_loop(self) -> None:
+        """Stash the running event loop the first time we see one. Called
+        from async paths (get_or_create, the WS handlers) so the sync HTTP
+        routes can later schedule broadcasts without re-creating a loop."""
+        if self._loop is None:
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                pass  # No loop yet — sync init context; will retry next call.
+
+    @property
+    def loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        return self._loop
 
     async def get_or_create(
         self,
@@ -146,6 +206,7 @@ class SessionRegistry:
         mpac_session_id: str,
         verifier: CredentialVerifier,
     ) -> ProjectSession:
+        self._capture_loop()
         async with self._lock:
             existing = self._sessions.get(project_id)
             if existing is not None:
@@ -535,6 +596,229 @@ async def _broadcast(
     )
 
 
+async def force_close_project_session(
+    project_id: int,
+    *,
+    code: int = 4404,
+    reason: str = "project deleted",
+) -> None:
+    """Boot every WebSocket bound to ``project_id`` and clear coordinator
+    state. Used by ``DELETE /api/projects/{id}`` so other open browsers
+    don't keep editing a project that's already gone from the DB.
+
+    Sequence per connection:
+      1. Call its ``close_ws(code, reason)`` callback if installed; that
+         goes through FastAPI's normal WS teardown so the upstream handler's
+         ``finally:`` block runs (cleanup, log, etc.).
+      2. Connections without a ``close_ws`` (e.g. test stubs) just get
+         dropped from the registry; their next ``send`` will fail and the
+         underlying socket — if any — will time out naturally.
+
+    Always followed by ``registry.drop(project_id)``; we don't drop here
+    because the caller may want to broadcast a final envelope first.
+    """
+    session = registry.get(project_id)
+    if session is None:
+        return
+    conns = list(session.connections.values())
+    session.connections.clear()
+    for c in conns:
+        if c.close_ws is None:
+            continue
+        try:
+            await c.close_ws(code, reason)
+        except Exception:
+            log.exception(
+                "force_close: failed to close ws for principal_id=%s",
+                c.principal_id,
+            )
+
+
+def force_close_project_session_sync(
+    project_id: int, *, code: int = 4404, reason: str = "project deleted",
+) -> None:
+    """Sync wrapper around :func:`force_close_project_session` so HTTP
+    routes can call it without ``await``. Schedules onto the bridge's
+    captured event loop and returns immediately. If no loop is captured
+    (no WS has ever connected), there's nothing to close — silently no-op.
+    """
+    loop = registry.loop
+    if loop is None or loop.is_closed():
+        return
+    try:
+        asyncio.run_coroutine_threadsafe(
+            force_close_project_session(project_id, code=code, reason=reason),
+            loop,
+        )
+    except RuntimeError:
+        log.exception(
+            "force_close_project_session_sync: scheduling failed "
+            "(project_id=%s)", project_id,
+        )
+
+
+def force_close_principals_sync(
+    project_id: int,
+    principal_ids: List[str],
+    *,
+    code: int = 4403,
+    reason: str = "membership revoked",
+) -> None:
+    """Force-close just the listed principals' WebSockets in a project,
+    leaving everyone else connected. Used by ``POST /projects/{id}/leave``
+    so a leaving user's browser/relay get booted while remaining members
+    keep their sessions alive.
+
+    Schedules onto the captured event loop and returns immediately. No-op
+    if no loop or no live session.
+    """
+    session = registry.get(project_id)
+    if session is None:
+        return
+    loop = registry.loop
+    if loop is None or loop.is_closed():
+        # Best-effort: drop coordinator state for the listed principals so
+        # they're at least gone from in-memory presence, even though we
+        # can't actually close their sockets without a loop.
+        for pid in principal_ids:
+            session.connections.pop(pid, None)
+        return
+
+    async def _run() -> None:
+        for pid in principal_ids:
+            conn = session.connections.pop(pid, None)
+            if conn is None or conn.close_ws is None:
+                continue
+            try:
+                await conn.close_ws(code, reason)
+            except Exception:
+                log.exception(
+                    "force_close_principals: close_ws failed for %s", pid,
+                )
+
+    try:
+        asyncio.run_coroutine_threadsafe(_run(), loop)
+    except RuntimeError:
+        log.exception(
+            "force_close_principals_sync: scheduling failed "
+            "(project_id=%s)", project_id,
+        )
+
+
+def lifecycle_delete_sync(
+    project_id: int,
+    project_name: str,
+) -> None:
+    """Atomic project-deletion lifecycle: broadcast PROJECT_EVENT, then
+    force-close every WS, then drop the in-memory session — all on the
+    captured event loop, in that order, in a single coroutine.
+
+    Why one coroutine instead of three sync calls: ``_broadcast`` and
+    ``force_close_project_session`` both ``await`` internally, so if we
+    scheduled them as separate coroutines via ``run_coroutine_threadsafe``
+    the loop could interleave them — close runs first, broadcast finds
+    an empty connections dict, no envelope arrives. Bundling guarantees
+    the broadcast lands before any socket gets closed.
+
+    No-ops cleanly when no live session exists for the project (e.g. the
+    project never had a WS client) — the DB cascade in the caller has
+    already done the durable work; there's just nothing in-memory to
+    notify.
+    """
+    session = registry.get(project_id)
+    if session is None:
+        return
+    loop = registry.loop
+    if loop is None or loop.is_closed():
+        # No loop = nothing's ever awaited on this process. The session
+        # entry exists but has no live connections. Drop it directly.
+        registry.drop(project_id)
+        return
+
+    async def _run() -> None:
+        envelope = _synth_project_event_envelope(
+            session.mpac_session_id,
+            "project_deleted",
+            {"project_id": project_id, "project_name": project_name},
+        )
+        try:
+            await _broadcast(session, envelope)
+        except Exception:
+            log.exception("lifecycle_delete: broadcast failed (project_id=%s)",
+                          project_id)
+        # Close every connected ws so the next thing each client sees is the
+        # close frame, not a stale envelope on a half-dead session.
+        conns = list(session.connections.values())
+        session.connections.clear()
+        for c in conns:
+            if c.close_ws is None:
+                continue
+            try:
+                await c.close_ws(4404, "project deleted")
+            except Exception:
+                log.exception(
+                    "lifecycle_delete: close_ws failed for %s",
+                    c.principal_id,
+                )
+        registry.drop(project_id)
+
+    try:
+        asyncio.run_coroutine_threadsafe(_run(), loop)
+    except RuntimeError:
+        log.exception(
+            "lifecycle_delete_sync: scheduling failed (project_id=%s)",
+            project_id,
+        )
+
+
+# ── Project-event broadcast (HTTP routes → WS clients) ─────────────────
+
+def broadcast_project_event(
+    project_id: int,
+    kind: str,
+    payload: Dict[str, Any],
+    *,
+    exclude_principal: Optional[str] = None,
+) -> None:
+    """Notify every browser/relay in the project's session about a backend
+    state change that originated from a sync HTTP route.
+
+    Sync routes can't ``await`` so we schedule the actual fan-out onto the
+    bridge's captured event loop via :func:`asyncio.run_coroutine_threadsafe`.
+    Loop reference is captured on the first async entry to the registry; if
+    no WS has ever connected for any project, ``registry.loop`` is ``None``
+    and we silently no-op (there's nobody to notify anyway).
+
+    Returns immediately — this is fire-and-forget. Failures are logged on
+    the loop's side via :func:`_broadcast`'s ``return_exceptions=True``.
+
+    See :func:`_synth_project_event_envelope` for the kinds currently in
+    use (``file_changed``, ``file_deleted``, ``reset_to_seed``,
+    ``project_deleted``).
+    """
+    session = registry.get(project_id)
+    if session is None:
+        return
+    loop = registry.loop
+    if loop is None or loop.is_closed():
+        log.debug(
+            "broadcast_project_event: no event loop captured yet "
+            "(project_id=%s, kind=%s) — skipping", project_id, kind,
+        )
+        return
+    envelope = _synth_project_event_envelope(
+        session.mpac_session_id, kind, payload,
+    )
+    coro = _broadcast(session, envelope, exclude=exclude_principal)
+    try:
+        asyncio.run_coroutine_threadsafe(coro, loop)
+    except RuntimeError:
+        log.exception(
+            "broadcast_project_event: failed to schedule fan-out "
+            "(project_id=%s, kind=%s)", project_id, kind,
+        )
+
+
 # ── Connection lifecycle helpers ───────────────────────────────────────
 
 async def register_and_hello(
@@ -547,11 +831,19 @@ async def register_and_hello(
     credential_value: str,
     send: Connection,
     is_agent: bool = False,
+    close_ws: Optional[Callable[[int, str], Awaitable[None]]] = None,
 ) -> Optional[_ConnectedParticipant]:
     """Synthesize HELLO on behalf of a newly-connected client + register them.
 
     Returns the ``_ConnectedParticipant`` on success, ``None`` if HELLO was
     rejected (caller should close the connection).
+
+    ``close_ws`` is an optional callback the bridge can invoke to force-close
+    the underlying WebSocket — used by :func:`force_close_project_session` so
+    project deletion can immediately kick everyone out instead of leaving
+    them on a stale registry entry. Browser/relay handlers should pass a
+    wrapper around their ``ws.close(code, reason)`` so the close goes through
+    FastAPI's normal teardown path.
     """
     # ── Reconnect dedup ─────────────────────────────────────────────
     # If this principal_id already has an active _ConnectedParticipant
@@ -592,6 +884,7 @@ async def register_and_hello(
         principal_id=principal_id,
         participant=participant,
         send=send,
+        close_ws=close_ws,
         display_name=display_name,
         principal_type=principal_type,
         roles=roles,

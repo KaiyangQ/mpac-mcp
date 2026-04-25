@@ -19,6 +19,11 @@
 > **协议小贴士**：`CONFLICT_REPORT` 只 unicast 给 `principal_a` / `principal_b` 两个当事人
 > （[mpac_bridge.py:495-500](../web-app/api/mpac_bridge.py:495)）。所以**旁观者的 CONFLICTS 面板永远空** —— 这不是 bug。
 > 旁观者通过 "WHO'S WORKING 同一文件出现两个名字 + 文件树绿点" 来感知冲突。
+>
+> **2026-04-25 后端的几个新行为**（code-review 修复一波后才生效，旧 deploy 上看不到）：
+> - 浏览器 editor 现在 read-after-write **不是**绕过 MPAC —— 第一下键入会自动 `begin_task` 宣告 intent，离开文件 / unmount 时 `yield_task`。后端 PUT `/files/content` 没 intent 直接 409。
+> - 项目级生命周期事件走新的 `PROJECT_EVENT` 信封：`file_changed` / `file_deleted` / `reset_to_seed` / `project_deleted`。所以下面 TC-4 / TC-6 现在**真的**会在另一边瞬时反应。
+> - Agent token 现在 project-scoped 强制：从 project A 偷的 agent token 没法访问 project B（即便 user 在两个项目都有成员资格）。
 
 ---
 
@@ -58,19 +63,33 @@
 
 ---
 
-### TC-3 Invite Modal（Alice 单边）
+### TC-3 Invite Modal（Alice 单边）+ accept 并发安全
 
-**目的**：Invite 流程能 mint code，复制按钮可用。
+**目的**：Invite 流程能 mint code、复制按钮可用，**并且**两个客户端同时 accept 同一个 code 不会双双成功。
 
 **步骤**：
 1. Alice tab 点 `Invite` → 弹出 InviteModal
 2. Modal 应显示：roles 选择（默认 contributor）+ "Generate Invite" 按钮
-3. 点 Generate → 出现一段 invite code（形如 `inv-xxxxxxxx`）+ 一个完整 URL（`https://mpac-web.duckdns.org/invite/inv-xxx`）
+3. 点 Generate → 出现一段 invite code（形如 `inv-xxxxxxxx`）+ 一个完整 URL
 4. 点 "Copy" → 应有 toast/反馈
 5. 关 Modal → 重开一个 → 之前的 code 不应再显示（无状态）
-6. **副作用确认**：把 URL 粘到 Bob tab 的地址栏 → 看 Bob 是不是已经是项目成员（应该是 "你已经在项目里" 提示，不是 "接受邀请"）
+6. **副作用确认**：把 URL 粘到 Bob tab 的地址栏 → 看 Bob 是不是已经是项目成员（应该是 "你已经在项目里" 提示）
 
-**失败信号**：Generate 按钮无反应 → POST `/api/projects/{id}/invite` 失败，看 Network；或 token 过期。
+**并发 race 验证**（2026-04-25 修了之后才稳）：
+1. Alice 生成一个新 invite code
+2. 用 `curl` 同时跑两次 accept（不同 user 的 JWT，比如 Bob 和 Carol）：
+   ```bash
+   for u in bob carol; do
+     curl -X POST -H "Content-Type: application/json" \
+       -H "Authorization: Bearer ${u}_jwt" \
+       -d '{"invite_code":"inv-xxx"}' \
+       http://localhost:8001/api/invites/accept &
+   done; wait
+   ```
+3. **预期**：恰好一个返回 200 + TokenResponse；另一个 409 `Invite already used`。
+4. **失败信号**：两个都返回 200 → atomic UPDATE 没生效（[projects.py:127-180](../web-app/api/routes/projects.py:127) 应该有 `update(Invite).where(used_by_id IS NULL)`）。
+
+**普通失败信号**：Generate 按钮无反应 → POST `/api/projects/{id}/invite` 失败，看 Network；或 token 过期。
 
 ---
 
@@ -85,13 +104,19 @@
 2. （可选准备："污染"文件）Alice 走 Claude 流改一改 db.py（见 TC-7）；或暂跳过此步直接走 reset
 3. Alice tab 点 `Reset` → DestructiveConfirmModal 弹出 → 二次确认输入框输 `Reset` → 点确认
 4. Alice tab：Modal 关闭，无错误 toast
-5. Bob tab `db.py` viewer：**3 秒内**内容刷新回 seed（如果之前不一样）
+5. Bob tab `db.py` viewer：**3 秒内**内容刷新回 seed（如果之前不一样），文件树也会刷新
 
-**触发链**：`POST /api/projects/{id}/reset-to-seed` → 数据库覆写 → ProjectFile 更新 → 推一个 file-changed 事件给所有 WS 客户端 → 前端重 fetch 文件。
+**触发链**（2026-04-25 实装）：
+1. `POST /api/projects/{id}/reset-to-seed` 写 DB
+2. 路由调 `broadcast_project_event(project_id, "reset_to_seed", {paths: [...]})`（[projects.py](../web-app/api/routes/projects.py)）
+3. 桥用 `_synth_project_event_envelope` 合成 `PROJECT_EVENT` 信封 fan-out 给所有 connections
+4. 前端 `useMpacSession` switch 到 `case "PROJECT_EVENT":` → 调 `onProjectEvent` 回调
+5. 页面回调 refetch `/files` + 清缓存 → React 重渲文件树 + viewer
 
 **失败信号**：
-- Bob 的 viewer 不刷新 → file-change 事件没广播；F5 后能看到 seed 内容则是 push 路径问题
+- Bob 的 viewer 不刷新 → 检查 [mpac_bridge.py 的 `broadcast_project_event`](../web-app/api/mpac_bridge.py)：要么 `registry.loop` 没捕获到（前端从未连过 WS）、要么 `PROJECT_EVENT` 信封没被前端 handle（看浏览器 console）
 - Alice 点确认后 500 → 看 [api 日志](../web-app/api/main.py)，多半是 seed_data 模块缺 file 或权限错误
+- Alice 自己的 viewer 也不刷新 → 上面回调被 `exclude_principal` 排掉了？查 `broadcast_project_event` 调用 site，reset 应该不带 exclude
 
 ---
 
@@ -123,10 +148,57 @@
 1. 双方都在线，Bob 在 `/projects/N` 页面
 2. Alice tab 点 `Delete` → DestructiveConfirmModal → 输入项目名确认 → 确认
 3. Alice tab：redirect 到 `/projects`，列表里没了
-4. Bob tab：**3 秒内**应该出现错误 banner（"project deleted" 之类）+ 自动 redirect 到 `/projects`
+4. Bob tab：**3 秒内**出现错误 banner ("This project was deleted by the owner.") → 自动 redirect 到 `/projects`，他的 WebSocket 收到 `code=4404 reason="project deleted"` 关闭
 5. Bob 列表里也应该没这个项目了
 
-**失败信号**：Bob 没被踢走还能浏览代码 → bridge 没 broadcast SESSION_CLOSE 或前端没 handle。
+**触发链**（2026-04-25 实装）：
+1. `DELETE /api/projects/{id}` 走 DB cascade
+2. 路由调 `lifecycle_delete_sync(project_id, project_name)`（[mpac_bridge.py](../web-app/api/mpac_bridge.py)）—— 单个 coroutine 串行做：
+   - 合成 `PROJECT_EVENT(kind=project_deleted)` 广播
+   - 遍历 `session.connections` 调每个 `close_ws(4404, "project deleted")`
+   - `registry.drop(project_id)`
+3. 序列化保证：广播信封先于 close 帧落地（旧版本两步分开调度，可能 close 先到、broadcast 找不到 connections）
+
+**失败信号**：
+- Bob 没被踢走还能浏览代码 → 确认 [main.py:208-214](../web-app/api/main.py:208) 的 `close_ws` 回调有传给 `register_and_hello`，桥拿到了实际的 `ws.close` hook
+- Bob 看到 banner 但没 redirect → `router.replace("/projects")` 没触发，可能 `setLoadError` 顺序问题，看 page.tsx 的 onProjectEvent
+- Alice tab 没跳走 → 这条不依赖 broadcast，是路由本地 `router.push("/projects")`
+
+---
+
+### TC-A Editor 写入需要先有 intent（无 Claude 即可验）
+
+**目的**：浏览器编辑器不再静默盖另一参与方的工作 —— 第一下键入会自动 `begin_task`，后端 PUT 没 intent 直接 409。这是 P1.3 修补。
+
+**步骤**：
+1. 双方都在线，Bob 当前打开 `notes_app/db.py`
+2. Bob tab 在 db.py 编辑器随便敲一个字符（比如行尾加空格）
+3. **预期**：
+   - Alice tab 几乎瞬时看到 Bob 在 WHO'S WORKING 里 active，文件 `notes_app/db.py` + objective 文案 "Editing notes_app/db.py (browser)"
+   - 文件树 db.py 旁绿点
+   - Bob tab 的 saveStatus 是 `saving` → `saved`（不是 `error`）
+4. Bob tab 切换到 `notes_app/auth.py`
+5. **预期**：Alice tab 看到 Bob 的 db.py active 消失（yield 触发），auth.py 上还没 intent
+6. Bob 在 auth.py 敲一下 → Alice 看到 Bob 在 auth.py active
+
+**直接走 PUT 验证 gate**（不需要浏览器）：
+```bash
+# 拿 Alice JWT （demo_driver setup 后写在 /tmp/mpac_demo_creds.json）
+ALICE_JWT=$(jq -r '.accounts.alice.token' /tmp/mpac_demo_creds.json)
+PID=$(jq -r '.project_id' /tmp/mpac_demo_creds.json)
+
+# 没声明 intent 直接 PUT → 应 409
+curl -X PUT -H "Authorization: Bearer $ALICE_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"path":"notes_app/db.py","content":"# bypass attempt"}' \
+  http://localhost:8001/api/projects/$PID/files/content
+# → {"detail":"INTENT_REQUIRED: caller has no active intent ..."}
+```
+
+**失败信号**：
+- 第一下键入后 Alice 没看到 Bob 的 intent → 前端 [page.tsx](../web-app/app/src/app/projects/[id]/page.tsx) `handleEditorChange` 里的 `session.beginTask` 没触发；可能 `intentByPathRef` 已有该路径但 WS 连接断了
+- saveStatus 一直 `error` → backend gate 没认出来这次 intent，看 [files.py](../web-app/api/routes/files.py) 的 `_assert_caller_holds_intent`：principal_id 拼接对不上、scope.resources 里没有该路径
+- Bob 切文件后 db.py 还在 Alice 的 WHO'S WORKING 里 active → `prevActivePathRef` useEffect 没正常 fire（或 yield 没成功通过 WS 发出）
 
 ---
 

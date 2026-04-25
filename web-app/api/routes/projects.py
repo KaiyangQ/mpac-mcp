@@ -5,12 +5,17 @@ import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_user
 from ..database import get_db
 from ..models import Project, ProjectFile, Token, Invite, User
-from ..mpac_bridge import registry as session_registry
+from ..mpac_bridge import (
+    broadcast_project_event,
+    force_close_principals_sync,
+    lifecycle_delete_sync,
+)
 from ..schemas import (
     ProjectCreate, ProjectResponse, ProjectListResponse,
     InviteCreate, InviteResponse, InviteAccept, InvitePreview, TokenResponse,
@@ -130,30 +135,51 @@ def accept_invite(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Atomic claim: one UPDATE with ``used_by_id IS NULL`` in the WHERE so
+    two concurrent acceptances of the same code can't both succeed. Pre-fix
+    this was a read-then-write that two requests could interleave.
+
+    Idempotency: if the SAME user has already accepted this invite (or is
+    already a member of the project), we treat the second click as a
+    no-op and return their existing membership descriptor — accidentally
+    reloading the invite page shouldn't 409.
+    """
+    # Pre-flight: look up the invite to learn the project_id (we need it
+    # for both the won-claim and the idempotent-replay paths).
     invite = db.query(Invite).filter(
         Invite.invite_code == req.invite_code,
-        Invite.used_by_id == None,  # noqa: E711
     ).first()
-    if not invite:
-        raise HTTPException(404, "Invite not found or already used")
-    # Prevent self-accept (owner already has a token)
+    if invite is None:
+        raise HTTPException(404, "Invite not found")
     project = db.get(Project, invite.project_id)
+
+    # Idempotent replay: caller is already a member → don't burn a code.
     existing = db.query(Token).filter(
         Token.user_id == user.id,
         Token.project_id == invite.project_id,
         Token.is_revoked == False,  # noqa: E712
     ).first()
     if existing:
-        # Already a member — mark invite used, return their existing token
-        invite.used_by_id = user.id
-        db.commit()
         return TokenResponse(
-            token_value=existing.token_value,
             session_id=project.session_id,
             roles=json.loads(existing.roles),
         )
-    # Mark invite as used + create token for the invitee
-    invite.used_by_id = user.id
+
+    # Atomic claim — only succeeds while the row is still unburned. If the
+    # rowcount comes back zero, someone else already claimed it (race) OR
+    # it was used in a prior turn (stale link). Either way: 409.
+    result = db.execute(
+        update(Invite)
+        .where(
+            Invite.invite_code == req.invite_code,
+            Invite.used_by_id.is_(None),
+        )
+        .values(used_by_id=user.id)
+    )
+    if result.rowcount == 0:
+        db.rollback()
+        raise HTTPException(409, "Invite already used")
+
     token = Token(
         token_value=secrets.token_urlsafe(32),
         user_id=user.id,
@@ -164,7 +190,6 @@ def accept_invite(
     db.commit()
     db.refresh(token)
     return TokenResponse(
-        token_value=token.token_value,
         session_id=project.session_id,
         roles=json.loads(token.roles),
     )
@@ -178,12 +203,18 @@ def delete_project(
 ):
     """Destroy the project for everyone — owner only.
 
-    Cascades all child rows in explicit order (files → tokens → invites
-    → project) because the FKs don't carry an ON DELETE CASCADE. Also
-    drops the in-memory MPAC session so any live WS clients lose the
-    coordinator on their next reconnect; existing connections operate
-    against a stale reference until they disconnect, then fail
-    membership check (no tokens left) and can't re-join.
+    Sequence:
+      1. Cascade-delete the DB rows (files → tokens → invites → project).
+      2. Broadcast a ``PROJECT_EVENT(kind=project_deleted)`` so every
+         connected browser/relay can react before its socket dies — the
+         frontend redirects to ``/projects`` and clears its session state.
+      3. Force-close every WS bound to this project so members are kicked
+         immediately instead of holding stale coordinator state until
+         their next interaction. (Pre-2026-04-25 step 3 was missing —
+         existing connections kept replying to envelopes against a stale
+         registry entry; the fix here matches TC-6 in
+         ``docs/TWO_USER_TESTS.md``.)
+      4. Drop the in-memory MPAC session.
 
     Members who just want to leave the project should call
     ``POST /api/projects/{id}/leave`` instead. Owners cannot "leave" —
@@ -194,6 +225,10 @@ def delete_project(
         raise HTTPException(404, "Project not found")
     if project.owner_id != user.id:
         raise HTTPException(403, "Only the project owner can delete this project")
+
+    # Cache the metadata BEFORE the cascade — once we delete the project row
+    # the bridge can't look up its mpac_session_id for the broadcast envelope.
+    project_name = project.name
 
     # Cascade in dependency order.
     n_files = db.query(ProjectFile).filter(
@@ -208,13 +243,14 @@ def delete_project(
     db.delete(project)
     db.commit()
 
-    # Evict in-memory MPAC session AFTER commit so a concurrent request
-    # that's about to create state sees the DB already-gone.
-    session_registry.drop(project_id)
+    # Tell live clients the project is gone, force-close their sockets, and
+    # evict the in-memory session — all in one ordered coroutine so the
+    # PROJECT_EVENT envelope is guaranteed to land before any close frame.
+    lifecycle_delete_sync(project_id, project_name)
 
     log.info(
         "Project deleted: id=%s name=%s owner=%s files=%d tokens=%d invites=%d",
-        project_id, project.name, user.id, n_files, n_tokens, n_invites,
+        project_id, project_name, user.id, n_files, n_tokens, n_invites,
     )
     # 204 No Content — FastAPI will skip the response body.
     return None
@@ -259,6 +295,14 @@ def reset_project_to_seed(
             n_created += 1
     db.commit()
 
+    # Tell every connected client the file tree was rewritten so they refetch
+    # instead of showing the pre-reset content until next manual refresh.
+    # Closes the gap TC-4 in docs/TWO_USER_TESTS.md was claiming all along.
+    broadcast_project_event(
+        project_id, "reset_to_seed",
+        {"paths": list(NOTES_APP_SEED.keys())},
+    )
+
     log.info(
         "Project reset to seed: id=%s name=%s owner=%s overwritten=%d created=%d",
         project_id, project.name, user.id, n_overwritten, n_created,
@@ -292,16 +336,27 @@ def leave_project(
             "(DELETE /api/projects/{id}).",
         )
 
+    user_id = user.id
     n = db.query(Token).filter(
-        Token.user_id == user.id,
+        Token.user_id == user_id,
         Token.project_id == project_id,
         Token.is_revoked == False,  # noqa: E712
     ).update({Token.is_revoked: True}, synchronize_session=False)
     db.commit()
 
+    # Force-close THIS user's WS in the project so the leaving tab doesn't
+    # keep showing the project until next manual refresh. Both flavours of
+    # principal_id (browser + agent relay) get booted.
+    force_close_principals_sync(
+        project_id,
+        [f"user:{user_id}", f"agent:user-{user_id}"],
+        code=4403,
+        reason="left project",
+    )
+
     log.info(
         "User %s left project %s (revoked %d token(s))",
-        user.id, project_id, n,
+        user_id, project_id, n,
     )
     return None
 

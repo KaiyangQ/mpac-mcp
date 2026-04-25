@@ -887,6 +887,26 @@ export default function WorkspacePage({
   const colsLayout = useStoredLayout("mpac.workspace.cols");
   const rowsLayout = useStoredLayout("mpac.workspace.sidebar-rows");
 
+  // ─── MPAC session (declared early so the editor + lifecycle handlers
+  //     defined further down can call session.beginTask / yieldTask).
+  //     Moved up from below TC-7 fix landed (2026-04-25 P1.3): the
+  //     editor now announces intents before saves, so handler closures
+  //     need session in scope at definition time.
+  const selfPrincipalId = user ? `user:${user.user_id}` : "user:?";
+  const selfDisplayName = user?.display_name ?? "You";
+  // Forward declaration so the onProjectEvent callback below can reference
+  // setters that are themselves declared later. Filled in via ref-then-call.
+  const projectEventHandlerRef = useRef<
+    ((evt: import("@/lib/envelope-types").ProjectEventPayload) => void) | undefined
+  >(undefined);
+  const session = useMpacSession({
+    projectId,
+    selfPrincipalId,
+    selfDisplayName,
+    enabled: !!user && !!project,
+    onProjectEvent: (evt) => projectEventHandlerRef.current?.(evt),
+  });
+
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
@@ -982,22 +1002,80 @@ export default function WorkspacePage({
     }, 800);
   };
 
+  // Map of file path → intent_id we hold for that file. Used so the
+  // editor's first keystroke per file announces an intent (unblocking
+  // the backend's PUT /files/content gate), and the next file switch /
+  // unmount yields it. Pre-2026-04-25 the editor PUT'd directly with no
+  // coordination — humans could silently overwrite an in-flight Claude
+  // edit on the same file.
+  const intentByPathRef = useRef<Record<string, string>>({});
+
   const handleEditorChange = (value: string | undefined) => {
     if (!activePath) return;
     const next = value ?? "";
     setFileContents((prev) => ({ ...prev, [activePath]: next }));
+    // Just-in-time announce so the backend's intent gate accepts the PUT
+    // that scheduleSave will fire 800ms from now. Subsequent keystrokes
+    // on the same file reuse the intent.
+    if (!intentByPathRef.current[activePath]) {
+      const id = session.beginTask(
+        [activePath],
+        `Editing ${activePath} (browser)`,
+      );
+      if (id) intentByPathRef.current[activePath] = id;
+    }
     scheduleSave(activePath, next);
   };
 
+  // Yield the prior file's intent when activePath flips. We don't yield on
+  // every blur — a reader peeking at another file shouldn't disturb the
+  // intent state. Yield happens explicitly on switch + unmount.
+  const prevActivePathRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevActivePathRef.current;
+    if (prev && prev !== activePath) {
+      const id = intentByPathRef.current[prev];
+      if (id) {
+        session.yieldTask(id, "file_switch");
+        delete intentByPathRef.current[prev];
+      }
+    }
+    prevActivePathRef.current = activePath;
+  }, [activePath, session]);
+
+  // Yield everything we still hold when the page unmounts (tab close,
+  // navigation away). Best-effort — the WS may already be torn down by
+  // the time React runs cleanup, in which case yieldTask is a no-op.
+  useEffect(() => {
+    return () => {
+      const ids = Object.values(intentByPathRef.current);
+      for (const id of ids) {
+        try {
+          session.yieldTask(id, "page_unmount");
+        } catch {
+          /* noop */
+        }
+      }
+      intentByPathRef.current = {};
+    };
+    // We deliberately want this to fire only on unmount, hence empty deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleCreateFile = async (path: string) => {
     // Called by NewFileModal after basic client-side validation. The modal
-    // stays open (showing the error) if this throws.
+    // stays open (showing the error) if this throws. We announce an intent
+    // before the create-PUT so the backend's intent gate accepts it.
+    const intentId = session.beginTask([path], `Creating ${path}`);
     try {
       await api.writeProjectFile(projectId, path, "");
       setFilePaths((prev) => [...prev, path].sort());
       setFileContents((prev) => ({ ...prev, [path]: "" }));
       setActivePath(path);
+      if (intentId) intentByPathRef.current[path] = intentId;
     } catch (e) {
+      // Roll back the intent so we don't keep advertising a phantom edit.
+      if (intentId) session.yieldTask(intentId, "create_failed");
       throw new Error(
         e instanceof ApiError ? e.message : "Failed to create file",
       );
@@ -1006,6 +1084,9 @@ export default function WorkspacePage({
 
   const handleDeleteFile = async (path: string) => {
     if (!window.confirm(`Delete ${path}?`)) return;
+    // Announce the delete as an intent so the backend gate accepts it,
+    // mirroring how an agent would: announce → DELETE → withdraw.
+    const intentId = session.beginTask([path], `Deleting ${path}`);
     try {
       await api.deleteProjectFile(projectId, path);
       setFilePaths((prev) => prev.filter((p) => p !== path));
@@ -1019,7 +1100,11 @@ export default function WorkspacePage({
         const remaining = filePaths.filter((p) => p !== path);
         setActivePath(remaining[0] ?? null);
       }
+      // Withdraw — file is gone, intent should not linger.
+      if (intentId) session.yieldTask(intentId, "deleted");
+      delete intentByPathRef.current[path];
     } catch (e) {
+      if (intentId) session.yieldTask(intentId, "delete_failed");
       window.alert(
         `Delete failed: ${e instanceof ApiError ? e.message : "unknown error"}`,
       );
@@ -1029,15 +1114,67 @@ export default function WorkspacePage({
   // Derived file tree for the sidebar + command palette.
   const fileTree = buildFileTree(filePaths);
 
-  const selfPrincipalId = user ? `user:${user.user_id}` : "user:?";
-  const selfDisplayName = user?.display_name ?? "You";
-
-  const session = useMpacSession({
-    projectId,
-    selfPrincipalId,
-    selfDisplayName,
-    enabled: !!user && !!project,
-  });
+  // Wire the lifecycle-event handler now that all state setters + router
+  // are in scope. The session itself was created up top with a ref-thunk
+  // that resolves to this handler at runtime.
+  useEffect(() => {
+    projectEventHandlerRef.current = (evt) => {
+      switch (evt.kind) {
+        case "file_changed": {
+          // If the changed file is currently open, refetch its content so
+          // the viewer/editor shows the new bytes instead of stale ones.
+          const path = evt.path;
+          api
+            .readProjectFile(projectId, path)
+            .then((f) => {
+              setFileContents((prev) => ({ ...prev, [path]: f.content }));
+            })
+            .catch(() => {
+              /* file might have been deleted between events — drop silently */
+            });
+          break;
+        }
+        case "file_deleted": {
+          const path = evt.path;
+          setFilePaths((prev) => prev.filter((p) => p !== path));
+          setFileContents((prev) => {
+            const next = { ...prev };
+            delete next[path];
+            return next;
+          });
+          if (activePath === path) {
+            const remaining = filePaths.filter((p) => p !== path);
+            setActivePath(remaining[0] ?? null);
+          }
+          break;
+        }
+        case "reset_to_seed": {
+          // Wholesale: refetch the file list + clear cached content so the
+          // next time the user opens any file we go to disk fresh.
+          api
+            .listProjectFiles(projectId)
+            .then((res) => {
+              const paths = res.files.map((f) => f.path);
+              setFilePaths(paths);
+              setFileContents({});
+              if (activePath && !paths.includes(activePath)) {
+                setActivePath(paths[0] ?? null);
+              }
+            })
+            .catch((e) => console.error("reset_to_seed refetch failed", e));
+          break;
+        }
+        case "project_deleted": {
+          // Project's gone — bail to the project list. The WS will close
+          // shortly after this envelope; we navigate first so the user
+          // doesn't see a flash of "connection lost".
+          setLoadError("This project was deleted by the owner.");
+          router.replace("/projects");
+          break;
+        }
+      }
+    };
+  }, [projectId, activePath, filePaths, router]);
 
   // Intent announcement is owned by Claude's MCP `announce_intent`
   // tool, NOT by the browser. In the actual usage pattern, humans

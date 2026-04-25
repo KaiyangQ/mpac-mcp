@@ -33,4 +33,13 @@ EXPOSE 8001
 # Production server — single worker keeps the in-process MPAC coordinator's
 # session state consistent (it lives in module globals via mpac_bridge.registry).
 # When we outgrow one worker we'll need to externalize the coordinator state.
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
+#
+# ``--no-access-log`` disables uvicorn's per-request log line in production.
+# WS upgrade URLs and bootstrap-script GETs carry credentials in the query
+# string (``?token=<jwt>`` for WS, ``?token=<agent_token>`` for bootstrap),
+# and uvicorn's default access log records the full request line. The host
+# nginx is the canonical access-log surface — its ``access_log off`` on the
+# token-bearing locations keeps creds out of disk logs end-to-end. Application
+# warnings/errors and our own ``logging.getLogger("mpac.*")`` lines are
+# unaffected and still fan out via uvicorn's stderr → docker-compose logs.
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1", "--no-access-log"]

@@ -213,6 +213,14 @@ async def ws_session(ws: WebSocket, project_id: int, token: str = ""):
             # send_text with json.dumps to keep full control.
             await ws.send_text(_json.dumps(envelope, ensure_ascii=False))
 
+        async def close_ws(code: int, reason: str) -> None:
+            # Used by force_close_project_session on project delete so this
+            # browser tab gets booted instead of holding a stale view.
+            try:
+                await ws.close(code=code, reason=reason)
+            except Exception:  # noqa: BLE001
+                log.debug("ws.close failed (already closed?)", exc_info=True)
+
         conn = await register_and_hello(
             session,
             principal_id=principal_id,
@@ -222,6 +230,7 @@ async def ws_session(ws: WebSocket, project_id: int, token: str = ""):
             credential_value=membership.mpac_token.token_value,
             send=send_to_ws,
             is_agent=False,
+            close_ws=close_ws,
         )
         if conn is None:
             await ws.close(code=4403, reason="credential rejected")

@@ -113,6 +113,30 @@ export type ProtocolErrorPayload = {
   original_message_id?: string;
 };
 
+/**
+ * Bridge-synthesized lifecycle notifications — NOT part of the core MPAC
+ * spec. Backend HTTP routes (delete/reset/file write) emit a PROJECT_EVENT
+ * envelope so connected browsers can react to side effects that wouldn't
+ * otherwise reach them through the protocol envelopes (which are scoped to
+ * coordination, not file persistence).
+ *
+ * Switch on ``payload.kind``:
+ *   - ``file_changed``   — payload also has ``path`` and ``updated_at``.
+ *                          Frontend re-fetches the file content if it's
+ *                          currently open in the editor.
+ *   - ``file_deleted``   — payload also has ``path``. Frontend drops it
+ *                          from the file list and closes the tab if open.
+ *   - ``reset_to_seed``  — payload has ``paths`` (array). Frontend reloads
+ *                          the file list and any open file contents.
+ *   - ``project_deleted``— payload has ``project_id`` + ``project_name``.
+ *                          Frontend redirects to /projects.
+ */
+export type ProjectEventPayload =
+  | { kind: "file_changed"; path: string; updated_at: string }
+  | { kind: "file_deleted"; path: string }
+  | { kind: "reset_to_seed"; paths: string[] }
+  | { kind: "project_deleted"; project_id: number; project_name: string };
+
 // Frontend-facing action vocabulary (must match
 // `api/mpac_bridge.browser_action_to_envelope`).
 

@@ -37,7 +37,10 @@ export type ProjectListResponse = {
 };
 
 export type TokenResponse = {
-  token_value: string;
+  // Membership descriptor, NOT a capability — pre-2026-04-25 this also
+  // carried the raw MPAC bearer ``token_value``, but the browser never
+  // used it (WS auth uses the JWT) and shipping it expanded XSS blast
+  // radius. Backend dropped the field; frontend mirrors that.
   session_id: string;
   roles: string[];
 };

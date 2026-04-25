@@ -12,6 +12,7 @@ import {
   type IntentWithdrawPayload,
   type MpacEnvelope,
   type ParticipantUpdatePayload,
+  type ProjectEventPayload,
   type ProtocolErrorPayload,
   type SessionInfoPayload,
 } from "./envelope-types";
@@ -76,6 +77,15 @@ export type UseMpacSessionOpts = {
   /** Pass the logged-in user's display_name so we can tag "(you)" client-side. */
   selfDisplayName: string;
   enabled?: boolean;
+  /**
+   * Callback for backend-synthesized lifecycle notifications (PROJECT_EVENT
+   * envelopes — file_changed, file_deleted, reset_to_seed, project_deleted).
+   * The hook itself only forwards them; the page decides what to do with
+   * each kind (refetch a file, redirect, etc.). Passing ``undefined`` makes
+   * the hook silently ignore these envelopes — convenient for surfaces
+   * that don't need them (e.g. unit tests).
+   */
+  onProjectEvent?: (event: ProjectEventPayload) => void;
 };
 
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 15000];
@@ -99,7 +109,15 @@ export function useMpacSession({
   selfPrincipalId,
   selfDisplayName,
   enabled = true,
+  onProjectEvent,
 }: UseMpacSessionOpts): MpacSessionState & MpacSessionActions {
+  // Stable ref so handleEnvelope doesn't have to take onProjectEvent as a
+  // dep (would re-create the WebSocket connect callback on every render
+  // that handed in a fresh inline function).
+  const onProjectEventRef = useRef(onProjectEvent);
+  useEffect(() => {
+    onProjectEventRef.current = onProjectEvent;
+  }, [onProjectEvent]);
   const [status, setStatus] = useState<ConnectionStatus>("idle");
   const [participants, setParticipants] = useState<LiveParticipant[]>([]);
   const [conflicts, setConflicts] = useState<LiveConflict[]>([]);
@@ -313,6 +331,21 @@ export function useMpacSession({
         }
         case "PROTOCOL_ERROR": {
           setLastError(env.payload as ProtocolErrorPayload);
+          break;
+        }
+        case "PROJECT_EVENT": {
+          // Bridge-synthesized lifecycle notice — forward to the page so
+          // it can refetch a file, drop one, redirect on delete, etc.
+          // The hook itself doesn't touch DOM state for these; that's
+          // the page's responsibility (file tree, editor, router).
+          const cb = onProjectEventRef.current;
+          if (cb) {
+            try {
+              cb(env.payload as ProjectEventPayload);
+            } catch (err) {
+              console.error("onProjectEvent handler threw", err);
+            }
+          }
           break;
         }
         default:
