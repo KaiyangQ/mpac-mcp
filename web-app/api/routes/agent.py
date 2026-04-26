@@ -715,6 +715,12 @@ try {{
         Write-Host "[mpac] X Group Policy pins ExecutionPolicy=$curr; Process-scope override denied." -ForegroundColor Red
         Write-Host "[mpac]   Run once (no admin needed), then re-try the iex command:" -ForegroundColor Red
         Write-Host "[mpac]     Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force" -ForegroundColor Red
+        # Inline pause — Die isn't defined yet at this point in the script,
+        # but window-flash-on-exit hits this branch hardest (it's the very
+        # first failure path) so we mirror the Read-Host trick.
+        if ($Host.Name -eq 'ConsoleHost') {{
+            try {{ Read-Host "[mpac] Press Enter to exit" | Out-Null }} catch {{ }}
+        }}
         exit 1
     }}
 }}
@@ -724,7 +730,47 @@ $Token = "{token}"
 $MinMpacMcp = "{ver}"
 
 function Say($m)  {{ Write-Host "[mpac] $m" -ForegroundColor Cyan }}
-function Die($m)  {{ Write-Host "[mpac] X $m" -ForegroundColor Red; exit 1 }}
+function Die($m)  {{
+    # Pause before exit so the user can READ the error. ``iex (irm ...)``
+    # often runs in a freshly-spawned PowerShell host that closes the
+    # window the moment we exit, taking the diagnostic with it. The
+    # ConsoleHost guard skips the prompt when piped/automated (CI,
+    # PowerShell ISE remoting), where blocking on stdin would hang.
+    Write-Host "[mpac] X $m" -ForegroundColor Red
+    if ($Host.Name -eq 'ConsoleHost') {{
+        try {{ Read-Host "[mpac] Press Enter to exit" | Out-Null }} catch {{ }}
+    }}
+    exit 1
+}}
+function Invoke-ClaudeLogin {{
+    # ``claude /login`` is an interactive TUI (alternate screen, cursor
+    # ctrl). Calling it inline inside this iex-spawned PowerShell host
+    # entangles its stdio with the parent's pipe — the TUI either hangs
+    # silently or scrolls escape gibberish, and the user sees a "frozen"
+    # script that's actually waiting for input it can't read. The bash
+    # side dodges this for free via process substitution
+    # (``bash <(curl ...)``); on Windows we have to be explicit.
+    #
+    # Start-Process -Wait -NoNewWindow gives claude its own process with
+    # the same console and clean stdio inheritance, then blocks until
+    # claude exits. We dispatch through ``cmd.exe /c`` so PATH resolution
+    # picks up the ``claude.cmd`` shim that ``npm install -g
+    # @anthropic-ai/claude-code`` drops — Start-Process -FilePath claude
+    # directly is unreliable on Windows boxes where PATHEXT doesn't
+    # include .cmd by default for the current host.
+    $exitCode = -1
+    try {{
+        $proc = Start-Process -FilePath "cmd.exe" `
+            -ArgumentList "/c","claude /login" `
+            -Wait -NoNewWindow -PassThru -ErrorAction Stop
+        $exitCode = $proc.ExitCode
+    }} catch {{
+        Die "claude /login invocation failed: $($_.Exception.Message)"
+    }}
+    if ($exitCode -ne 0) {{
+        Die "claude /login failed or was cancelled (exit=$exitCode)."
+    }}
+}}
 
 # --- Hard prerequisites -------------------------------------------------
 # mpac-mcp needs Python >= 3.10 (transitive dep on ``mcp``). Prefer an
@@ -802,17 +848,7 @@ $loggedIn = $claudeInstalled -and $sessions -and $sessions.Count -gt 0
 if (-not $loggedIn) {{
     Say "Claude Code not yet authenticated on this machine. Running 'claude /login' (browser will open)..."
     Say "Complete the login flow, then this script continues automatically."
-    # Same pattern as npm install above: `claude` is a .ps1 shim that
-    # can throw instead of setting $LASTEXITCODE. $? catches the throw,
-    # $LASTEXITCODE catches a normal non-zero exit.
-    $loginOk = $false
-    try {{
-        claude /login
-        $loginOk = ($? -and ($LASTEXITCODE -eq 0))
-    }} catch {{
-        Die "claude /login invocation failed: $($_.Exception.Message)"
-    }}
-    if (-not $loginOk) {{ Die "claude /login failed or was cancelled (exit=$LASTEXITCODE)." }}
+    Invoke-ClaudeLogin
     Say "Claude authenticated."
 }}
 
@@ -948,14 +984,7 @@ $smoke = Invoke-ClaudeSmoke
 if ($smoke.Exit -ne 0 -and $smoke.Output -match "(?i)not logged in|run /login|please log\s*in") {{
     Say "Claude reports Not Logged In. Running claude /login now (browser will open)..."
     Say "Complete the login flow, then this script continues automatically."
-    $loginOk = $false
-    try {{
-        claude /login
-        $loginOk = ($? -and ($LASTEXITCODE -eq 0))
-    }} catch {{
-        Die "claude /login invocation failed: $($_.Exception.Message)"
-    }}
-    if (-not $loginOk) {{ Die "claude /login failed or was cancelled (exit=$LASTEXITCODE)." }}
+    Invoke-ClaudeLogin
     Say "Re-running smoke after login..."
     $smoke = Invoke-ClaudeSmoke
 }}
