@@ -50,11 +50,12 @@ iex (irm 'https://mpac-web.duckdns.org/api/projects/N/bootstrap.ps1?token=xxx')
 ## 🎯 这份剧本覆盖什么
 
 一个叫 **`notes_app`** 的玩具笔记服务 —— 八个文件组成一个真实感的项目。
-通过 5 个剧本步骤，你会亲眼看到 MPAC 协议的**所有协调能力**在一张 import 图上
-协同工作：
+通过 5 个剧本步骤（+ 1 个 connect smoke），你会亲眼看到 MPAC 协议的**所有协调能力**
+在一张 import 图上协同工作：
 
 | Step | 在演示什么 | 三人分工 | MPAC 分类 | 协议版本 |
 |---|---|---|---|---|
+| **-1** | **3-way Connect smoke**（前置 sanity，~5 分钟） | 三人独立 Connect Claude，6 个 idle 全在线 | n/a — 验 bootstrap + relay 健康 | n/a |
 | 0  | 全局感知 baseline | 三人并行 list | `list_active_intents` | `mpac-mcp 0.2.2` |
 | 1  | **3-way** 同文件冲突 → **全员 Yield** 才安全 | 3 个函数、3 人各一 → Bob/Carol 先后 Yield | `scope_overlap`（**不适合 Ack**） | `mpac 0.2.0+` |
 | 2  | 跨文件依赖，**两个**同时踩进 Alice 爆炸半径 + **Ack 合法**演示 | A=重构 db.py, B=api.py, C=cli.py → 三人都 Ack | `dependency_breakage` 文件级 | `mpac 0.2.1` |
@@ -106,6 +107,65 @@ notes_app/
 
 ---
 
+## Step -1 — 3-way Connect smoke（剧本开始前的绿灯，~5 分钟）
+
+**目的**：3 个 tester 独立把 Connect Claude 跑通；3 个 relay 都上线；3 人浏览器都互相看见对方 + 对方的 🤖。**Step 0 起的所有剧本都假设这一步绿了**，第一次 3 人组合 + 第一次跑 Windows 4 阶段 bootstrap 时，不要把 connect 失败误读成 MPAC 的 bug。
+
+### 脚本
+
+每个 tester 独立做一次（**不要三人同时干**，错一个看一个，错两个一起难调）：
+
+1. 浏览器开自己的项目 URL（`https://mpac-web.duckdns.org/projects/N`），登入
+2. 浏览器右上角点 **🤖 Connect Claude**，modal 弹出
+3. modal 按 user-agent 自动给命令：
+   - **macOS / Linux / WSL / Git Bash**：`bash <(curl -fsSL -H "Authorization: Bearer ..." 'https://.../bootstrap.sh')`
+   - **Windows PowerShell**：`iex (irm '...' -Headers @{Authorization='Bearer ...'})`
+4. 复制 + 粘到本机终端 + 回车
+5. **Windows 用户特别注意**：bootstrap 现在是 **4 阶段**结构，会先打一张诊断表：
+   ```
+   [ OK ]  Python 3.10+      ...
+   [MISS]  Claude Code CLI   not installed
+   ...
+   ```
+   如果 Phase 0 列出 blocker（缺 Python / Node / Git Bash），按 modal 给的 winget 命令装完再重跑同一行 connect 命令；如果只有 auto-installable（Claude Code、mpac-mcp），按 Enter 让它自己装
+
+### 期望观察
+
+每个 tester 跑通后浏览器 Modal 自动从 "Waiting…" 变 "**Connected**"，名字旁边出 🤖。
+
+**三人全跑通后** —— 任意一个 tester 浏览器的 WHO'S WORKING 面板应该看到 6 个条目：
+
+```
+WHO'S WORKING
+  A  Alice (you)        idle
+  ⚙  Alice's Claude     idle
+  B  Bob                idle
+  ⚙  Bob's Claude       idle
+  C  Carol              idle
+  ⚙  Carol's Claude     idle
+```
+
+人 + agent 各 3，6 个 idle 全在线。这是 Step 0 起所有剧本的前提。
+
+### 失败兜底（按出现频率从高到低）
+
+| 现象 | 大概率原因 | 修法 |
+|---|---|---|
+| Modal 一直 "Waiting…"，终端命令报 401 / token expired | 之前生成的 token 过期了（modal 关掉重开会重新 mint） | 关 modal 重开，复制新命令 |
+| Modal 名字旁边没 🤖（人在但 Claude 没出现） | 终端 bootstrap 报错或退出了 | 看终端最后几行；transcript 在 `$env:TEMP\mpac-bootstrap-*.log`（Windows）或 `/tmp/mpac-bootstrap-*.log`（macOS / Linux） |
+| Windows 终端窗口闪退看不到错 | bootstrap.ps1 的 4 阶段 fix 应该堵住这个；如果还闪退，说明用户 PowerShell ExecutionPolicy 被 GPO 锁死（bootstrap 第一步会报这个并 Read-Host 暂停） | 按 modal 给的 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force` 跑一次，重试 |
+| `claude /login` 浏览器开了但 TUI 卡住 / 不响应 | 老 mpac-mcp（< 0.2.5）的 relay 在 PowerShell 里走 inline 调用，TUI stdio 错乱 | bootstrap 应该装到 ≥ 0.2.5，如果 `pip show mpac-mcp` 显示 0.2.4，跑 `pip install -U mpac-mcp>=0.2.5` |
+| 一个人能上 Claude 另两个不能 —— 但都用同一台 Windows 镜像 | 几乎一定是公司机器的 Antivirus / EDR 拦了 npm 或 pip | 看 transcript log，Antivirus 案例需要 IT 加白名单；目前没有自动绕过 |
+| 三人浏览器互相**看不见对方**（每个人只看到自己） | 浏览器 WS 没连上 / cookie 没设上 | 浏览器 DevTools → Network → WS 看 `/ws/session/N` 是不是 101 Switching Protocols；不是的话清浏览器缓存 + 重 login |
+
+### Debrief
+
+- 这一步**不要**让任何人对 Claude 说话或 announce intent。只是验证 connect。Step 0 才开始走 `list_active_intents`。
+- 三人都看到全 6 个 idle 才进 Step 0。少一个就先调，不要硬上 —— Step 1 的 3-way 冲突要 3 个 Claude 同时在线才有意义。
+- 这一步如果第一次顺利跑通，3 人组合下次再 connect 应该会经历 Phase 1 跳过（"All checks passed. Skipping Phase 1."）—— 因为前置都装好了。是 4 阶段 bootstrap 的设计意图。
+
+---
+
 ## Step 0 — Warmup：建 baseline
 
 **目的**：确认三人都真的连上了 relay + MCP tools 正常。
@@ -118,8 +178,9 @@ notes_app/
 intent）。如果 Claude 说没有 `list_active_intents` 这个 tool，说明
 `mpac-mcp` 版本 < 0.2.2，本地升一下（`pip install -U mpac-mcp`）。
 
-**观察者提示**：浏览器里三人都应该在 WHO'S WORKING 面板里看到 🤖 —— 这是
-relay 连上的标志。没有的话先修 Connect Claude 再继续。
+**观察者提示**：Step -1 已经验过 6 个 idle 都在线；这一步只是让 Claude 也"看一眼"全局
+状态，没什么意外能发生。如果有人 Claude 报 "no such tool"，回到 Step -1 的 mpac-mcp
+版本检查。
 
 ---
 
