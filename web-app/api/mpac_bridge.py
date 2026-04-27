@@ -100,6 +100,27 @@ def _synth_project_event_envelope(
     }
 
 
+def _co_principal_for_owner(principal_id: Optional[str]) -> Optional[str]:
+    """Map a principal_id to its sibling for the same human owner.
+
+    Two surfaces represent one human:
+      * ``user:N``        — the browser session WS (routes/main.py)
+      * ``agent:user-N``  — the Claude relay WS    (routes/ws_relay.py)
+
+    Returns the sibling form, or ``None`` if the principal_id doesn't
+    follow either pattern (e.g. service principals, future shapes).
+    Used by CONFLICT_REPORT routing so a conflict between two agents
+    also reaches each agent's owning browser tab.
+    """
+    if not principal_id:
+        return None
+    if principal_id.startswith("agent:user-"):
+        return f"user:{principal_id[len('agent:user-'):]}"
+    if principal_id.startswith("user:"):
+        return f"agent:user-{principal_id[len('user:'):]}"
+    return None
+
+
 def _synth_participant_update(
     session_id: str, conn: "_ConnectedParticipant", status: str,
 ) -> Dict[str, Any]:
@@ -556,6 +577,15 @@ async def process_envelope(
         elif resp_type == "CONFLICT_REPORT":
             payload = resp.get("payload", {})
             involved = {payload.get("principal_a"), payload.get("principal_b")}
+            involved.discard(None)
+            # In the real product flow both intents come from agent relays
+            # (Claude does the editing), so principal_a/b are ``agent:user-N``.
+            # Unicasting only to those two skips the human's browser tab
+            # (``user:N``) — the Conflicts panel never renders even though
+            # the chat board shows the peer agent's intent. Mirror the
+            # routing across the agent↔user pair so both surfaces light up.
+            for pid in list(involved):
+                involved.add(_co_principal_for_owner(pid))
             involved.discard(None)
             for pid in involved:
                 await _send_to(session, pid, resp)
