@@ -23,33 +23,29 @@ All bundled smoke scripts now run against an isolated scratch workspace copied
 from the requested repo path, so repeated runs do not inherit stale conflicts
 or frozen scope from a long-lived sidecar session.
 
-## What's in the box
+## Current scope
 
-**MCP tools** exposed to Claude Code / Cursor / any MCP host:
+This initial scaffold focuses on the shortest end-to-end path:
 
-- `who_is_working`, `begin_task`, `check_overlap`, `get_file_state`
-- `ack_conflict`, `submit_change`, `yield_task`
-- `escalate_conflict`, `resolve_conflict`, `take_over_task`
-
-**Two operating modes:**
-
-1. **Local sidecar** (default). `mpac-mcp` auto-starts an in-process MPAC
-   coordinator on a workspace-derived `127.0.0.1` port. Two editors on the same
-   machine see each other's intents and conflicts with zero setup.
-2. **Remote coordinator** (`mpac-mcp-relay`). Connect your local `claude -p`
-   to a hosted MPAC coordinator over WebSocket; participate in a shared
-   multi-agent session from your own laptop. See `src/mpac_mcp/relay.py` +
-   `src/mpac_mcp/relay_tools.py`.
-
-**Bundled smoke scripts** exercise specific flows against a scratch workspace
-(runs are isolated — no leftover intents between runs):
-
-- `milestone0` — two processes, one local coordinator
-- `smoke_tools` — `begin_task` → `check_overlap`
-- `smoke_commit` — `begin_task` → `submit_change` → `yield_task`
-- `smoke_governance` — `ack_conflict` → `escalate_conflict` → `resolve_conflict`
-- `smoke_takeover` — GOODBYE with transfer → `take_over_task`
-- `smoke_remote` — drive the bridge against a hosted coordinator via `ws://…`
+- local sidecar auto-discovery / auto-start
+- repository-root detection
+- session summary query
+- first MCP tools:
+  - `who_is_working`
+  - `begin_task`
+  - `check_overlap`
+  - `get_file_state`
+  - `ack_conflict`
+  - `submit_change`
+  - `yield_task`
+  - `escalate_conflict`
+  - `resolve_conflict`
+  - `take_over_task`
+- a Milestone 0 validation script for "two processes share one local coordinator"
+- an end-to-end smoke script for "one external client + one MCP-owned task"
+- an end-to-end smoke script for "begin task -> submit change -> yield task"
+- an end-to-end smoke script for "ack -> escalate -> resolve"
+- an end-to-end smoke script for "suspend -> claim -> take over"
 
 ## Multi-tenant Hosted Mode (Authenticated Profile)
 
@@ -75,20 +71,20 @@ When deploying a hosted coordinator for multiple projects/teams:
    ```
    Tokens bound to `proj-alpha` can only join `proj-alpha` — cross-session access returns `CREDENTIAL_REJECTED`.
 
-## Design
+See `deploy/fly-coordinator/` for a complete Docker + Caddy + fly.io deployment recipe.
 
-`mpac-mcp` is intentionally thin: MPAC itself remains the runtime and
-coordination engine (see the [`mpac`](https://pypi.org/project/mpac/) package
-and the [`mpac-protocol`](https://github.com/KaiyangQ/mpac-protocol) spec);
-`mpac-mcp` is the MCP integration layer that translates protocol messages
-into tool calls an LLM-driven editor can invoke.
+## Development status
+
+This directory is the start of the `mpac-mcp` product entry point. It is
+intentionally thin: MPAC remains the runtime and coordination engine;
+`mpac-mcp` is the integration layer.
 
 ## Running the Milestone 0 smoke check
 
 From this repository root:
 
 ```bash
-python3 src/mpac_mcp/milestone0.py --workspace .
+python3 mpac-mcp/src/mpac_mcp/milestone0.py --workspace .
 ```
 
 This will:
@@ -104,7 +100,7 @@ This will:
 From this repository root:
 
 ```bash
-python3 src/mpac_mcp/smoke_tools.py --workspace .
+python3 mpac-mcp/src/mpac_mcp/smoke_tools.py --workspace .
 ```
 
 This will:
@@ -120,7 +116,7 @@ This will:
 From this repository root:
 
 ```bash
-python3 src/mpac_mcp/smoke_commit.py --workspace .
+python3 mpac-mcp/src/mpac_mcp/smoke_commit.py --workspace .
 ```
 
 This will:
@@ -136,7 +132,7 @@ This will:
 From this repository root:
 
 ```bash
-python3 src/mpac_mcp/smoke_governance.py --workspace .
+python3 mpac-mcp/src/mpac_mcp/smoke_governance.py --workspace .
 ```
 
 This will:
@@ -153,7 +149,7 @@ This will:
 From this repository root:
 
 ```bash
-python3 src/mpac_mcp/smoke_takeover.py --workspace .
+python3 mpac-mcp/src/mpac_mcp/smoke_takeover.py --workspace .
 ```
 
 This will:

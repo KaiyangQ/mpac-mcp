@@ -55,6 +55,7 @@ from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
 
+import httpx
 import websockets
 
 
@@ -163,6 +164,37 @@ def _build_mcp_config(ctx: RelayContext) -> str:
     return path
 
 
+async def _withdraw_orphan_intents(
+    ctx: "RelayContext", reason: str
+) -> list[str]:
+    """Best-effort: tell the web app to withdraw any intents the just-failed
+    subprocess left dangling. The agent token is principal-scoped, so this
+    only ever touches THIS relay's own intents in THIS project — the server
+    iterates over the coordinator's registry filtered by ``conn.principal_id``.
+
+    Failures are swallowed to a log line: a cleanup failure must not turn a
+    chat reply into an exception path. Worst case the orphan stays around,
+    which is what we had before this code existed.
+    """
+    url = f"{ctx.web_http_url}/api/agent/intents/withdraw_all"
+    headers = {"Authorization": f"Bearer {ctx.agent_token}"}
+    body = {"project_id": ctx.project_id, "reason": reason}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.post(url, json=body, headers=headers)
+            if r.status_code >= 400:
+                log.warning(
+                    "Orphan-intent cleanup HTTP %s: %s",
+                    r.status_code, r.text[:200],
+                )
+                return []
+            data = r.json()
+    except Exception as e:
+        log.warning("Orphan-intent cleanup call failed: %s", e)
+        return []
+    return list(data.get("withdrawn_intent_ids") or [])
+
+
 async def handle_chat(ctx: RelayContext, message: str) -> str:
     """Spawn `claude -p` with MCP_CONNECTION_BLOCKING=1 + the mpac-coding
     MCP server and return its stdout.
@@ -221,6 +253,13 @@ async def handle_chat(ctx: RelayContext, message: str) -> str:
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
+                # Subprocess died mid-flight; if it had already announced an
+                # intent, the orphan would block siblings on the same files
+                # forever. Cleanup is async to keep the UX response snappy.
+                cleaned = await _withdraw_orphan_intents(ctx, "claude_timeout")
+                if cleaned:
+                    log.info("Cleaned %d orphan intents after timeout: %s",
+                             len(cleaned), cleaned)
                 return f"[relay] Claude Code timed out after {CLAUDE_TIMEOUT_SEC:.0f}s"
         except FileNotFoundError:
             return (
@@ -234,16 +273,43 @@ async def handle_chat(ctx: RelayContext, message: str) -> str:
 
         if proc.returncode != 0:
             err = stderr.decode("utf-8", errors="replace").strip()
-            log.warning("claude -p exit=%s stderr=%r",
-                        proc.returncode, err[:500])
-            if "login" in err.lower() or "auth" in err.lower():
+            out = stdout.decode("utf-8", errors="replace").strip()
+            log.warning("claude -p exit=%s stderr=%r stdout=%r",
+                        proc.returncode, err[:500], out[:500])
+            # The subprocess may have called announce_intent before failing
+            # (e.g. it announced, then write_project_file's followup got
+            # blocked by the API content filter). Without this cleanup the
+            # intent stays ACTIVE forever — every later announce on the
+            # same scope from this principal used to surface a "self
+            # conflict" until coordinator 2c shipped. Cleanup is still
+            # worth doing so siblings don't see a phantom claim either.
+            cleaned = await _withdraw_orphan_intents(
+                ctx, f"claude_exit_{proc.returncode}",
+            )
+            if cleaned:
+                log.info("Cleaned %d orphan intents after exit %d: %s",
+                         len(cleaned), proc.returncode, cleaned)
+            # The Claude Code CLI writes several user-facing errors to
+            # STDOUT, not stderr — notably "Claude Code on Windows requires
+            # git-bash" and "Not logged in · Please run /login". If we
+            # only surfaced stderr the user would see "[relay] Claude
+            # Code failed (exit 1):" with an empty body — the most
+            # frustrating possible UX. Combine both streams; stderr
+            # first (convention), stdout second (where the real
+            # diagnostic often lives).
+            if err and out:
+                body = f"{err}\n{out}"
+            else:
+                body = err or out or "(no output on stderr or stdout)"
+            hay = (err + " " + out).lower()
+            if "login" in hay or "auth" in hay:
                 return (
                     f"[relay] Claude Code isn't authenticated on this machine.\n"
                     f"Run `claude /login` in a terminal, then retry.\n\n"
-                    f"Raw error: {err[:400]}"
+                    f"Raw error: {body[:400]}"
                 )
             return (f"[relay] Claude Code failed "
-                    f"(exit {proc.returncode}): {err[:400]}")
+                    f"(exit {proc.returncode}): {body[:400]}")
 
         reply = stdout.decode("utf-8", errors="replace").rstrip()
         log.info("claude -p completed reply_len=%d", len(reply))
@@ -303,9 +369,30 @@ async def run_relay(args: argparse.Namespace) -> int:
     )
 
     uri = args.project_url
-    sep = "&" if "?" in uri else "?"
-    full_uri = f"{uri}{sep}token={args.token}"
     log.info("Connecting to %s", uri)
+
+    # Auth via Authorization header instead of ``?token=`` in the URL — keeps
+    # the agent bearer out of any access log / proxy log / browser-history
+    # surface that records request URLs (web-app v3, 2026-04-25). The web
+    # backend's ``/ws/relay`` endpoint accepts BOTH paths during the soft-
+    # rollout window: header (preferred) AND query (back-compat for relays
+    # built against pre-0.2.5 mpac-mcp). Once we're sure no clients are on
+    # the old path, the query fallback can come out.
+    #
+    # Header-kwarg name compat: the websockets library renamed
+    # ``extra_headers`` → ``additional_headers`` in v14. Our pyproject still
+    # allows ``websockets>=12.0`` for environments that pinned an older
+    # version, so we pick the right kwarg at runtime — same pattern
+    # ``coordinator_bridge._WS_HEADER_KWARG`` uses. Hard-coding
+    # ``additional_headers=`` would break any user with v12/13 already
+    # satisfying the constraint (pip won't upgrade past a satisfied pin).
+    auth_headers = [("Authorization", f"Bearer {args.token}")]
+    try:
+        _ws_major = int(websockets.__version__.split(".")[0])
+    except (AttributeError, ValueError):
+        _ws_major = 0
+    _ws_header_kwarg = "additional_headers" if _ws_major >= 14 else "extra_headers"
+    ws_connect_extra: dict = {_ws_header_kwarg: auth_headers}
 
     # Reconnect loop with exponential backoff (capped at 60 s). A production
     # backend restart or a brief network blip should NOT require the user to
@@ -316,10 +403,11 @@ async def run_relay(args: argparse.Namespace) -> int:
     while True:
         try:
             async with websockets.connect(
-                full_uri, max_size=4 * 1024 * 1024,
+                uri, max_size=4 * 1024 * 1024,
                 open_timeout=15,
                 close_timeout=5,
                 ping_interval=20, ping_timeout=20,
+                **ws_connect_extra,
             ) as ws:
                 # Successful connect — reset backoff counter.
                 attempts = 0
@@ -401,6 +489,31 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # Optional event recorder — see web-app/api/main.py for the same hook.
+    # No-op when the package is missing or MPAC_EVENT_LOG is unset.
+    #
+    # Layout-aware search: in a dev checkout this file lives at
+    # mpac-mcp/src/mpac_mcp/relay.py (repo root is up 4 levels). When pip-
+    # installed (typical relay user), `mpac_event_recorder/` is NOT on the
+    # site-packages path — the user has to set PYTHONPATH=<repo> manually
+    # if they want relay-side recording. The walk below finds the dev
+    # case automatically and silently skips the pip case.
+    try:
+        _here = os.path.dirname(os.path.abspath(__file__))
+        for _depth in range(1, 6):
+            _candidate = os.path.abspath(
+                os.path.join(_here, *([".."] * _depth))
+            )
+            if os.path.isdir(os.path.join(_candidate, "mpac_event_recorder")):
+                if _candidate not in sys.path:
+                    sys.path.insert(0, _candidate)
+                break
+        import mpac_event_recorder  # type: ignore[import-not-found]
+        mpac_event_recorder.install_relay()
+    except ImportError:
+        pass
+    except Exception:
+        log.exception("mpac_event_recorder bootstrap failed; continuing without it")
     try:
         return asyncio.run(run_relay(args))
     except KeyboardInterrupt:
