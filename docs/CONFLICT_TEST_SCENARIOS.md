@@ -174,6 +174,123 @@ symbol 也救不回来，因为 Bob 那侧 wildcard。
 
 ---
 
+## Test 2.5 — 保证时序重叠（解决"碰不到一起"的问题）
+
+**问题描述**：Test 2.1 – 2.4 都假设 Alice 和 Bob 的 announce 时间窗口能重叠 ——
+但用真 Claude relay 时，常见的失败模式是：Alice 的 Claude 收到 prompt → 几秒钟内
+announce + 改完文件 + `withdraw_intent`，**Bob 还没敲完 prompt 就已经看不到
+Alice 的 intent 了**，conflict 永远不 fire。
+
+intent 的存活期由"持有方主动 withdraw"或"WS 断开"决定，不会因为时间过去就自动
+消失。所以"碰在一起"= 把两边的 intent 持有期**强制拉长到能重叠**。下面三种
+策略按可靠性排序。
+
+---
+
+### 策略 A — 浏览器 editor 长按住（最稳，不依赖 Claude）
+
+**关键机制**：4-25 P1.3 fix 之后，浏览器 editor 的第一次 keystroke 自动
+`begin_task` 一个 intent，**只在切文件 / 关 tab / unmount 时才 `yield_task`**。
+所以"持有住 intent" = "tab 别动、文件别切"。
+
+**剧本**：
+
+1. Reset to seed
+2. Alice 浏览器（普通窗口）：登录 → 打开项目页 → 点 `notes_app/db.py` → editor
+   随便敲一个字符（在末尾加个空格也行）
+   - 触发：浏览器自动 `begin_task` on `notes_app/db.py`
+   - **不要切走、不要关 tab，不要点别的文件**
+3. **不要等**，立刻在 Bob 浏览器（隐私窗口或另一个 profile）：登录 → 打开同一个
+   项目页 → 点 `notes_app/db.py` → editor 敲一个字符
+   - 触发：Bob 的浏览器 `begin_task` on `notes_app/db.py`
+   - 此时 Alice 的 intent 还在 → coordinator pairwise 判定 → fire `CONFLICT_REPORT`
+4. 双方 Conflicts 面板弹出 scope_overlap 卡
+
+**期望结果**：跟 Test 2.1 完全一致 —— `scope_overlap` on db.py，severity medium，
+双方都看到。区别只在于"intent 怎么被持续持有"。
+
+**为什么必触发**：`begin_task` 的存活期锚定在**浏览器 tab 状态**上，不是锚定在
+"Claude 改完文件就 withdraw"。只要 Alice 不切走、不关 tab，intent 一直活；Bob
+随时进来都撞得上 —— 完全不依赖 Bob 在多少秒内到达。
+
+**清理**：测完两人各自切到别的文件（`yield_task` 触发）或刷新页面，intent 释放。
+
+---
+
+### 策略 B — 用 `demo_driver.py` 占住一侧（synthetic，0 Claude 依赖）
+
+**关键机制**：`scripts/demo_driver.py announce --hold <N>` 用 carol 账号开 WS、发
+`begin_task`、然后**保持 WS 打开 N 秒**才关闭。期间 intent 一直 live。
+
+**剧本**：
+
+```bash
+# 终端 1：Carol 占住 db.py 60 秒（足够另一边走完所有人工步骤）
+.venv/bin/python scripts/demo_driver.py announce \
+    --files notes_app/db.py --hold 60
+
+# 输出会停在 "[carol] ← ..."  loop 等 envelope；intent 此刻 live
+
+# 终端 2（或浏览器）：Bob / Alice / Dave 任意一个真用户开始 announce
+#   走 Claude relay 也行、走浏览器 editor 也行
+#   只要在 60 秒内到达，必撞
+```
+
+**期望结果**：Carol（synthetic 占位方）和真用户那侧都收到 `CONFLICT_REPORT`。
+真用户那侧能看到 ConflictCard 显示 vs `Carol's session`（或 `carol@mpac.test`，
+看 demo_driver 的 display name 怎么 mint 的）。
+
+**为什么必触发**：60 秒 hold 是脚本自己的 `asyncio.sleep` 控制 WS 关闭时间，跟
+对方任何节奏完全解耦。改 `--hold` 数值就能任意调整窗口宽度。
+
+**注意**：脚本依赖事先跑过 `scripts/demo_driver.py setup` 把 carol 账号 + creds
+mint 出来。如果在 prod 跑，要先改 `--base` / `--ws-base` 指向 prod URL，并且
+确认 prod 上有 carol 账号（`scripts/seed_test_users.py` 或手动注册）。
+
+---
+
+### 策略 C — 给 Claude 明确的"announce 但不要 withdraw"prompt
+
+**关键机制**：Claude 默认行为是 announce → do work → withdraw_intent。要让它
+hold，得 prompt 里**明确说不要 withdraw**。
+
+**剧本**：
+
+1. Reset to seed
+2. 在 Alice 的 chat board 输入：
+   > "请你在 `notes_app/db.py` 上 announce 一个 intent（objective: 重构 `save()`，
+   > affects_symbols=["notes_app.db.save"]）。**不要做任何代码修改，不要调用
+   > `withdraw_intent`**。announce 成功后告诉我"已 announce，等待指令"然后停下。"
+3. Alice 那边 chat 显示 "已 announce" 之后（说明 intent live），切到 Bob 的 chat：
+   > "请你在 `notes_app/api.py` 上 announce 一个 intent（objective: 新增 CORS
+   > 头）。announce 成功后告诉我结果。"
+4. Bob 那边 announce 时 Alice 的 intent 还在 → fire `CONFLICT_REPORT`
+5. 收尾：分别告诉两个 Claude "现在 withdraw 你的 intent"
+
+**期望结果**：跟 Test 2.3 一致 —— `dependency_breakage` with precise
+`notes_app.db.save` symbol。区别是验证了"真 Claude relay 路径"端到端能工作。
+
+**坑**：
+
+- Claude 偶尔会"善意地"提前 withdraw（"我已经 announce 完了，应该礼貌地释放"）。
+  如果 chat 里看到它说"已 withdraw"，重来一次 + prompt 加狠"**绝对不要 withdraw_intent，
+  你只 announce 就停**"。
+- 如果 Alice 的 Claude 在等待时被刷新 / 重启 relay，WS 断开会 broadcast withdraw。
+  保持 relay 终端别动。
+
+---
+
+### 一句话选型
+
+| 想测什么 | 选哪个策略 |
+|---|---|
+| 协议 / coordinator 路径正确性 | A（浏览器，最快最稳） |
+| 大批量自动化 / CI 风格 smoke | B（demo_driver `--hold`） |
+| 真实 Claude relay 端到端 | C（prompt control） |
+| 本周内测的"必复现冲突"演示 | A 起步，演完后再用 C 演完整 Claude 流 |
+
+---
+
 # 三人测试（Alice + Bob + Carol）
 
 ## Test 3.1 — 同文件三方撞（3-way `scope_overlap`）
@@ -377,6 +494,7 @@ api.py（api.py 自己 `from notes_app.models import Note`），不是因为"传
 | 2.2 | 2 | `dependency_breakage`     | 文件级 fallback（无 symbols） |
 | 2.3 | 2 | `dependency_breakage`     | 符号级 attr-chain + from-pkg-import 精确命中 |
 | 2.4 | 2 | `dependency_breakage`     | dotted-import wildcard 保守 fire |
+| 2.5 | 2 | (跟 2.1–2.4 一样)          | **保证时序重叠**的三种执行方式（浏览器 hold / demo_driver `--hold` / Claude prompt） |
 | 3.1 | 3 | `scope_overlap` × 3       | pairwise overlap，3 张卡 |
 | 3.2 | 3 | `dependency_breakage` × 2 | 1 hub + 2 spoke，spoke 之间不撞 |
 | 3.3 | 3 | overlap + dependency × 3  | 矩阵混合，验证 ConflictCard 多 category |
