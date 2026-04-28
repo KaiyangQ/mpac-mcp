@@ -584,7 +584,16 @@ async def agent_list_active_intents(
 # bumping the floor here is what actually flushes ``?token=`` out of
 # fresh installs — without this bump, bootstrap accepts an existing
 # 0.2.4 wheel and the URL leak persists for new users too.
-_MIN_MPAC_MCP = "0.2.5"
+# 0.2.6: relay calls POST /api/agent/intents/withdraw_all on subprocess
+# timeout / non-zero exit so an intent that was announced but never
+# withdrawn (typical case: write_project_file blocked by Anthropic API
+# content filter) gets cleaned up before the next chat retry. 0.2.5
+# without this fix would accumulate orphan intents and produce phantom
+# "<user>'s Claude ↔ <user>'s Claude" self-conflicts. Server-side 2c
+# (auto-supersede) catches the symptom too, so 0.2.5 stays compatible
+# — bumping the floor is purely a "we recommend the cleanup behaviour"
+# signal.
+_MIN_MPAC_MCP = "0.2.6"
 
 
 def _render_bootstrap_sh(relay_url: str, token_value: str) -> str:

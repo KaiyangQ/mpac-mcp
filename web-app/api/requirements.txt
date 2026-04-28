@@ -20,4 +20,9 @@ mpac>=0.2.4
 # decoding (stderr+stdout merge). Bump both together.
 # 0.2.5: relay /ws/relay auth via Authorization header instead of
 # ``?token=`` query — closes the URL-leak surface the v3 review flagged.
-mpac-mcp>=0.2.5
+# 0.2.6: relay calls /api/agent/intents/withdraw_all on subprocess
+# timeout / exit-non-zero so orphan intents (typical case: API content
+# filter blocks the followup write) get cleaned up before the next
+# retry — see _MIN_MPAC_MCP comment in routes/agent.py for the full
+# story. Backward compatible: 0.2.5 relays still connect.
+mpac-mcp>=0.2.6
