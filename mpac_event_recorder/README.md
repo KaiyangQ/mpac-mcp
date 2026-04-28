@@ -26,8 +26,11 @@ envelope、`mpac.*` log、relay 子进程生命周期)写到一个 JSONL 文件,
 - AWS 上**只录 web-app 端**的事件流(coordinator envelope + mpac.* log)。
   3 个测试者本地的 relay 不会被录,除非他们各自在自己机器 export env var。
 - Docker image 里的 `mpac_event_recorder/` 是**构建时**拷进去的。如果用户改了
-  recorder 代码,要 `docker compose build api` 才生效。只 toggle env var 不需要
-  rebuild,只需 `restart api`。
+  recorder 代码,要 `docker compose build api` 才生效。
+- **toggle env var 必须用 `up -d --force-recreate`,不是 `restart`!**
+  `docker compose restart` 只是 stop+start 已存在的容器,**不会**重读 env_file —— 环境
+  变量在容器**创建**时就 baked 了。`up -d --force-recreate --no-deps api` 才会用新
+  env 重建容器。这是 2026-04-28 实际操作时踩的坑,不要再写错。
 - JSONL 写到 host 的 `/var/mpac/data/`(容器里挂载到 `/data/`)。这是 SQLite 同
   目录,host 上能直接 `scp` 走。
 
@@ -68,7 +71,7 @@ echo 'MPAC_EVENT_LOG=/data/session.jsonl' | sudo tee -a /etc/mpac/api.env
 # 2. 重启 api 容器让它重读 env(不用重 build)
 cd ~/Agent_talking   # 或者你 git clone 时的位置
 sudo docker compose -f deploy/aws-lightsail/docker-compose.yml \
-     --env-file /etc/mpac/compose.env restart api
+     --env-file /etc/mpac/compose.env up -d --force-recreate --no-deps api
 
 # 3. 确认录音器已加载
 sudo docker compose -f deploy/aws-lightsail/docker-compose.yml logs --tail=50 api \
@@ -116,7 +119,7 @@ ssh ubuntu@mpac-web.duckdns.org
 sudo sed -i '/^MPAC_EVENT_LOG=/d' /etc/mpac/api.env
 cd ~/Agent_talking
 sudo docker compose -f deploy/aws-lightsail/docker-compose.yml \
-     --env-file /etc/mpac/compose.env restart api
+     --env-file /etc/mpac/compose.env up -d --force-recreate --no-deps api
 ```
 
 可选:把已经写满的 JSONL 移走或删除,避免下次测试 append 到同一个文件:
