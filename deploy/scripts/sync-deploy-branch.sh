@@ -26,6 +26,7 @@ set -euo pipefail
 WHITELIST=(
     deploy
     web-app
+    mpac_event_recorder
     .dockerignore
     .gitignore
     LICENSE

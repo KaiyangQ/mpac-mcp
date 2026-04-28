@@ -42,6 +42,8 @@ from ..schemas import (
     AgentOverlapResponse,
     AgentStatusResponse,
     AgentTokenResponse,
+    AgentWithdrawAllRequest,
+    AgentWithdrawAllResponse,
     AgentWithdrawIntent,
 )
 from mpac_protocol.core.models import IntentState, Scope
@@ -343,6 +345,66 @@ async def agent_withdraw_intent(
     log.info("Agent intent withdrawn: user=%s intent_id=%s reason=%s",
              user.id, req.intent_id, req.reason)
     return {"status": "withdrawn", "intent_id": req.intent_id}
+
+
+@router.post(
+    "/agent/intents/withdraw_all",
+    response_model=AgentWithdrawAllResponse,
+)
+async def agent_withdraw_all_intents(
+    req: AgentWithdrawAllRequest,
+    ctx: AuthCtx = Depends(get_user_or_agent),
+    db: Session = Depends(get_db),
+):
+    """Withdraw every ACTIVE intent owned by the calling agent in this project.
+
+    Used by the relay's bash-out path: when ``claude -p`` exits non-zero
+    AFTER announcing an intent but BEFORE calling withdraw_intent (e.g. when
+    the Anthropic API content filter blocks the followup write), the
+    subprocess takes its intent_id memory with it. This endpoint lets the
+    outer relay process clean up using only its agent token — no need to
+    parse stdout for intent_ids.
+
+    Idempotent: returns the list of intents actually transitioned. Empty
+    list when there's nothing to clean up (already-withdrawn intents are
+    skipped silently).
+    """
+    assert_token_scope(ctx, req.project_id)
+    user = ctx.user
+    member = db.query(Token).filter(
+        Token.user_id == user.id,
+        Token.project_id == req.project_id,
+        Token.is_revoked == False,  # noqa: E712
+    ).first()
+    if not member:
+        raise HTTPException(403, "Not a member of this project")
+
+    session, conn = _get_agent_conn(req.project_id, user.id)
+    coordinator = session.coordinator
+
+    target_ids: list[str] = [
+        intent.intent_id
+        for intent in coordinator.intents.values()
+        if intent.principal_id == conn.principal_id
+        and intent.state_machine.current_state == IntentState.ACTIVE
+    ]
+
+    withdrawn: list[str] = []
+    for intent_id in target_ids:
+        envelope = conn.participant.withdraw_intent(
+            session_id=session.mpac_session_id,
+            intent_id=intent_id,
+            reason=req.reason,
+        )
+        await process_envelope(session, envelope, conn.principal_id)
+        withdrawn.append(intent_id)
+
+    if withdrawn:
+        log.info(
+            "Agent bulk withdraw: user=%s reason=%s intents=%s",
+            user.id, req.reason, withdrawn,
+        )
+    return AgentWithdrawAllResponse(withdrawn_intent_ids=withdrawn)
 
 
 @router.post("/agent/overlap", response_model=AgentOverlapResponse)

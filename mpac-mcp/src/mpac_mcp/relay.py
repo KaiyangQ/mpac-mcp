@@ -55,6 +55,7 @@ from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
 
+import httpx
 import websockets
 
 
@@ -163,6 +164,37 @@ def _build_mcp_config(ctx: RelayContext) -> str:
     return path
 
 
+async def _withdraw_orphan_intents(
+    ctx: "RelayContext", reason: str
+) -> list[str]:
+    """Best-effort: tell the web app to withdraw any intents the just-failed
+    subprocess left dangling. The agent token is principal-scoped, so this
+    only ever touches THIS relay's own intents in THIS project — the server
+    iterates over the coordinator's registry filtered by ``conn.principal_id``.
+
+    Failures are swallowed to a log line: a cleanup failure must not turn a
+    chat reply into an exception path. Worst case the orphan stays around,
+    which is what we had before this code existed.
+    """
+    url = f"{ctx.web_http_url}/api/agent/intents/withdraw_all"
+    headers = {"Authorization": f"Bearer {ctx.agent_token}"}
+    body = {"project_id": ctx.project_id, "reason": reason}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.post(url, json=body, headers=headers)
+            if r.status_code >= 400:
+                log.warning(
+                    "Orphan-intent cleanup HTTP %s: %s",
+                    r.status_code, r.text[:200],
+                )
+                return []
+            data = r.json()
+    except Exception as e:
+        log.warning("Orphan-intent cleanup call failed: %s", e)
+        return []
+    return list(data.get("withdrawn_intent_ids") or [])
+
+
 async def handle_chat(ctx: RelayContext, message: str) -> str:
     """Spawn `claude -p` with MCP_CONNECTION_BLOCKING=1 + the mpac-coding
     MCP server and return its stdout.
@@ -221,6 +253,13 @@ async def handle_chat(ctx: RelayContext, message: str) -> str:
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
+                # Subprocess died mid-flight; if it had already announced an
+                # intent, the orphan would block siblings on the same files
+                # forever. Cleanup is async to keep the UX response snappy.
+                cleaned = await _withdraw_orphan_intents(ctx, "claude_timeout")
+                if cleaned:
+                    log.info("Cleaned %d orphan intents after timeout: %s",
+                             len(cleaned), cleaned)
                 return f"[relay] Claude Code timed out after {CLAUDE_TIMEOUT_SEC:.0f}s"
         except FileNotFoundError:
             return (
@@ -237,6 +276,19 @@ async def handle_chat(ctx: RelayContext, message: str) -> str:
             out = stdout.decode("utf-8", errors="replace").strip()
             log.warning("claude -p exit=%s stderr=%r stdout=%r",
                         proc.returncode, err[:500], out[:500])
+            # The subprocess may have called announce_intent before failing
+            # (e.g. it announced, then write_project_file's followup got
+            # blocked by the API content filter). Without this cleanup the
+            # intent stays ACTIVE forever — every later announce on the
+            # same scope from this principal used to surface a "self
+            # conflict" until coordinator 2c shipped. Cleanup is still
+            # worth doing so siblings don't see a phantom claim either.
+            cleaned = await _withdraw_orphan_intents(
+                ctx, f"claude_exit_{proc.returncode}",
+            )
+            if cleaned:
+                log.info("Cleaned %d orphan intents after exit %d: %s",
+                         len(cleaned), proc.returncode, cleaned)
             # The Claude Code CLI writes several user-facing errors to
             # STDOUT, not stderr — notably "Claude Code on Windows requires
             # git-bash" and "Not logged in · Please run /login". If we
@@ -437,6 +489,31 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # Optional event recorder — see web-app/api/main.py for the same hook.
+    # No-op when the package is missing or MPAC_EVENT_LOG is unset.
+    #
+    # Layout-aware search: in a dev checkout this file lives at
+    # mpac-mcp/src/mpac_mcp/relay.py (repo root is up 4 levels). When pip-
+    # installed (typical relay user), `mpac_event_recorder/` is NOT on the
+    # site-packages path — the user has to set PYTHONPATH=<repo> manually
+    # if they want relay-side recording. The walk below finds the dev
+    # case automatically and silently skips the pip case.
+    try:
+        _here = os.path.dirname(os.path.abspath(__file__))
+        for _depth in range(1, 6):
+            _candidate = os.path.abspath(
+                os.path.join(_here, *([".."] * _depth))
+            )
+            if os.path.isdir(os.path.join(_candidate, "mpac_event_recorder")):
+                if _candidate not in sys.path:
+                    sys.path.insert(0, _candidate)
+                break
+        import mpac_event_recorder  # type: ignore[import-not-found]
+        mpac_event_recorder.install_relay()
+    except ImportError:
+        pass
+    except Exception:
+        log.exception("mpac_event_recorder bootstrap failed; continuing without it")
     try:
         return asyncio.run(run_relay(args))
     except KeyboardInterrupt:

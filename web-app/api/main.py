@@ -34,6 +34,35 @@ from .mpac_bridge import (
 log = logging.getLogger("mpac.web")
 
 
+# ── Optional event recorder ──────────────────────────────────────────────
+# Soft dependency: if the ``mpac_event_recorder`` package can be found AND
+# ``MPAC_EVENT_LOG`` is set, every coordinator envelope and mpac.* log line
+# gets appended to that JSONL file. ``rm -rf mpac_event_recorder/`` and
+# this block becomes a no-op — the system runs unchanged.
+#
+# Path search: dev layout puts the package at <repo>/mpac_event_recorder/
+# (this file is web-app/api/main.py — up 2 levels). Docker image COPYs it
+# to /app/mpac_event_recorder/ (this file is /app/api/main.py — up 1 level).
+# Walk a few levels until we find it or give up silently.
+try:
+    import sys as _sys
+    _here = os.path.dirname(os.path.abspath(__file__))
+    for _depth in range(1, 5):
+        _candidate = os.path.abspath(
+            os.path.join(_here, *([".."] * _depth))
+        )
+        if os.path.isdir(os.path.join(_candidate, "mpac_event_recorder")):
+            if _candidate not in _sys.path:
+                _sys.path.insert(0, _candidate)
+            break
+    import mpac_event_recorder  # type: ignore[import-not-found]
+    mpac_event_recorder.install(role="web")
+except ImportError:
+    pass
+except Exception:
+    log.exception("mpac_event_recorder bootstrap failed; continuing without it")
+
+
 def _seed_signup_codes() -> None:
     """Insert configured invite codes that don't yet exist in the DB.
 

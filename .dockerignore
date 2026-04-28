@@ -13,6 +13,11 @@
 !deploy/
 # Web-app split: fly-webapi copies web-app/api/, fly-webapp copies web-app/app/.
 !web-app/
+# 2026-04-28: deploy/dockerfiles/api/Dockerfile copies the optional event
+# recorder package into /app/mpac_event_recorder/. Whitelist it so the
+# build context picks it up. Removing the directory makes the Dockerfile
+# COPY fail loudly (which is fine — `rm -rf` workflows don't rebuild).
+!mpac_event_recorder/
 
 # --- re-exclude build / cache / venv noise inside the whitelisted trees ---
 **/__pycache__/

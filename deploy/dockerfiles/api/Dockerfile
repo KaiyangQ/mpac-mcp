@@ -24,6 +24,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # App code.
 COPY web-app/api/ ./api/
 
+# Optional event recorder — soft dependency, installed iff the directory
+# exists in the build context. Use `--build-arg INCLUDE_RECORDER=0` (or
+# delete the directory before build) to leave it out of the image. The
+# COPY of an existing directory + a missing one are different syntaxes,
+# so we pull it in unconditionally and let the runtime try-import in
+# api/main.py decide whether to activate it.
+COPY mpac_event_recorder/ ./mpac_event_recorder/
+
 # SQLite volume mountpoint. On Lightsail this is bind-mounted from
 # /var/mpac/data on the host (see docker-compose.yml).
 RUN mkdir -p /data

@@ -163,6 +163,13 @@ class AgentWithdrawIntent(BaseModel):
     intent_id: str
     reason: str = "done"
 
+class AgentWithdrawAllRequest(BaseModel):
+    project_id: int
+    reason: str = "relay_subprocess_failed"
+
+class AgentWithdrawAllResponse(BaseModel):
+    withdrawn_intent_ids: list[str]
+
 class AgentOverlapQuery(BaseModel):
     project_id: int
     files: list[str]
