@@ -310,11 +310,16 @@ def _install_envelope_hook() -> None:
 
     _bridge.process_envelope = wrapped_process_envelope
     # Also patch any modules that already `from api.mpac_bridge import
-    # process_envelope`-d at import time (route handlers do this). They
-    # hold a stale reference to the unwrapped function, so we walk
-    # sys.modules and rebind.
+    # process_envelope`-d at import time. They hold a stale reference to
+    # the unwrapped function so the wrapper never fires when they call
+    # it. Walk ALL of sys.modules and rebind anywhere the original is —
+    # not just api.routes.*, because api.main itself imports
+    # process_envelope at module load (before this bootstrap runs) and
+    # uses it from its WS handlers. Verified 2026-04-28: filtering to
+    # api.routes.* missed api.main.process_envelope and the recorder
+    # captured zero envelope events in production until this fix.
     for mod_name, mod in list(sys.modules.items()):
-        if not mod_name.startswith("api.routes"):
+        if mod_name == "api.mpac_bridge":
             continue
         if getattr(mod, "process_envelope", None) is original_process:
             mod.process_envelope = wrapped_process_envelope
