@@ -371,14 +371,21 @@ async def agent_announce_intent(
             else p.get("principal_a")
         )
         other_conn = session.connections.get(other_pid) if other_pid else None
-        # Pull the other side's intent and files for human-readable warning.
+        # Pull the dependency direction that describes "the OTHER party's
+        # impact on US." dependency_detail naming convention:
+        #   `ab` = a's edit affects b's file(s)
+        #   `ba` = b's edit affects a's file(s)
+        # When WE are principal_a, the "their impact on us" data lives
+        # in `ba` (b is the other party, b's impact reaches a == us).
+        # When WE are principal_b, it lives in `ab`. Prior to this fix
+        # the branch was inverted and Claude received an empty
+        # `their_impact_on_us`, which made the prompt's ⚠️ warning
+        # template fall through to a useless "warning with no details."
         dep = p.get("dependency_detail") or {}
-        # `ba` = "b → a" (Bob's claim affects Alice's file). Pick whichever
-        # side describes the OTHER party's impact on US.
         if p.get("principal_a") == conn.principal_id:
-            their_impact = dep.get("ab") or []
-        else:
             their_impact = dep.get("ba") or []
+        else:
+            their_impact = dep.get("ab") or []
         conflicts.append({
             "conflict_id": p.get("conflict_id"),
             "category": p.get("category"),
