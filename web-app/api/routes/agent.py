@@ -679,7 +679,13 @@ async def agent_list_my_active_intents(
 # user says "withdraw" without an intent_id. Backward compatible:
 # 0.2.6 relays still work, they just can't clean up intents from
 # earlier turns without a relay restart.
-_MIN_MPAC_MCP = "0.2.7"
+# 0.2.8: relay uses `claude --resume <session_id>` + `--output-format
+# json` to preserve full conversation memory across turns. The relay
+# captures session_id from each invocation's JSON stdout and passes it
+# back as --resume on the next call. Concurrent chats serialized via
+# asyncio.Lock per relay process. Backward compatible: pre-0.2.8
+# relays still work, they just don't have cross-turn memory.
+_MIN_MPAC_MCP = "0.2.8"
 
 
 def _render_bootstrap_sh(relay_url: str, token_value: str) -> str:

@@ -209,14 +209,62 @@ async def _withdraw_orphan_intents(
     return list(data.get("withdrawn_intent_ids") or [])
 
 
+# ── Cross-turn session continuity (v0.2.8) ─────────────────────────────
+#
+# Each `claude -p` is one-shot — the subprocess loses every in-memory
+# detail when it exits, including any intent_id Claude received. Pre-0.2.8
+# this meant a user message in turn N had no idea what happened in turn
+# N-1; even with the v0.2.7 list_my_active_intents tool, Claude couldn't
+# discuss what it had been doing without re-reading the project from
+# scratch.
+#
+# Claude Code supports `--resume <session_id>` in `-p` mode (verified
+# 2026-04-29). With `--output-format json` the first invocation returns
+# `{"session_id": "...", "result": "..."}`, which we capture and pass
+# back as `--resume` on the next call. Result: full conversation memory
+# across turns, including intent_ids, file edits, and prior reasoning.
+#
+# Concurrency: relay's WS loop currently spawns each chat as
+# `asyncio.create_task`, so two messages can race. Without a lock,
+# concurrent calls would either both start fresh sessions (no resume,
+# session_id flapping) or read a stale id mid-update. We use an
+# asyncio.Lock to serialize chats per relay process — one Claude
+# subprocess at a time per (user, project). The trade-off is a bursty
+# message wait, which is acceptable: the existing claude -p turn already
+# takes 5–30s, queuing the next one behind it doesn't change UX much,
+# and getting cross-turn memory right is more valuable.
+#
+# Lock is initialized lazily (asyncio.Lock binds to the running loop).
+
+_chat_lock: Optional[asyncio.Lock] = None
+_session_id: Optional[str] = None
+
+
+def _get_chat_lock() -> asyncio.Lock:
+    global _chat_lock
+    if _chat_lock is None:
+        _chat_lock = asyncio.Lock()
+    return _chat_lock
+
+
 async def handle_chat(ctx: RelayContext, message: str) -> str:
     """Spawn `claude -p` with MCP_CONNECTION_BLOCKING=1 + the mpac-coding
     MCP server and return its stdout.
+
+    Resumes the per-relay session if one exists, so Claude has full
+    memory of prior turns (intent_ids, file edits, reasoning). First call
+    starts a fresh session; subsequent calls add `--resume <id>`.
 
     Errors are caught and returned as a user-facing message so the web app
     chat always gets SOMETHING back — surfacing relay failures in-line is
     more useful than a spinning loader.
     """
+    async with _get_chat_lock():
+        return await _handle_chat_locked(ctx, message)
+
+
+async def _handle_chat_locked(ctx: RelayContext, message: str) -> str:
+    global _session_id
     env = os.environ.copy()
     env["MCP_CONNECTION_BLOCKING"] = "1"
     # Neutralize any API keys that might be hanging around — we explicitly
@@ -228,23 +276,39 @@ async def handle_chat(ctx: RelayContext, message: str) -> str:
     mcp_config_path: Optional[str] = None
     try:
         mcp_config_path = _build_mcp_config(ctx)
-        log.info("Spawning claude -p (msg len=%d, mcp_config=%s)",
-                 len(message), mcp_config_path)
+        # Build argv. Two new flags compared to pre-0.2.8:
+        #   * --output-format json  — required to capture session_id from
+        #     stdout (default text format only emits the assistant reply).
+        #   * --resume <id>          — only added on turn 2+, when we already
+        #     have a session_id from the previous turn.
+        # Ordering: flags before any positional args. Claude Code's argparser
+        # is forgiving but we keep --resume immediately after --strict-mcp-config
+        # for readability in stack traces.
+        argv = [
+            ctx.claude_binary, "-p",
+            "--output-format", "json",
+            "--mcp-config", mcp_config_path,
+            "--strict-mcp-config",
+            # Block Claude's built-in filesystem tools — the "project" is
+            # the web app's virtual FS behind MCP, NOT the relay's cwd.
+            # IMPORTANT: `--tools ""` disables ALL tools including MCP,
+            # which made Claude hallucinate fake <tool_call> tags in its
+            # reply. Using --disallowedTools with specific names keeps
+            # MCP tools enabled while blocking local-FS access.
+            "--disallowedTools",
+            "Read", "Edit", "Write", "Bash", "Glob", "Grep", "NotebookEdit",
+            "--dangerously-skip-permissions",
+            "--append-system-prompt", _SYSTEM_PROMPT,
+        ]
+        if _session_id is not None:
+            argv.extend(["--resume", _session_id])
+        log.info(
+            "Spawning claude -p (msg len=%d, mcp_config=%s, resume=%s)",
+            len(message), mcp_config_path, _session_id or "<new>",
+        )
         try:
             proc = await asyncio.create_subprocess_exec(
-                ctx.claude_binary, "-p",
-                "--mcp-config", mcp_config_path,
-                "--strict-mcp-config",
-                # Block Claude's built-in filesystem tools — the "project" is
-                # the web app's virtual FS behind MCP, NOT the relay's cwd.
-                # IMPORTANT: `--tools ""` disables ALL tools including MCP,
-                # which made Claude hallucinate fake <tool_call> tags in its
-                # reply. Using --disallowedTools with specific names keeps
-                # MCP tools enabled while blocking local-FS access.
-                "--disallowedTools",
-                "Read", "Edit", "Write", "Bash", "Glob", "Grep", "NotebookEdit",
-                "--dangerously-skip-permissions",
-                "--append-system-prompt", _SYSTEM_PROMPT,
+                *argv,
                 # NOTE: `message` is sent via stdin, NOT as a positional argv.
                 # On Windows the `claude` CLI is `claude.cmd` (npm shim), so
                 # subprocess goes through `cmd.exe /c claude.cmd ...`, and
@@ -325,8 +389,35 @@ async def handle_chat(ctx: RelayContext, message: str) -> str:
             return (f"[relay] Claude Code failed "
                     f"(exit {proc.returncode}): {body[:400]}")
 
-        reply = stdout.decode("utf-8", errors="replace").rstrip()
-        log.info("claude -p completed reply_len=%d", len(reply))
+        # Success path. With --output-format json, stdout is a JSON object
+        # with at least {result, session_id, ...}. Parse it; on failure
+        # (a future Claude Code version that breaks the schema, or some
+        # weird wrapper) fall back to raw stdout so the user still gets
+        # something instead of an empty reply.
+        # _session_id is already declared global at the top of this fn.
+        raw_stdout = stdout.decode("utf-8", errors="replace")
+        try:
+            data = json.loads(raw_stdout)
+        except (json.JSONDecodeError, ValueError):
+            log.warning(
+                "claude -p stdout was not JSON despite --output-format json; "
+                "treating raw text as reply (session continuity disabled "
+                "for this turn). First 200 chars: %r", raw_stdout[:200],
+            )
+            reply = raw_stdout.rstrip()
+            log.info("claude -p completed reply_len=%d (raw)", len(reply))
+            return reply or "[relay] Claude returned no output."
+
+        new_session_id = data.get("session_id")
+        if new_session_id and new_session_id != _session_id:
+            log.info(
+                "Session id %s -> %s (resume on next turn)",
+                _session_id or "<new>", new_session_id,
+            )
+            _session_id = new_session_id
+        reply = (data.get("result") or "").rstrip()
+        log.info("claude -p completed reply_len=%d session=%s",
+                 len(reply), _session_id)
         return reply or "[relay] Claude returned no output."
     finally:
         if mcp_config_path and os.path.exists(mcp_config_path):

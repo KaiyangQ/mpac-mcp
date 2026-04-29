@@ -26,6 +26,8 @@ mpac>=0.2.4
 # retry. Backward compatible: 0.2.5 relays still connect.
 # 0.2.7: relay exposes list_my_active_intents() + withdraw_all_my_intents()
 # MCP tools so a fresh `claude -p` subprocess can rediscover and clean
-# up intents from earlier turns. See _MIN_MPAC_MCP comment in
-# routes/agent.py for the full story.
-mpac-mcp>=0.2.7
+# up intents from earlier turns.
+# 0.2.8: relay preserves full conversation memory across turns via
+# `claude --resume <id>` + JSON output capture. See _MIN_MPAC_MCP
+# comment in routes/agent.py for the full story.
+mpac-mcp>=0.2.8
