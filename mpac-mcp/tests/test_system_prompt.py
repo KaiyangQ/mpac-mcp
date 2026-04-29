@@ -1,23 +1,31 @@
 """
-Smoke test that the relay system prompt keeps the strong yield/defer_intent
-guidance added in v0.2.10.
+Smoke test that the relay system prompt keeps the conflict-handling
+defaults that v0.2.10 + v0.2.11 baked in.
 
-Background: in v0.2.9 the prompt said "if you decide to YIELD, call
-defer_intent" — but when the user's prompt said "just back off, do nothing,"
-Claude would interpret "do nothing" literally and skip defer_intent too,
-so the Conflicts panel showed no yield-chip even though Claude had
-clearly yielded in chat. v0.2.10 strengthens the wording: defer_intent
-is part of yielding, not part of doing; "do nothing" never means "skip
-defer_intent."
+History:
+* v0.2.10 — added strong "you MUST call defer_intent on yield" + the
+  "什么都不要做 ≠ skip defer_intent" carve-out.
+* v0.2.11 — split the default behavior by `category`:
+    - `scope_overlap` (same file) → default YIELD (almost always a real
+      conflict)
+    - `dependency_breakage` (cross-file dependency) → default PROCEED
+      with a prominent ⚠️ warning (often backward-compatible; yielding
+      every spoke when a hub gets touched would kill collaboration).
+  This matches `git`'s split between merge conflicts (must resolve)
+  and semantic conflicts (warn, leave to type checker / CI / reviewer).
 
-These tests pin a few key phrases so a future refactor of the prompt
-doesn't accidentally regress that lesson.
+These tests pin key phrases so future refactors don't regress these
+lessons. They are intentionally specific to the wording — the wording
+IS the contract with the LLM.
 """
 
 from mpac_mcp.relay import _SYSTEM_PROMPT
 
 
-def test_prompt_says_defer_intent_is_mandatory_on_yield():
+# ── v0.2.10 lessons (still apply to the scope_overlap branch) ────────
+
+
+def test_prompt_says_defer_intent_is_mandatory_on_scope_overlap():
     # The bare word "MUST" + the tool name in the same sentence is the
     # signal Claude needs to override a user prompt that says "do nothing."
     assert "you MUST call **defer_intent" in _SYSTEM_PROMPT
@@ -40,8 +48,56 @@ def test_prompt_disambiguates_do_nothing_from_skip_defer_intent():
     assert "defer_intent is part of yielding, not part of doing" in _SYSTEM_PROMPT
 
 
-def test_prompt_still_mentions_yield_branch_skips_announce():
+def test_prompt_says_yield_branch_skips_announce():
     # Don't regress the "in the yield branch, do NOT call announce_intent"
     # rule — without it Claude sometimes does both (defer + announce),
     # which creates a self-conflict (own intent overlaps own deferred files).
     assert "Do NOT call announce_intent" in _SYSTEM_PROMPT
+
+
+# ── v0.2.11 lessons (category-split defaults) ────────────────────────
+
+
+def test_prompt_distinguishes_scope_overlap_from_dependency_breakage():
+    # Both category names must appear in the prompt — Claude has to know
+    # to read the `category` field on each check_overlap entry and dispatch
+    # on it.
+    assert "scope_overlap" in _SYSTEM_PROMPT
+    assert "dependency_breakage" in _SYSTEM_PROMPT
+
+
+def test_prompt_makes_default_explicit_per_category():
+    # Pin the exact "default YIELD" / "default PROCEED" wording so that a
+    # future prompt rewrite that softens these ("consider yielding",
+    # "you might proceed") gets caught.
+    assert "default YIELD" in _SYSTEM_PROMPT
+    assert "default PROCEED" in _SYSTEM_PROMPT
+
+
+def test_prompt_provides_dependency_breakage_warning_template():
+    # When proceeding past a dependency_breakage, Claude must START its
+    # reply with a visible warning (⚠️ marker is part of the contract so
+    # the user can spot it in chat and override).
+    assert "⚠️" in _SYSTEM_PROMPT
+    # The override phrase the user can use to flip dependency_breakage
+    # back to yield, in both English and Chinese, must be advertised so
+    # Claude tells the user what to say.
+    assert "wait for" in _SYSTEM_PROMPT
+    assert "让路" in _SYSTEM_PROMPT
+
+
+def test_prompt_advertises_proceed_anyway_override_for_scope_overlap():
+    # Symmetric override: user can flip scope_overlap from yield → proceed.
+    # Without advertising the phrase, the user has no way to know how to
+    # ask Claude to ignore the conflict.
+    assert "proceed anyway" in _SYSTEM_PROMPT
+    assert "硬上" in _SYSTEM_PROMPT
+
+
+def test_prompt_dependency_breakage_carve_out_is_only_for_pure_dependency():
+    # Defense against a subtle prompt regression: if check_overlap returns
+    # a mix of scope_overlap AND dependency_breakage entries, the default
+    # MUST be yield (the scope_overlap part wins), not proceed. Pin the
+    # "ONLY dependency_breakage, no scope_overlap mixed in" phrasing.
+    assert "ONLY dependency_breakage" in _SYSTEM_PROMPT
+    assert "no scope_overlap mixed in" in _SYSTEM_PROMPT

@@ -765,7 +765,14 @@ async def agent_list_my_active_intents(
 # does NOT permit skipping defer_intent. Pre-0.2.10 relays would yield
 # silently when the user's prompt said "just back off, do nothing" —
 # Claude took the phrase literally and skipped the defer tool too.
-_MIN_MPAC_MCP = "0.2.10"
+# 0.2.11: prompt splits the conflict default by category — `scope_overlap`
+# defaults to YIELD (same file = almost always real conflict);
+# `dependency_breakage` defaults to PROCEED with a prominent ⚠️ warning
+# (cross-file deps are often backward-compatible — yielding every spoke
+# whenever a hub file is touched would kill collaboration). Override
+# phrases advertised: "proceed anyway / 硬上" flips scope_overlap to
+# proceed; "wait for X / 让路" flips dependency_breakage to yield.
+_MIN_MPAC_MCP = "0.2.11"
 
 
 def _render_bootstrap_sh(relay_url: str, token_value: str) -> str:

@@ -48,5 +48,12 @@ mpac>=0.2.7
 # and the prompt explicitly carves out "do nothing / 什么都不要做" from
 # "skip defer_intent". Without this, Claude over-interprets natural
 # user-side prompts ("just back off, do nothing") and yields silently
-# without surfacing the chip. See _MIN_MPAC_MCP comment in routes/agent.py.
-mpac-mcp>=0.2.10
+# without surfacing the chip.
+# 0.2.11: prompt splits the conflict default by category — scope_overlap
+# (same file) defaults to YIELD; dependency_breakage (cross-file dep)
+# defaults to PROCEED with a prominent ⚠️ warning. Mirrors git's split
+# between merge conflicts (must resolve) and semantic conflicts (warn,
+# leave to CI). Without the split, every spoke yields whenever a hub
+# file is touched — kills collaboration in large projects.
+# See _MIN_MPAC_MCP comment in routes/agent.py for the full story.
+mpac-mcp>=0.2.11
