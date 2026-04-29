@@ -1,12 +1,17 @@
 # 必触发冲突测试用例（2 人 + 3 人）
 
 > **私有文档。** 面向"我想当场触发 conflict 看 UI / 协议反应"的最小测试集 ——
-> 每个用例都按 `mpac 0.2.4` + `mpac-mcp 0.2.5` 的算法**精心设计成必触发**，
+> 每个用例都按 `mpac 0.2.4` + `mpac-mcp 0.2.8` 的算法**精心设计**，
 > 不靠运气、不靠时序。
 >
+> 文档包含**两类**测试:
+>
+> * **Test 2.x / 3.x / N1** — announce 后停下不动,目的是把冲突时间窗拉长以便观察 UI/协议
+> * **Test E1–E4** — 让 Claude 真改文件(announce → read → write → withdraw),覆盖
+>   真实工作流;包含 happy path / 主动让路 / 招牌冲突 / 反面教材 4 个场景
+>
 > 区别于 [`BETA_EXAMPLE.md`](BETA_EXAMPLE.md)（5 步教学剧本，含负向 case）和
-> [`TWO_USER_TESTS.md`](TWO_USER_TESTS.md)（UI / 协议大杂烩 smoke），本文只回答
-> 一个问题："给我几个一定会出冲突的剧本，2 人和 3 人都要。"
+> [`TWO_USER_TESTS.md`](TWO_USER_TESTS.md)（UI / 协议大杂烩 smoke）。
 
 ---
 
@@ -380,6 +385,166 @@ hold，得 prompt 里**明确说不要 withdraw**。
 
 ---
 
+# 🛠️ 真实执行测试用例（让 Claude 真改文件）
+
+> Test 2.1–2.5 都是 **announce 后停下不动**，目的是把冲突时间窗口拉长以便观察。
+> 下面的 Test E1–E4 让 Claude 走**完整流程**：announce → read → write → withdraw，
+> 跟真实用户工作流一致。这组测试关注的是「真实场景下系统会怎么处理」。
+>
+> **每个用例之前都先 Reset to seed。** 测完了在浏览器编辑器里点开对应文件，确认改动是否落地。
+>
+> **0.2.8+ 必须**：这些用例假设 Claude 走完整流程并最后调 `withdraw_intent`。pre-0.2.8 的
+> `claude -p` 没有跨 turn 记忆，可能 announce 后就被前一回合的对话上下文「忘了」。
+
+## Test E1 — 不同文件并行（干净 happy path，0 conflict）
+
+**剧本**：Alice 改 `db.py`，Bob 改 `auth.py`。两个文件之间**没有 import 关系**，所以
+完全无冲突，是最理想的并行编辑场景。
+
+**Alice 粘到 chat：**
+
+```
+请在 notes_app/db.py 里加一个新函数 count_notes() -> int，返回 _STORE 字典里的笔记数量。
+
+完整流程：先 read_project_file 看 db.py 现有结构 → announce_intent on notes_app/db.py（objective 写"加 count_notes 统计函数"）→ write_project_file 把新函数加在文件末尾 → withdraw_intent。改完用一句话告诉我"已添加 count_notes，已 withdraw"。
+```
+
+**Bob 粘到 chat（跟 Alice 同时发，不用等）：**
+
+```
+请在 notes_app/auth.py 里加一个新函数 list_active_sessions() -> list[str]，返回 _SESSIONS 字典里的所有 session_id。
+
+完整流程：先 read_project_file 看 auth.py → announce_intent on notes_app/auth.py（objective 写"加 list_active_sessions 函数"）→ write_project_file 加到文件末尾 → withdraw_intent。改完告诉我"已添加 list_active_sessions，已 withdraw"。
+```
+
+**期望看到**：
+
+- WHO'S WORKING 短暂出现 Alice 在 db.py、Bob 在 auth.py
+- **CONFLICTS 面板始终空** —— 不同文件 + 没有 import 依赖
+- 两边都能成功 announce → write → withdraw
+- 在浏览器编辑器打开 `db.py`：末尾多了 `count_notes()`；打开 `auth.py`：末尾多了 `list_active_sessions()`
+
+**这个测什么**：MPAC 的「无冲突时不挡路」基础保证。如果这都跑不过，协议层有问题。
+
+---
+
+## Test E2 — 同文件冲突，Bob 主动让路（passive coordination）
+
+**剧本**：Alice 想改 `db.py` 加新函数，Bob 也想改 `db.py`。Bob 检测到 Alice 在改后**主动放弃**，
+不 announce、不写文件，等 Alice 完成。
+
+**Alice 粘到 chat：**
+
+```
+请在 notes_app/db.py 里加一个新函数 update_note(note_id: int, **fields) -> bool —— 找到对应的笔记，更新它的字段。如果找不到返回 False。
+
+完整流程：read → announce → write → withdraw。改完告诉我结果。
+```
+
+**Bob 粘到 chat（在 Alice's Claude 还在工作时立刻发）：**
+
+```
+我想在 notes_app/db.py 里加一个 delete_all_notes() 函数清空 _STORE。
+
+但**先调用 check_overlap(["notes_app/db.py"])**。如果发现别人已经在改这个文件，**直接放弃**：不要 announce_intent、不要改文件、不要等。回我一句"检测到冲突，放弃改 db.py，等其他人完成后我再来"就停下。
+
+只有 check_overlap 返回空时才走完整流程（announce → write → withdraw）。
+```
+
+**期望看到**：
+
+- Alice 走完整流程：announce on db.py → write_project_file → withdraw
+- Bob 的 Claude 调 check_overlap → 看到 Alice 的 intent → **不 announce**，回复"放弃"
+- **JSONL 里只有 Alice 的 INTENT_ANNOUNCE/WITHDRAW，没有 Bob 的**
+- **CONFLICTS 面板从头到尾空**（Bob 没 announce，server 端没创建任何 conflict）
+- 浏览器打开 `db.py`：有 update_note() 但没有 delete_all_notes()
+
+**这个测什么**：被动让路路径。MPAC 的设计哲学之一是 **early-detection 优于 late-resolution** ——
+Bob 在 announce 前就检测到冲突而避开，比 announce 后再 yield 更省协议噪音。
+
+---
+
+## Test E3 — 跨文件依赖冲突（招牌帧，符号级 dependency_breakage）
+
+**剧本**：Alice 改 `db.py` 的 `save()` 签名（声明 affects_symbols），Bob 同时改 `api.py`
+（api.py import 了 db.save）。coordinator 算出 Bob 那侧 `impact_symbols` 包含 `db.save`，
+**精确**触发 dependency_breakage 冲突。
+
+**Alice 粘到 chat：**
+
+```
+请把 notes_app/db.py 里的 save() 函数改成 save(note, *, dry_run=False) -> int —— 多加一个 dry_run 关键字参数（默认 False），返回值改成保存的笔记数量（int）。
+
+完整流程：read → announce_intent on notes_app/db.py（objective 写"给 save() 加 dry_run + 返回 int"，**symbols 参数设成 ["notes_app.db.save"]**） → write_project_file → withdraw。改完告诉我。
+```
+
+**Bob 粘到 chat（跟 Alice 同时，或者一前一后几秒钟）：**
+
+```
+请在 notes_app/api.py 里新增一个 save_with_log(note) 函数，内部调用 db.save() 然后 print 一个日志。先 read api.py 看现有 import 结构。
+
+完整流程：read → announce_intent on notes_app/api.py（objective 写"加 save_with_log 包装"，symbols 不用声明，让 scanner 自动算） → write_project_file → withdraw。改完告诉我。
+
+**注意**：如果 announce 时拿到 CONFLICT_REPORT，告诉我冲突的具体内容（特别是 dependency_detail 里提到的 symbol 名），然后**继续完成**任务（这是测试，要看冲突文案是否精确）。
+```
+
+**期望看到**：
+
+- 双方都 announce 成功
+- ⚡ CONFLICTS 面板出现 `Dependency breakage` 卡，medium severity
+- **关键** ——卡片文案应包含具体符号名 `notes_app.db.save`，类似：
+  *"Alice is changing `notes_app.db.save` — affects Bob's `notes_app/api.py`"*
+- Bob 的 Claude 在 chat 里复述这条冲突
+- 双方都继续完成（announce → write → withdraw）
+- 文件最终状态：`db.py` 的 save() 有新签名；`api.py` 多了 save_with_log()
+
+**这个测什么**：**0.2.4 的 from-pkg-import + 0.2.3 的 attr-chain 解析在 prod 是否正确联动**。
+这个用例是产品讲故事的招牌帧 —— 屏幕上**真的能看到具体符号名**，而不是笼统的"冲突"。
+
+**注意 race condition**：如果 Alice 完成太快（withdraw 早于 Bob 的 announce），Bob 那侧
+就不会触发冲突（Alice 的 intent 已经不在 ACTIVE）。如果发生，重测一次让两个 prompt
+更接近同时发。
+
+---
+
+## Test E4 — 双方都不让路（故意忽略冲突，验证 last-writer-wins）
+
+**剧本**：Alice 和 Bob 都想给 `db.py` 加新函数，都收到 CONFLICT_REPORT 但**都选择忽略继续**。
+最后两次 write 串行发生，**第一次写的内容会被第二次写覆盖**（因为我们的 `write_project_file`
+是整文件替换，不是 diff）。这测的是「人类有最终决定权，但要承担后果」的语义。
+
+**Alice 粘到 chat：**
+
+```
+请在 notes_app/db.py 末尾加一个 archive_note(note_id) 函数 —— 把指定笔记从 _STORE 移到 _ARCHIVE 字典里。如果 _ARCHIVE 还不存在就创建它。
+
+完整流程：read → announce → write → withdraw。**就算 announce 时收到 CONFLICT_REPORT，也继续完成**（这是测试）。改完告诉我，并说明是否收到冲突。
+```
+
+**Bob 粘到 chat（同时）：**
+
+```
+请在 notes_app/db.py 末尾加一个 unarchive_note(note_id) 函数 —— 把笔记从 _ARCHIVE 移回 _STORE。
+
+完整流程：read → announce → write → withdraw。**就算 announce 时收到 CONFLICT_REPORT，也继续完成**。改完告诉我，并说明是否收到冲突。
+```
+
+**期望看到**：
+
+- 双方都 announce on db.py → CONFLICTS 面板跳 `Scope overlap` 卡
+- 双方都收到冲突但都继续 write_project_file
+- 双方都 withdraw
+- **最终 `db.py` 只包含其中一个函数** —— 看哪边的 write 在后面发生（last-writer-wins）
+- 在浏览器编辑器打开 `db.py` 验证：可能只有 archive_note 或只有 unarchive_note，**不会两个都在**
+
+**这个测什么**：MPAC 的"软约束"语义 —— **协议警告，不阻止**。这是设计选择（人类有最终决定权）
+但代价是数据丢失。如果将来产品要走"硬约束"（announce 拿了锁，别人写不进去），这个用例的
+预期就要反过来。
+
+**这个用例顺便是个反面教材**：演给用户看「为什么应该尊重 conflict 卡的 Yield 按钮」。
+
+---
+
 # 三人测试（Alice + Bob + Carol）
 
 ## Test 3.1 — 同文件三方撞（3-way `scope_overlap`）
@@ -584,6 +749,10 @@ api.py（api.py 自己 `from notes_app.models import Note`），不是因为"传
 | 2.3 | 2 | `dependency_breakage`     | 符号级 attr-chain + from-pkg-import 精确命中 |
 | 2.4 | 2 | `dependency_breakage`     | dotted-import wildcard 保守 fire |
 | 2.5 | 2 | (跟 2.1–2.4 一样)          | **保证时序重叠**的三种执行方式（浏览器 hold / demo_driver `--hold` / Claude prompt） |
+| **E1** | **2** | **不 fire**(基线 happy path)| 不同文件并行,真正改文件,验证不挡路 |
+| **E2** | **2** | **不 fire**(被动让路)        | check_overlap 后主动放弃,server 端不创建 conflict |
+| **E3** | **2** | **`dependency_breakage`**(招牌)| 真改文件 + 符号级冲突文案,产品讲故事帧 |
+| **E4** | **2** | **`scope_overlap`** + last-writer-wins | 软约束语义验证,反面教材 |
 | 3.1 | 3 | `scope_overlap` × 3       | pairwise overlap，3 张卡 |
 | 3.2 | 3 | `dependency_breakage` × 2 | 1 hub + 2 spoke，spoke 之间不撞 |
 | 3.3 | 3 | overlap + dependency × 3  | 矩阵混合，验证 ConflictCard 多 category |
