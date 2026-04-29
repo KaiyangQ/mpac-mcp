@@ -36,6 +36,11 @@ Tools exposed to Claude:
   withdraw_all_my_intents(reason)    [v0.2.7]
       Bulk-withdraw every intent you hold in this project. Idempotent.
 
+  defer_intent(files, reason, observed_intent_ids, ...)    [v0.2.9]
+      Record that you saw an existing intent on these files and chose
+      to YIELD without announcing. Surfaces a "yield" chip in the UI
+      so the user can see your decision.
+
   check_overlap(files)
       BEFORE announce_intent, see whether any other participant has an
       active intent on the same files. Returns a list (empty = clear to go).
@@ -290,6 +295,58 @@ def list_my_active_intents() -> dict:
     with _client() as c:
         r = c.get(f"/api/agent/projects/{pid}/intents/mine")
         r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool()
+def defer_intent(
+    files: list[str],
+    reason: str = "yielded",
+    observed_intent_ids: list[str] | None = None,
+    observed_principals: list[str] | None = None,
+    ttl_sec: float = 60.0,
+) -> dict:
+    """v0.2.9 (mpac-mcp): record that you SAW existing intent(s) on
+    ``files`` (e.g. via :func:`check_overlap`) and chose to **yield**
+    without announcing one of your own.
+
+    Use this **instead of** announce_intent when:
+      * The user asked for work that overlaps with someone else's
+        active intent, AND
+      * You decide to back off rather than join the conflict.
+
+    Calling this:
+      * Does NOT claim any scope or lock any files.
+      * Does NOT count as an Intent — it won't appear in the WHO'S
+        WORKING list, and it won't trigger conflict detection against
+        anyone else.
+      * DOES surface a yield-chip in every participant's CONFLICTS
+        panel so the human owner can see "Bob saw Alice editing X
+        and yielded to her" — closing the prior UX gap where
+        check_overlap-driven yields were invisible.
+
+    Auto-clears when the observed intent(s) terminate, or after
+    ``ttl_sec`` seconds (default 60), whichever comes first.
+
+    ``observed_intent_ids`` and ``observed_principals`` come from
+    :func:`check_overlap`'s return value or :func:`list_active_intents`.
+    Pass them so siblings know which intent you're yielding to.
+    """
+    pid = _project_id()
+    body: dict = {
+        "project_id": pid,
+        "files": files,
+        "reason": reason,
+        "ttl_sec": ttl_sec,
+    }
+    if observed_intent_ids:
+        body["observed_intent_ids"] = list(observed_intent_ids)
+    if observed_principals:
+        body["observed_principals"] = list(observed_principals)
+    with _client() as c:
+        r = c.post("/api/agent/intents/defer", json=body)
+        if r.status_code >= 400:
+            return {"error": f"defer failed ({r.status_code}): {r.text[:200]}"}
         return r.json()
 
 

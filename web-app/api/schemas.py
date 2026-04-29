@@ -170,6 +170,18 @@ class AgentWithdrawAllRequest(BaseModel):
 class AgentWithdrawAllResponse(BaseModel):
     withdrawn_intent_ids: list[str]
 
+class AgentDeferIntent(BaseModel):
+    project_id: int
+    files: list[str]
+    reason: str = "yielded"
+    observed_intent_ids: Optional[list[str]] = None
+    observed_principals: Optional[list[str]] = None
+    ttl_sec: float = 60.0
+
+class AgentDeferIntentResponse(BaseModel):
+    deferral_id: str
+    accepted: bool
+
 class AgentOverlapQuery(BaseModel):
     project_id: int
     files: list[str]

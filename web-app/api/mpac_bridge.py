@@ -54,6 +54,7 @@ Connection = Callable[[Dict[str, Any]], Awaitable[None]]
 # else in the session (matches mpac_protocol.server.MPACServer).
 _BROADCAST_INBOUND_TYPES = frozenset({
     "OP_COMMIT", "INTENT_ANNOUNCE", "INTENT_WITHDRAW", "INTENT_UPDATE",
+    "INTENT_DEFERRED",
     "CONFLICT_ACK", "CONFLICT_ESCALATE", "RESOLUTION",
 })
 

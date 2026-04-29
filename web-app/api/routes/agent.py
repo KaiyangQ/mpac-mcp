@@ -38,6 +38,8 @@ from ..schemas import (
     AgentActiveIntentsResponse,
     AgentAnnounceIntent,
     AgentAnnounceIntentResponse,
+    AgentDeferIntent,
+    AgentDeferIntentResponse,
     AgentOverlapQuery,
     AgentOverlapResponse,
     AgentStatusResponse,
@@ -407,6 +409,66 @@ async def agent_withdraw_all_intents(
     return AgentWithdrawAllResponse(withdrawn_intent_ids=withdrawn)
 
 
+@router.post(
+    "/agent/intents/defer",
+    response_model=AgentDeferIntentResponse,
+)
+async def agent_defer_intent(
+    req: AgentDeferIntent,
+    ctx: AuthCtx = Depends(get_user_or_agent),
+    db: Session = Depends(get_db),
+):
+    """v0.2.5 (2026-04-29): record an INTENT_DEFERRED — the calling
+    agent observed an existing intent on ``files`` and chose to yield
+    without announcing one of its own.
+
+    Backed by the new INTENT_DEFERRED protocol message. The coordinator
+    stores it ephemerally (TTL-bounded; default 60s) and broadcasts to
+    all participants so siblings can render a "yield" chip in their
+    UI — closing the 4-28 UX gap where the Conflicts panel was empty
+    even though the agent had said "I see a conflict, I'm yielding".
+
+    Read-side equivalent: hit ``/agent/projects/{id}/intents`` first
+    to discover whose intent you're yielding to (so you can pass
+    ``observed_intent_ids`` and ``observed_principals``); the deferral
+    auto-resolves when those intents terminate or when this principal
+    later announces.
+    """
+    assert_token_scope(ctx, req.project_id)
+    user = ctx.user
+    member = db.query(Token).filter(
+        Token.user_id == user.id,
+        Token.project_id == req.project_id,
+        Token.is_revoked == False,  # noqa: E712
+    ).first()
+    if not member:
+        raise HTTPException(403, "Not a member of this project")
+
+    session, conn = _get_agent_conn(req.project_id, user.id)
+    deferral_id = f"defer-agent-{user.id}-{uuid.uuid4().hex[:10]}"
+    scope = build_file_scope(
+        list(req.files),
+        db=db, project_id=req.project_id,
+    )
+    envelope = conn.participant.defer_intent(
+        session_id=session.mpac_session_id,
+        deferral_id=deferral_id,
+        scope=scope,
+        reason=req.reason,
+        observed_intent_ids=req.observed_intent_ids,
+        observed_principals=req.observed_principals,
+        ttl_sec=req.ttl_sec,
+    )
+    await process_envelope(session, envelope, conn.principal_id)
+    log.info(
+        "Agent intent deferred: user=%s files=%s reason=%s "
+        "observed_intents=%s deferral_id=%s",
+        user.id, req.files, req.reason,
+        req.observed_intent_ids, deferral_id,
+    )
+    return AgentDeferIntentResponse(deferral_id=deferral_id, accepted=True)
+
+
 @router.post("/agent/overlap", response_model=AgentOverlapResponse)
 async def agent_check_overlap(
     req: AgentOverlapQuery,
@@ -685,7 +747,12 @@ async def agent_list_my_active_intents(
 # back as --resume on the next call. Concurrent chats serialized via
 # asyncio.Lock per relay process. Backward compatible: pre-0.2.8
 # relays still work, they just don't have cross-turn memory.
-_MIN_MPAC_MCP = "0.2.8"
+# 0.2.9: relay adds defer_intent MCP tool wired to the new
+# /api/agent/intents/defer web-app endpoint and INTENT_DEFERRED protocol
+# message (mpac 0.2.5+). When Claude yields after check_overlap, a
+# "yield" chip surfaces in sibling Conflicts panels — closes the 4-28
+# UX gap where check_overlap-driven yields were invisible.
+_MIN_MPAC_MCP = "0.2.9"
 
 
 def _render_bootstrap_sh(relay_url: str, token_value: str) -> str:
