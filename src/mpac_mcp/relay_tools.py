@@ -29,6 +29,13 @@ Tools exposed to Claude:
   withdraw_intent(intent_id, reason)
       Release an earlier intent.
 
+  list_my_active_intents()    [v0.2.7]
+      List intents you (this principal) currently hold open. Use when
+      `claude -p` lost the intent_id from a previous turn.
+
+  withdraw_all_my_intents(reason)    [v0.2.7]
+      Bulk-withdraw every intent you hold in this project. Idempotent.
+
   check_overlap(files)
       BEFORE announce_intent, see whether any other participant has an
       active intent on the same files. Returns a list (empty = clear to go).
@@ -257,6 +264,59 @@ def withdraw_intent(intent_id: str, reason: str = "done") -> dict:
         )
         if r.status_code >= 400:
             return {"error": f"withdraw failed ({r.status_code}): {r.text[:200]}"}
+        return r.json()
+
+
+@mcp.tool()
+def list_my_active_intents() -> dict:
+    """List intents YOU (this principal) currently hold open.
+
+    The ``claude -p`` subprocess that backs each user message is
+    one-shot — there is no memory between messages. So if you announced
+    an intent in a previous turn and the user now asks you to withdraw
+    it, you have no in-memory record of the ``intent_id``. Call this
+    tool to rediscover your own active intents.
+
+    Returns the same record shape as :func:`list_active_intents` (which
+    excludes you). Combine the two if you want a complete picture.
+
+    Typical usage: when a user says "withdraw" / "release" / "cancel"
+    your intent and you don't have an ``intent_id`` to hand, call this
+    first — pick the matching intent(s) by ``files`` / ``objective``,
+    pass each ``intent_id`` to :func:`withdraw_intent`, OR just call
+    :func:`withdraw_all_my_intents` to drop everything.
+    """
+    pid = _project_id()
+    with _client() as c:
+        r = c.get(f"/api/agent/projects/{pid}/intents/mine")
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool()
+def withdraw_all_my_intents(reason: str = "user_requested") -> dict:
+    """Withdraw EVERY intent you currently hold in this project, in one
+    call. Server-side this is bulk-withdraw, not a UI-level "yield" —
+    each intent transitions to WITHDRAWN with the given reason.
+
+    Use when:
+      * The user says "withdraw" / "release" / "cancel" / "stop" and you
+        don't have a specific ``intent_id`` (most common in fresh
+        ``claude -p`` subprocesses where you don't remember earlier
+        announces).
+      * You're cleaning up after an aborted task and want to be safe.
+
+    Idempotent. Returns ``{withdrawn_intent_ids: [...]}``; the list is
+    empty if you didn't have anything to withdraw.
+    """
+    pid = _project_id()
+    with _client() as c:
+        r = c.post(
+            "/api/agent/intents/withdraw_all",
+            json={"project_id": pid, "reason": reason},
+        )
+        if r.status_code >= 400:
+            return {"error": f"withdraw_all failed ({r.status_code}): {r.text[:200]}"}
         return r.json()
 
 
