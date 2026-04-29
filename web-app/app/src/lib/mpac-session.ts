@@ -9,6 +9,7 @@ import {
   type BrowserAction,
   type ConflictReportPayload,
   type IntentAnnouncePayload,
+  type IntentDeferredPayload,
   type IntentWithdrawPayload,
   type MpacEnvelope,
   type ParticipantUpdatePayload,
@@ -50,10 +51,33 @@ export type LiveConflict = {
   dependency_detail?: import("./envelope-types").DependencyDetail;
 };
 
+/**
+ * v0.2.5+ — a one-sided yield record. The deferring principal saw existing
+ * intents on ``files`` (via check_overlap or list_active_intents) and chose
+ * to back off without announcing. Distinct from LiveConflict: no opposing
+ * intent_id pair, no severity, just a yield notification.
+ */
+export type LiveDeferral = {
+  deferral_id: string;
+  principal_id: string;
+  files: string[];
+  reason?: string;
+  observed_intent_ids: string[];
+  observed_principals: string[];
+  /** epoch ms; computed client-side from expires_at, used for TTL countdown. */
+  expires_at_ms?: number;
+};
+
 export type MpacSessionState = {
   status: ConnectionStatus;
   participants: LiveParticipant[];
   conflicts: LiveConflict[];
+  /**
+   * v0.2.5+ active yield records (INTENT_DEFERRED). Distinct from conflicts:
+   * a deferral is one-sided ("Bob saw Alice and yielded") and auto-clears
+   * when the observed intents terminate or TTL expires.
+   */
+  deferrals: LiveDeferral[];
   /** Intents we ourselves have open, keyed by intent_id. */
   myIntents: Record<string, IntentAnnouncePayload>;
   /** Last protocol-level error, if any. */
@@ -121,6 +145,7 @@ export function useMpacSession({
   const [status, setStatus] = useState<ConnectionStatus>("idle");
   const [participants, setParticipants] = useState<LiveParticipant[]>([]);
   const [conflicts, setConflicts] = useState<LiveConflict[]>([]);
+  const [deferrals, setDeferrals] = useState<LiveDeferral[]>([]);
   const [myIntents, setMyIntents] = useState<Record<string, IntentAnnouncePayload>>({});
   const [lastError, setLastError] = useState<ProtocolErrorPayload | undefined>();
   const [joined, setJoined] = useState(false);
@@ -325,6 +350,47 @@ export function useMpacSession({
           }
           break;
         }
+        case "INTENT_DEFERRED": {
+          // v0.2.5+: a peer announced "I saw an existing intent on this
+          // file and yielded without claiming". Two flavours share this
+          // case — active (full record, render a chip) and resolved/
+          // expired (drop the chip).
+          const p = env.payload as IntentDeferredPayload;
+          if (!p.deferral_id) break;
+          if (p.status === "resolved" || p.status === "expired") {
+            setDeferrals((prev) =>
+              prev.filter((d) => d.deferral_id !== p.deferral_id),
+            );
+            break;
+          }
+          // Active deferral.
+          const files = (p.scope?.resources ?? []).slice();
+          const expiresAtMs = p.expires_at
+            ? Date.parse(p.expires_at)
+            : undefined;
+          setDeferrals((prev) => {
+            // Replace any existing entry with the same deferral_id
+            // (idempotent broadcast retries).
+            const without = prev.filter(
+              (d) => d.deferral_id !== p.deferral_id,
+            );
+            return [
+              ...without,
+              {
+                deferral_id: p.deferral_id,
+                principal_id: p.principal_id ?? "",
+                files,
+                reason: p.reason,
+                observed_intent_ids: p.observed_intent_ids ?? [],
+                observed_principals: p.observed_principals ?? [],
+                expires_at_ms: Number.isFinite(expiresAtMs)
+                  ? (expiresAtMs as number)
+                  : undefined,
+              },
+            ];
+          });
+          break;
+        }
         case "GOODBYE": {
           markParticipantOffline(env.sender.principal_id);
           break;
@@ -488,11 +554,43 @@ export function useMpacSession({
     [send],
   );
 
+  // Client-side TTL sweep: if a deferral's expires_at_ms is in the past,
+  // drop it locally. Belt-and-suspenders against missed expired-broadcasts
+  // (relay reconnect race, etc.).
+  useEffect(() => {
+    if (deferrals.length === 0) return;
+    const now = Date.now();
+    const next = deferrals.filter(
+      (d) => d.expires_at_ms === undefined || d.expires_at_ms > now,
+    );
+    if (next.length !== deferrals.length) {
+      setDeferrals(next);
+      return;
+    }
+    const earliest = deferrals
+      .map((d) => d.expires_at_ms)
+      .filter((t): t is number => Number.isFinite(t))
+      .reduce((a, b) => Math.min(a, b), Number.POSITIVE_INFINITY);
+    if (!Number.isFinite(earliest)) return;
+    const wait = Math.max(500, earliest - now + 100);
+    const timer = setTimeout(
+      () => setDeferrals((prev) =>
+        prev.filter(
+          (d) =>
+            d.expires_at_ms === undefined || d.expires_at_ms > Date.now(),
+        ),
+      ),
+      wait,
+    );
+    return () => clearTimeout(timer);
+  }, [deferrals]);
+
   return useMemo(
     () => ({
       status,
       participants,
       conflicts,
+      deferrals,
       myIntents,
       lastError,
       joined,
@@ -501,7 +599,7 @@ export function useMpacSession({
       ackConflict,
     }),
     [
-      status, participants, conflicts, myIntents, lastError, joined,
+      status, participants, conflicts, deferrals, myIntents, lastError, joined,
       beginTask, yieldTask, ackConflict,
     ],
   );

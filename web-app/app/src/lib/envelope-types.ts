@@ -97,6 +97,35 @@ export type ConflictReportPayload = {
   dependency_detail?: DependencyDetail;
 };
 
+/**
+ * v0.2.5+ INTENT_DEFERRED — a principal observed an existing intent on
+ * ``scope`` and chose to yield without announcing one of their own.
+ * Unlike CONFLICT_REPORT (which has two opposing parties), this is a
+ * one-sided yield notification.
+ *
+ * Two flavours of envelope share this payload type:
+ *   * **Active** — emitted when the deferral is created. ``status`` is
+ *     absent or "active"; the full record (scope, observed_intent_ids,
+ *     reason, expires_at) is present.
+ *   * **Resolved/expired** — emitted when the coordinator clears the
+ *     deferral (the observed intents all terminated, the principal
+ *     announced anyway, or TTL fired). ``status`` is "resolved" or
+ *     "expired"; only ``deferral_id`` + ``principal_id`` are guaranteed.
+ */
+export type IntentDeferredPayload = {
+  deferral_id: string;
+  principal_id?: string;
+  /** Present on active deferrals. */
+  scope?: ScopeRef;
+  reason?: string;
+  observed_intent_ids?: string[];
+  observed_principals?: string[];
+  /** ISO timestamp; client uses this to render a TTL countdown. */
+  expires_at?: string | null;
+  /** Absent / "active" / "resolved" / "expired". */
+  status?: string;
+};
+
 export type ParticipantUpdatePayload = {
   principal_id: string;
   status?: string;

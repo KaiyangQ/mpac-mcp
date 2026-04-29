@@ -37,6 +37,7 @@ import {
   useMpacSession,
   type ConnectionStatus,
   type LiveConflict,
+  type LiveDeferral,
   type LiveParticipant,
 } from "@/lib/mpac-session";
 
@@ -460,12 +461,14 @@ function ConflictCard({
 function CollabPanel({
   participants,
   conflicts,
+  deferrals,
   myIntents,
   onAck,
   onYield,
 }: {
   participants: LiveParticipant[];
   conflicts: LiveConflict[];
+  deferrals: LiveDeferral[];
   myIntents: Record<string, { intent_id: string; scope?: { resources?: string[] } }>;
   onAck: (id: string) => void;
   onYield: (intentId: string) => void;
@@ -555,33 +558,94 @@ function CollabPanel({
         <h3 className="text-[11px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-2.5">
           Conflicts
         </h3>
-        {conflicts.length === 0 ? (
+        {conflicts.length === 0 && deferrals.length === 0 ? (
           <div className="flex items-center justify-center gap-1.5 text-xs text-[var(--text-secondary)] py-4">
             <CheckCircle2 className="size-3.5 text-[var(--green)]" />
             No conflicts
           </div>
         ) : (
-          conflicts.map((c) => {
-            // Figure out my intent_id in this conflict (if any).
-            const myIds = new Set(Object.keys(myIntents));
-            const myIntentId = myIds.has(c.intent_a)
-              ? c.intent_a
-              : myIds.has(c.intent_b)
-                ? c.intent_b
-                : undefined;
-            return (
-              <ConflictCard
-                key={c.conflict_id}
-                conflict={c}
+          <>
+            {conflicts.map((c) => {
+              // Figure out my intent_id in this conflict (if any).
+              const myIds = new Set(Object.keys(myIntents));
+              const myIntentId = myIds.has(c.intent_a)
+                ? c.intent_a
+                : myIds.has(c.intent_b)
+                  ? c.intent_b
+                  : undefined;
+              return (
+                <ConflictCard
+                  key={c.conflict_id}
+                  conflict={c}
+                  participants={participants}
+                  myIntentId={myIntentId}
+                  onAck={() => onAck(c.conflict_id)}
+                  onYield={() => myIntentId && onYield(myIntentId)}
+                />
+              );
+            })}
+            {deferrals.map((d) => (
+              <DeferralChip
+                key={d.deferral_id}
+                deferral={d}
                 participants={participants}
-                myIntentId={myIntentId}
-                onAck={() => onAck(c.conflict_id)}
-                onYield={() => myIntentId && onYield(myIntentId)}
               />
-            );
-          })
+            ))}
+          </>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Lightweight one-sided yield notification — distinct visual style from
+ * ConflictCard (which has two-party severity + actions). A deferral is
+ * informational: "Bob saw Alice editing X and is yielding". Auto-clears
+ * when the observed intent terminates or TTL expires.
+ */
+function DeferralChip({
+  deferral,
+  participants,
+}: {
+  deferral: LiveDeferral;
+  participants: LiveParticipant[];
+}) {
+  const me = participants.find((p) => p.principal_id === deferral.principal_id);
+  const yielderName = me?.display_name ?? deferral.principal_id ?? "Someone";
+  const observedNames = deferral.observed_principals
+    .map((pid) => participants.find((p) => p.principal_id === pid)?.display_name)
+    .filter((n): n is string => Boolean(n));
+  const fileLabel =
+    deferral.files[0] ?? "(no file)";
+  const moreFiles =
+    deferral.files.length > 1 ? ` +${deferral.files.length - 1}` : "";
+  const targetLabel =
+    observedNames.length > 0
+      ? observedNames.join(", ")
+      : "another participant";
+  return (
+    <div className="rounded-md border border-dashed border-[var(--border)] bg-[var(--bg-tertiary)]/30 px-3 py-2 mb-2">
+      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--text-secondary)]/60" />
+        Yielded
+      </div>
+      <div className="text-sm text-[var(--text-primary)] mt-1">
+        <span className="font-medium">{yielderName}</span>{" "}
+        <span className="text-[var(--text-secondary)]">
+          saw {targetLabel} editing
+        </span>{" "}
+        <code className="text-xs">
+          {fileLabel}
+          {moreFiles}
+        </code>{" "}
+        <span className="text-[var(--text-secondary)]">and stepped back</span>
+      </div>
+      {deferral.reason && deferral.reason !== "yielded" && (
+        <div className="text-[11px] italic text-[var(--text-secondary)] mt-1">
+          &ldquo;{deferral.reason}&rdquo;
+        </div>
+      )}
     </div>
   );
 }
@@ -1489,6 +1553,7 @@ export default function WorkspacePage({
               <CollabPanel
                 participants={session.participants}
                 conflicts={session.conflicts}
+                deferrals={session.deferrals}
                 myIntents={session.myIntents}
                 onAck={session.ackConflict}
                 onYield={session.yieldTask}
