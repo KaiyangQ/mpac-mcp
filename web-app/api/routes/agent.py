@@ -307,17 +307,103 @@ async def agent_announce_intent(
         objective=req.objective,
         scope=scope,
     )
-    await process_envelope(session, envelope, conn.principal_id)
+    responses = await process_envelope(session, envelope, conn.principal_id)
     ext = scope.extensions or {}
+
+    # v0.2.8 race-lock surface: when the coordinator returns
+    # PROTOCOL_ERROR(STALE_INTENT) it means a different principal
+    # already holds an active intent on at least one of these files.
+    # The agent's MCP tool needs a structured signal to translate into
+    # "yield" — a 409 with the colliding intent_ids and files lets
+    # relay_tools format a defer-or-retry payload for Claude.
+    stale_errors = [
+        r for r in responses
+        if r.get("message_type") == "PROTOCOL_ERROR"
+        and (r.get("payload") or {}).get("error_code") == "STALE_INTENT"
+    ]
+    if stale_errors:
+        err_payload = stale_errors[0].get("payload", {})
+        log.info(
+            "Agent intent announce REJECTED (race lock): user=%s files=%s "
+            "intent_id=%s reason=%s",
+            user.id, req.files, intent_id,
+            err_payload.get("description"),
+        )
+        # 409 Conflict — semantic match for "your write conflicts with
+        # someone else's still-live state."
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "STALE_INTENT",
+                "intent_id_attempted": intent_id,
+                "files": list(req.files),
+                "description": err_payload.get("description", ""),
+                "guidance": (
+                    "Call defer_intent(files=..., observed_intent_ids=...) "
+                    "with the intent_ids from check_overlap, then tell the "
+                    "user that another participant is editing the same file "
+                    "and you've yielded. They can override by saying "
+                    "'wait for them to finish' or you can retry once the "
+                    "other intent withdraws."
+                ),
+            },
+        )
+
+    # v0.2.8 dependency-warning surface: same-tick CONFLICT_REPORT(s)
+    # mean someone's announce just collided with this one (or vice
+    # versa) on a cross-file dependency. Attach a compact summary to
+    # the announce response so the relay's announce_intent tool can
+    # forward it to Claude — Claude then prefixes its reply with a
+    # ⚠️ warning per the v0.2.11 prompt rule.
+    conflicts: list[dict] = []
+    for r in responses:
+        if r.get("message_type") != "CONFLICT_REPORT":
+            continue
+        p = r.get("payload") or {}
+        # Only surface conflicts where THIS announce is one side.
+        # principal_a / principal_b naming follows coordinator convention;
+        # match either side to our principal.
+        if conn.principal_id not in (p.get("principal_a"), p.get("principal_b")):
+            continue
+        # Identify the OTHER side and pull display name from the session.
+        other_pid = (
+            p.get("principal_b") if p.get("principal_a") == conn.principal_id
+            else p.get("principal_a")
+        )
+        other_conn = session.connections.get(other_pid) if other_pid else None
+        # Pull the other side's intent and files for human-readable warning.
+        dep = p.get("dependency_detail") or {}
+        # `ba` = "b → a" (Bob's claim affects Alice's file). Pick whichever
+        # side describes the OTHER party's impact on US.
+        if p.get("principal_a") == conn.principal_id:
+            their_impact = dep.get("ab") or []
+        else:
+            their_impact = dep.get("ba") or []
+        conflicts.append({
+            "conflict_id": p.get("conflict_id"),
+            "category": p.get("category"),
+            "severity": p.get("severity"),
+            "other_principal_id": other_pid,
+            "other_display_name": (
+                other_conn.display_name if other_conn else other_pid
+            ),
+            "their_impact_on_us": their_impact,
+        })
+
     log.info(
         "Agent intent announced: user=%s files=%s impact=%s "
-        "symbols=%s intent_id=%s",
+        "symbols=%s intent_id=%s same_tick_conflicts=%d",
         user.id, req.files,
         ext.get("impact"),
         ext.get("affects_symbols"),
         intent_id,
+        len(conflicts),
     )
-    return AgentAnnounceIntentResponse(intent_id=intent_id, accepted=True)
+    return AgentAnnounceIntentResponse(
+        intent_id=intent_id,
+        accepted=True,
+        conflicts=conflicts,
+    )
 
 
 @router.delete("/agent/intents")
@@ -772,7 +858,14 @@ async def agent_list_my_active_intents(
 # whenever a hub file is touched would kill collaboration). Override
 # phrases advertised: "proceed anyway / 硬上" flips scope_overlap to
 # proceed; "wait for X / 让路" flips dependency_breakage to yield.
-_MIN_MPAC_MCP = "0.2.11"
+# 0.2.12 (paired with mpac 0.2.8): the announce_intent tool now reads the
+# server's 409 STALE_INTENT race-lock response as a structured dict
+# (NOT an exception) and the system prompt branches on the response shape:
+# rejected → defer_intent + tell user; accepted with non-empty `conflicts`
+# → write but prefix reply with ⚠️ warning. Together this closes the
+# v0.2.11 race window where two Claudes that started simultaneously both
+# saw clean check_overlap and silently data-raced on the file.
+_MIN_MPAC_MCP = "0.2.12"
 
 
 def _render_bootstrap_sh(relay_url: str, token_value: str) -> str:

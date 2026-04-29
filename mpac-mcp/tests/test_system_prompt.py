@@ -101,3 +101,29 @@ def test_prompt_dependency_breakage_carve_out_is_only_for_pure_dependency():
     # "ONLY dependency_breakage, no scope_overlap mixed in" phrasing.
     assert "ONLY dependency_breakage" in _SYSTEM_PROMPT
     assert "no scope_overlap mixed in" in _SYSTEM_PROMPT
+
+
+# ── v0.2.12 lessons (announce_intent response branching) ─────────────
+
+
+def test_prompt_handles_announce_rejected_branch():
+    # v0.2.12 added the "announce came back rejected by the v0.2.8 race
+    # lock" branch — without prompting Claude on that response shape, the
+    # tool returns {"rejected": true, ...} and Claude either ignores it
+    # or hallucinates a retry, both of which break the race lock's UX.
+    assert "STALE_INTENT" in _SYSTEM_PROMPT
+    assert '"rejected": true' in _SYSTEM_PROMPT or "rejected: true" in _SYSTEM_PROMPT
+    assert "DO NOT retry the announce" in _SYSTEM_PROMPT
+
+
+def test_prompt_handles_announce_with_same_tick_conflicts_branch():
+    # v0.2.12 also added the "announce went through but had a same-tick
+    # dependency_breakage" branch — covers the race window where
+    # check_overlap was clean but a peer's announce arrived between
+    # check and announce. Should continue + ⚠️ warning.
+    assert "same-tick dependency_breakage" in _SYSTEM_PROMPT
+    assert "conflicts` is " in _SYSTEM_PROMPT  # "conflicts is non-empty"
+    # Both branch outcomes mention the v0.2.11 ⚠️ template — the
+    # warning template is reused, not duplicated. Just ensure the
+    # warning emoji appears somewhere in the prompt.
+    assert "⚠️" in _SYSTEM_PROMPT

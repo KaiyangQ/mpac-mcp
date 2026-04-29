@@ -544,11 +544,17 @@ async def process_envelope(
     session: ProjectSession,
     envelope: Dict[str, Any],
     sender_principal_id: str,
-) -> None:
+) -> List[Dict[str, Any]]:
     """Feed an envelope through the coordinator and route responses.
 
     Mirrors `MPACServer.handler` logic. Exceptions are logged and swallowed —
     a misbehaving client shouldn't take down the session.
+
+    Returns the list of envelopes the coordinator emitted in response
+    (empty on exception). Older callers ignore the return value; the
+    HTTP-side announce_intent endpoint inspects it to surface
+    STALE_INTENT (v0.2.8 race lock) and same-tick CONFLICT_REPORT
+    (dependency_breakage warnings) back to the agent.
     """
     msg_type = envelope.get("message_type", "?")
     try:
@@ -557,7 +563,7 @@ async def process_envelope(
         log.exception(
             "coordinator threw on %s from %s", msg_type, sender_principal_id
         )
-        return
+        return []
 
     rejected = any(
         r.get("message_type") == "PROTOCOL_ERROR" for r in responses
@@ -594,6 +600,8 @@ async def process_envelope(
         else:
             # SESSION_CLOSE, PARTICIPANT_UPDATE, HEARTBEAT replies, etc.
             await _broadcast(session, resp)
+
+    return responses
 
 
 async def _send_to(

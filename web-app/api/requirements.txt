@@ -25,7 +25,14 @@ cryptography>=42.0
 # ALREADY terminated by the time defer arrives — slow agents (>10s
 # defer latency) no longer leave their yield-chip hanging for the full
 # 60s TTL when the peer's intent already withdrew.
-mpac>=0.2.7
+# mpac 0.2.8 adds the cross-principal same-file race lock — coordinator
+# rejects an INTENT_ANNOUNCE with PROTOCOL_ERROR(STALE_INTENT) when the
+# files already overlap an active intent owned by a different principal.
+# Closes the v0.2.11 race window where two Claudes that started ~simultaneously
+# both saw clean check_overlap, both announced, and both wrote — silently
+# data-racing on the file. Now the second writer is rejected at announce
+# time and the agent is forced to defer.
+mpac>=0.2.8
 # Pinned to match `_MIN_MPAC_MCP` in api/routes/agent.py — bootstrap
 # auto-upgrades clients to this floor. Server install must satisfy the
 # same minimum or stale dev wheels can bypass the 0.2.4 relay error
@@ -55,5 +62,11 @@ mpac>=0.2.7
 # between merge conflicts (must resolve) and semantic conflicts (warn,
 # leave to CI). Without the split, every spoke yields whenever a hub
 # file is touched — kills collaboration in large projects.
+# 0.2.12: announce_intent tool now reads the v0.2.8 race-lock 409 as a
+# structured rejection dict instead of crashing on httpx.HTTPStatusError,
+# and the system prompt has two new branches: (a) rejected → call
+# defer_intent + tell user, (b) accepted with same-tick conflicts →
+# write but prefix reply with ⚠️ warning. Together with mpac 0.2.8
+# this closes the race window from v0.2.11 testing.
 # See _MIN_MPAC_MCP comment in routes/agent.py for the full story.
-mpac-mcp>=0.2.11
+mpac-mcp>=0.2.12

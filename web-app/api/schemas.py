@@ -157,6 +157,15 @@ class AgentAnnounceIntent(BaseModel):
 class AgentAnnounceIntentResponse(BaseModel):
     intent_id: str
     accepted: bool
+    # v0.2.8: same-tick CONFLICT_REPORT(s) the coordinator emitted in
+    # response to this announce — populated when this announce caused
+    # (or was caused by) a cross-file dependency_breakage conflict with
+    # an existing intent. Empty when the announce was clean. The relay's
+    # announce_intent MCP tool forwards this to Claude so it can prefix
+    # its reply with a ⚠️ warning (covers the case where check_overlap
+    # was clean but a parallel announce arrived between check and
+    # announce — the v0.2.11 prompt's "race window" gap).
+    conflicts: list[dict] = []
 
 class AgentWithdrawIntent(BaseModel):
     project_id: int
