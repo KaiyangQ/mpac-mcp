@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mpac-mcp"
-version = "0.2.9"
+version = "0.2.10"
 description = "MCP bridge for MPAC: coordinate coding agents working on the same repository"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,7 +35,11 @@ dependencies = [
     # announce_intent to actually affect conflict detection.
     # 0.2.5 added Participant.defer_intent + INTENT_DEFERRED message type,
     # required by the v0.2.9 defer_intent MCP tool.
-    "mpac>=0.2.5",
+    # 0.2.7 short-circuits deferrals whose observed intents already
+    # terminated by defer-arrival time — needed so 0.2.10 relays whose
+    # Claude is slow to yield (>10s defer latency) don't leave a
+    # 60s-hanging chip when the peer's intent already withdrew.
+    "mpac>=0.2.7",
     # relay_tools uses httpx to talk to the web app's file + intent APIs.
     "httpx>=0.27",
 ]
