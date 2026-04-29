@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mpac-mcp"
-version = "0.2.8"
+version = "0.2.9"
 description = "MCP bridge for MPAC: coordinate coding agents working on the same repository"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,7 +33,9 @@ dependencies = [
     "mcp>=1.0.0",
     # 0.2.2+: extensions.affects_symbols needed for the `symbols` param on
     # announce_intent to actually affect conflict detection.
-    "mpac>=0.2.2",
+    # 0.2.5 added Participant.defer_intent + INTENT_DEFERRED message type,
+    # required by the v0.2.9 defer_intent MCP tool.
+    "mpac>=0.2.5",
     # relay_tools uses httpx to talk to the web app's file + intent APIs.
     "httpx>=0.27",
 ]
