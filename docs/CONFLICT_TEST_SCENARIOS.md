@@ -21,6 +21,95 @@
 
 ---
 
+## 📋 直接粘贴到 chat board 的对话（2 人测试速查）
+
+> **谁用**：每个测试者各开一个浏览器，登录后打开**同一个项目页**，在右下角的
+> **AI Assistant 聊天框**里粘贴下面对应的提示词即可。两个人的 Claude 会在
+> 后台分别 announce intent，CONFLICTS 面板自动弹冲突卡。
+>
+> **为什么这么写**：Claude 默认行为是 announce → 改文件 → withdraw_intent，
+> 改完就立刻释放 intent，常常两边对不上时机。下面的 prompt 都让 Claude
+> **announce 之后停下来**，不动文件、不调 withdraw —— 这样两侧的 intent
+> 重叠期能拉得任意长，conflict 必触发。
+>
+> **测之前**：任一方在浏览器点 **Reset to seed**。
+
+### 用例 1 — 同文件 overlap（最简单）
+
+**用户 A 粘到 chat：**
+
+```
+请在 notes_app/db.py 上 announce 一个 intent，objective 写"重构 save() 支持批量写入"。announce 成功之后停下来，回复我"已 announce，等待指令"，然后什么都不要做。
+
+绝对不要：读文件、改文件、调用 withdraw_intent、再调用任何 MCP 工具。我会在测试结束后明确告诉你 withdraw。
+```
+
+**用户 B 粘到 chat**（等 A 的 Claude 回复"已 announce"之后再发）：
+
+```
+请在 notes_app/db.py 上 announce 一个 intent，objective 写"新增 load_recent() helper"。announce 成功之后停下来，回复我"已 announce，等待指令"，然后什么都不要做。
+
+绝对不要：读文件、改文件、调用 withdraw_intent、再调用任何 MCP 工具。
+```
+
+**期望看到**：
+
+- 两人的 CONFLICTS 面板都跳出一张 `Scope overlap` 卡（medium severity）
+- WHO'S WORKING 面板显示 A 和 B 都在编辑 `notes_app/db.py`
+- 卡片文案：`Same file — one side should Yield`
+
+**收尾**（测完两人各自发）：
+
+```
+现在 withdraw 你的 intent。
+```
+
+---
+
+### 用例 2 — 跨文件依赖冲突（招牌 demo，能看到具体符号名）
+
+**用户 A 粘到 chat：**
+
+```
+请在 notes_app/db.py 上 announce 一个 intent，objective 写"把 save() 的返回类型改成 int"。announce 时把 symbols 参数设成 ["notes_app.db.save"]。announce 成功之后停下来，回复我"已 announce，等待指令"。
+
+绝对不要：读文件、改文件、调用 withdraw_intent、再调用任何 MCP 工具。
+```
+
+**用户 B 粘到 chat**（等 A 回复"已 announce"之后再发）：
+
+```
+请在 notes_app/api.py 上 announce 一个 intent，objective 写"给 API 新增 CORS 头"。announce 成功之后停下来，回复我"已 announce，等待指令"。
+
+绝对不要：读文件、改文件、调用 withdraw_intent、再调用任何 MCP 工具。
+```
+
+**期望看到**：
+
+- CONFLICTS 面板跳一张 `Dependency breakage` 卡
+- **关键**：卡片文案带具体符号名 —— 类似
+  *"Alice is changing `notes_app.db.save` — affects Bob's `notes_app/api.py`"*
+  （这是产品对外讲故事的招牌帧）
+- WHO'S WORKING 面板：A 在 `db.py`、B 在 `api.py`（**不同**文件，说明跨文件分析生效）
+
+**收尾**：跟用例 1 一样，两边各发 `现在 withdraw 你的 intent。`
+
+---
+
+### 如果 Claude 不听话
+
+Claude 偶尔会"善意地"提前 withdraw（它认为 announce 之后就该礼貌地释放）。
+如果在 chat 看到它说"已 withdraw"，重发一次提示词 + 加狠语气：
+
+```
+你刚才 withdraw 早了。请重新 announce 同一个 intent，这次 announce 完就停在原地，绝对不调用 withdraw_intent。我没让你 release。
+```
+
+或者把上面任一用例的提示词最后一行改成：
+**"announced 之后 idle 到我说停为止，期间什么 MCP 工具都不要再调用。"**
+
+---
+
 ## `notes_app` import 图速查
 
 ```
