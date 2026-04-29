@@ -184,11 +184,36 @@ def announce_intent(
 ) -> dict:
     """Announce to the whole session that you're going to modify these files.
     Every browser will see your intent appear in the 'Who's working' panel
-    with the file list. Returns {intent_id, accepted}. REMEMBER intent_id —
-    you MUST pass it to withdraw_intent when you're done.
+    with the file list. REMEMBER intent_id — you MUST pass it to
+    withdraw_intent when you're done.
 
     Call check_overlap BEFORE this if you're not sure you have the field
     to yourself.
+
+    Possible response shapes (CHECK THE SHAPE before proceeding):
+
+    1. **Clean accept** (no conflicts at all):
+       ``{"intent_id": "...", "accepted": true, "conflicts": []}``
+       → Proceed to read/write.
+
+    2. **Accepted with same-tick dependency_breakage warning(s)** (v0.2.8+):
+       ``{"intent_id": "...", "accepted": true, "conflicts": [
+            {"category": "dependency_breakage", "other_display_name": "...",
+             "their_impact_on_us": [...]}, ...]}``
+       → Proceed BUT prefix your reply to the user with a ⚠️ warning that
+       names the other party + the symbol they're changing. The user can
+       say "wait for X / 让路" to make you defer instead.
+
+    3. **REJECTED with race lock** (v0.2.8+):
+       ``{"rejected": true, "error_code": "STALE_INTENT", "files": [...],
+          "description": "...", "guidance": "..."}``
+       → DO NOT retry the same announce. Call defer_intent(files=...,
+       observed_intent_ids=[...]) using the intent_ids you saw from
+       check_overlap (or call check_overlap NOW if you didn't earlier),
+       then tell the user that the same file is being modified by
+       another participant and you've yielded. The user can override by
+       saying "proceed anyway / 硬上" to retry once the other intent
+       withdraws — but do NOT retry on your own initiative.
 
     ``symbols`` (v0.2.1+, optional): a list of fully-qualified names you
     actually plan to change, e.g. ``["utils.foo", "utils.Cache.get"]``.
@@ -209,6 +234,23 @@ def announce_intent(
         body["symbols"] = symbols
     with _client() as c:
         r = c.post("/api/agent/intents", json=body)
+        # v0.2.12: don't raise on 409 — that's the new race-lock signal
+        # (server returned STALE_INTENT). Translate it into a structured
+        # dict so Claude can read it as a tool result instead of crashing
+        # the subprocess on an HTTPStatusError.
+        if r.status_code == 409:
+            try:
+                detail = r.json().get("detail", {})
+            except Exception:
+                detail = {}
+            return {
+                "rejected": True,
+                "error_code": detail.get("error_code", "STALE_INTENT"),
+                "intent_id_attempted": detail.get("intent_id_attempted"),
+                "files": detail.get("files", files),
+                "description": detail.get("description", ""),
+                "guidance": detail.get("guidance", ""),
+            }
         r.raise_for_status()
         return r.json()
 
