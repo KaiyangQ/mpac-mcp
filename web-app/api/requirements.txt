@@ -21,7 +21,11 @@ cryptography>=42.0
 # fields, so 0.2.5 relays that misfilled the field still get clean
 # auto-resolve when the observed intent withdraws (verified necessary
 # 2026-04-29 e2e test).
-mpac>=0.2.6
+# mpac 0.2.7 short-circuits the deferral when the observed intent has
+# ALREADY terminated by the time defer arrives — slow agents (>10s
+# defer latency) no longer leave their yield-chip hanging for the full
+# 60s TTL when the peer's intent already withdrew.
+mpac>=0.2.7
 # Pinned to match `_MIN_MPAC_MCP` in api/routes/agent.py — bootstrap
 # auto-upgrades clients to this floor. Server install must satisfy the
 # same minimum or stale dev wheels can bypass the 0.2.4 relay error
@@ -40,5 +44,9 @@ mpac>=0.2.6
 # 0.2.9: relay exposes defer_intent MCP tool (backed by new
 # /api/agent/intents/defer endpoint) so a Claude that yields after
 # check_overlap can surface a "yield" chip in siblings' Conflicts panel.
-# See _MIN_MPAC_MCP comment in routes/agent.py for the full story.
-mpac-mcp>=0.2.9
+# 0.2.10: system prompt strengthened — `defer_intent` is now MUST-on-yield,
+# and the prompt explicitly carves out "do nothing / 什么都不要做" from
+# "skip defer_intent". Without this, Claude over-interprets natural
+# user-side prompts ("just back off, do nothing") and yields silently
+# without surfacing the chip. See _MIN_MPAC_MCP comment in routes/agent.py.
+mpac-mcp>=0.2.10

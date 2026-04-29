@@ -760,7 +760,12 @@ async def agent_list_my_active_intents(
 # message (mpac 0.2.5+). When Claude yields after check_overlap, a
 # "yield" chip surfaces in sibling Conflicts panels — closes the 4-28
 # UX gap where check_overlap-driven yields were invisible.
-_MIN_MPAC_MCP = "0.2.9"
+# 0.2.10: relay system prompt now declares defer_intent MUST-on-yield
+# and explicitly states that "do nothing / 什么都不要做" from the user
+# does NOT permit skipping defer_intent. Pre-0.2.10 relays would yield
+# silently when the user's prompt said "just back off, do nothing" —
+# Claude took the phrase literally and skipped the defer tool too.
+_MIN_MPAC_MCP = "0.2.10"
 
 
 def _render_bootstrap_sh(relay_url: str, token_value: str) -> str:
