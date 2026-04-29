@@ -23,6 +23,9 @@ mpac>=0.2.4
 # 0.2.6: relay calls /api/agent/intents/withdraw_all on subprocess
 # timeout / exit-non-zero so orphan intents (typical case: API content
 # filter blocks the followup write) get cleaned up before the next
-# retry — see _MIN_MPAC_MCP comment in routes/agent.py for the full
-# story. Backward compatible: 0.2.5 relays still connect.
-mpac-mcp>=0.2.6
+# retry. Backward compatible: 0.2.5 relays still connect.
+# 0.2.7: relay exposes list_my_active_intents() + withdraw_all_my_intents()
+# MCP tools so a fresh `claude -p` subprocess can rediscover and clean
+# up intents from earlier turns. See _MIN_MPAC_MCP comment in
+# routes/agent.py for the full story.
+mpac-mcp>=0.2.7

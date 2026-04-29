@@ -573,6 +573,85 @@ async def agent_list_active_intents(
     return AgentActiveIntentsResponse(intents=intents)
 
 
+@router.get(
+    "/agent/projects/{project_id}/intents/mine",
+    response_model=AgentActiveIntentsResponse,
+)
+async def agent_list_my_active_intents(
+    project_id: int,
+    ctx: AuthCtx = Depends(get_user_or_agent),
+    db: Session = Depends(get_db),
+):
+    """v0.2.7 (2026-04-29): return intents owned by the CALLER, the inverse
+    of /agent/projects/{id}/intents which excludes the caller.
+
+    Motivation: each ``claude -p`` subprocess is one-shot — no memory
+    across user messages. So Claude can announce an intent in turn 1
+    and then have no record of the intent_id when the user asks to
+    withdraw in turn 2. Pre-0.2.7 there was no MCP tool that let
+    Claude rediscover its own intent_ids, so the only cleanup path
+    was to crash the relay (WS-disconnect → coordinator GOODBYE
+    drops intents). This endpoint backs the new
+    ``list_my_active_intents()`` MCP tool — Claude calls it to find
+    its own dangling intents and pass them to ``withdraw_intent`` (or
+    just calls ``withdraw_all_my_intents()``).
+
+    Returns the same shape as /intents (list of intent records);
+    `is_agent` will always be True if the caller is a relay since this
+    endpoint runs under an agent-scoped token, but keeping the field
+    for response-schema parity.
+    """
+    assert_token_scope(ctx, project_id)
+    user = ctx.user
+    member = db.query(Token).filter(
+        Token.user_id == user.id,
+        Token.project_id == project_id,
+        Token.is_revoked == False,  # noqa: E712
+    ).first()
+    if not member:
+        raise HTTPException(403, "Not a member of this project")
+
+    session = session_registry.get(project_id)
+    if session is None:
+        return AgentActiveIntentsResponse(intents=[])
+
+    # Caller's principal_id depends on which token they used: a relay
+    # token authenticates as ``agent:user-N``, a browser session JWT
+    # authenticates as ``user:N``. Use the AuthCtx-aware helper instead
+    # of guessing — keeps this endpoint correct for both surfaces if a
+    # human ever wants to view their own intents from a dashboard.
+    from ..auth import caller_principal_id
+    me = caller_principal_id(ctx)
+
+    live_states = {IntentState.ACTIVE, IntentState.SUSPENDED, IntentState.ANNOUNCED}
+    intents: list[dict] = []
+    for intent_id, intent in session.coordinator.intents.items():
+        if intent.principal_id != me:
+            continue
+        if intent.state_machine.current_state not in live_states:
+            continue
+        scope = intent.scope
+        files = list(scope.resources) if scope and scope.resources else []
+        symbols: list[str] = []
+        if scope and scope.extensions:
+            raw = scope.extensions.get("affects_symbols")
+            if isinstance(raw, list):
+                symbols = [s for s in raw if isinstance(s, str)]
+        other = session.connections.get(intent.principal_id)
+        display = other.display_name if other else intent.principal_id
+        intents.append({
+            "intent_id": intent_id,
+            "principal_id": intent.principal_id,
+            "display_name": display,
+            "files": files,
+            "symbols": symbols,
+            "objective": intent.objective,
+            "is_agent": intent.principal_id.startswith("agent:"),
+        })
+    intents.sort(key=lambda i: i["intent_id"])
+    return AgentActiveIntentsResponse(intents=intents)
+
+
 # ── Bootstrap script endpoint (served raw, no OpenAPI schema) ──────────
 
 # Minimum mpac-mcp version the bootstrap script will install. Bump when a
@@ -593,7 +672,14 @@ async def agent_list_active_intents(
 # (auto-supersede) catches the symptom too, so 0.2.5 stays compatible
 # — bumping the floor is purely a "we recommend the cleanup behaviour"
 # signal.
-_MIN_MPAC_MCP = "0.2.6"
+# 0.2.7: relay exposes two new MCP tools — list_my_active_intents()
+# and withdraw_all_my_intents() — so a fresh `claude -p` subprocess
+# (no memory across turns) can rediscover and clean up intents it
+# announced in earlier turns. System prompt updated to use them when
+# user says "withdraw" without an intent_id. Backward compatible:
+# 0.2.6 relays still work, they just can't clean up intents from
+# earlier turns without a relay restart.
+_MIN_MPAC_MCP = "0.2.7"
 
 
 def _render_bootstrap_sh(relay_url: str, token_value: str) -> str:
