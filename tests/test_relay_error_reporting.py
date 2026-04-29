@@ -209,3 +209,121 @@ def test_cleanup_failure_does_not_corrupt_user_facing_error():
     reply = asyncio.run(_run_with_cleanup_capture(proc, fake))
     assert "oh no" in reply
     assert "exit 1" in reply
+
+
+# ── 2026-04-29: cross-turn session continuity (v0.2.8) ────────────────
+#
+# `--output-format json` makes claude -p emit
+# `{"session_id": "...", "result": "..."}` on stdout. The relay parses
+# this, captures session_id, and passes `--resume <id>` on the next
+# invocation so Claude has full conversation memory across turns.
+
+
+import json as _json
+import mpac_mcp.relay as _relay
+
+
+def _reset_session():
+    _relay._session_id = None
+
+
+def test_json_output_extracts_session_id_and_result():
+    _reset_session()
+    payload = _json.dumps({
+        "session_id": "abc-123-uuid",
+        "result": "Hi there!",
+        "usage": {"input_tokens": 100, "output_tokens": 50},
+    }).encode("utf-8")
+    proc = FakeProc(returncode=0, stdout_bytes=payload, stderr_bytes=b"")
+    reply = asyncio.run(_run(proc))
+    assert reply == "Hi there!"
+    assert _relay._session_id == "abc-123-uuid"
+
+
+def test_session_id_passed_as_resume_on_second_call():
+    _reset_session()
+    # Turn 1: session_id captured.
+    payload_1 = _json.dumps({
+        "session_id": "uuid-1",
+        "result": "first reply",
+    }).encode("utf-8")
+    captured_argv = []
+
+    async def fake_subprocess_exec(*argv, **kwargs):
+        captured_argv.append(argv)
+        # Return the same FakeProc each call (with payload_1 stdout).
+        return FakeProc(returncode=0, stdout_bytes=payload_1, stderr_bytes=b"")
+
+    with patch(
+        "mpac_mcp.relay.asyncio.create_subprocess_exec",
+        new=fake_subprocess_exec,
+    ), patch(
+        "mpac_mcp.relay._build_mcp_config", return_value="/tmp/fake.json",
+    ), patch(
+        "mpac_mcp.relay.os.path.exists", return_value=False,
+    ):
+        asyncio.run(handle_chat(_ctx(), "first"))
+        asyncio.run(handle_chat(_ctx(), "second"))
+
+    assert len(captured_argv) == 2
+    # Turn 1: NO --resume in argv.
+    assert "--resume" not in captured_argv[0], (
+        "first turn should not include --resume — there's nothing to resume"
+    )
+    # Turn 2: --resume <captured uuid>.
+    assert "--resume" in captured_argv[1]
+    idx = captured_argv[1].index("--resume")
+    assert captured_argv[1][idx + 1] == "uuid-1"
+
+
+def test_non_json_stdout_falls_back_to_raw_reply():
+    # If a future Claude Code version regresses the JSON output schema,
+    # don't drop the user's reply on the floor — surface raw stdout.
+    _reset_session()
+    proc = FakeProc(
+        returncode=0,
+        stdout_bytes=b"plain text reply, not JSON",
+        stderr_bytes=b"",
+    )
+    reply = asyncio.run(_run(proc))
+    assert reply == "plain text reply, not JSON"
+    # Session id should remain None — we couldn't parse it.
+    assert _relay._session_id is None
+
+
+def test_session_id_updates_when_claude_returns_different_one():
+    # Claude Code falls back to a fresh session if --resume <id> is
+    # invalid/expired. We capture the new session_id silently so the
+    # next turn resumes the new one, not the dead one.
+    _reset_session()
+    _relay._session_id = "stale-uuid"
+    payload = _json.dumps({
+        "session_id": "fresh-uuid",
+        "result": "ok",
+    }).encode("utf-8")
+    proc = FakeProc(returncode=0, stdout_bytes=payload, stderr_bytes=b"")
+    asyncio.run(_run(proc))
+    assert _relay._session_id == "fresh-uuid"
+
+
+def test_argv_includes_output_format_json():
+    _reset_session()
+    captured_argv = []
+
+    async def fake_subprocess_exec(*argv, **kwargs):
+        captured_argv.append(argv)
+        return FakeProc(returncode=0, stdout_bytes=b'{"session_id":"x","result":"hi"}', stderr_bytes=b"")
+
+    with patch(
+        "mpac_mcp.relay.asyncio.create_subprocess_exec",
+        new=fake_subprocess_exec,
+    ), patch(
+        "mpac_mcp.relay._build_mcp_config", return_value="/tmp/fake.json",
+    ), patch(
+        "mpac_mcp.relay.os.path.exists", return_value=False,
+    ):
+        asyncio.run(handle_chat(_ctx(), "hi"))
+
+    assert "--output-format" in captured_argv[0]
+    idx = captured_argv[0].index("--output-format")
+    assert captured_argv[0][idx + 1] == "json"
