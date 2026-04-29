@@ -536,6 +536,14 @@ async def agent_check_overlap(
 
         other_display = session.connections.get(intent.principal_id)
         overlaps.append({
+            # v0.2.6 (2026-04-29): intent_id added to the response. Before
+            # this, `defer_intent`'s `observed_intent_ids` field had
+            # nothing intent_id-shaped to come from on the client side —
+            # Claude was passing principal_ids by mistake and the
+            # coordinator's auto-resolve-on-terminate path silently
+            # missed because it matches by intent_id. Now check_overlap
+            # gives Claude the right id to forward.
+            "intent_id": intent_id,
             "principal_id": intent.principal_id,
             "display_name": other_display.display_name if other_display else intent.principal_id,
             "files": sorted(direct_hit),

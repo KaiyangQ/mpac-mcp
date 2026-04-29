@@ -16,7 +16,12 @@ cryptography>=42.0
 # mpac 0.2.5 adds INTENT_DEFERRED + Participant.defer_intent — needed by
 # the v0.2.9 mpac-mcp defer_intent MCP tool and the new
 # /api/agent/intents/defer endpoint.
-mpac>=0.2.5
+# mpac 0.2.6 makes the deferral cleanup-on-terminate path match by
+# observed_principals OR principal-id-mistakenly-in-observed-intent-ids
+# fields, so 0.2.5 relays that misfilled the field still get clean
+# auto-resolve when the observed intent withdraws (verified necessary
+# 2026-04-29 e2e test).
+mpac>=0.2.6
 # Pinned to match `_MIN_MPAC_MCP` in api/routes/agent.py — bootstrap
 # auto-upgrades clients to this floor. Server install must satisfy the
 # same minimum or stale dev wheels can bypass the 0.2.4 relay error
