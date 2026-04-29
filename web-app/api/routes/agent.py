@@ -1035,6 +1035,20 @@ function Invoke-ClaudeLogin {{
     # Dispatch via cmd.exe /c because Start-Process -FilePath claude
     # doesn't reliably resolve the claude.cmd shim on hosts with default
     # PATHEXT.
+    #
+    # IMPORTANT UX gotcha: ``claude /login`` does NOT exit after the OAuth
+    # browser flow completes — it drops the user into the Claude REPL.
+    # Until the user manually leaves the TUI, our Start-Process -Wait
+    # blocks here and the bootstrap looks frozen. Print a very loud
+    # one-time instruction before launching so the user knows what to do.
+    Write-Host ""
+    Write-Host "============================================================" -ForegroundColor Yellow
+    Write-Host " IMPORTANT — after the browser shows 'Login successful':"    -ForegroundColor Yellow
+    Write-Host "   Return to THIS terminal, then inside the Claude window"   -ForegroundColor Yellow
+    Write-Host "   type  /exit  and press Enter (or press Ctrl+C)."          -ForegroundColor Yellow
+    Write-Host "   The bootstrap will only continue once Claude has exited." -ForegroundColor Yellow
+    Write-Host "============================================================" -ForegroundColor Yellow
+    Write-Host ""
     $exitCode = -1
     try {{
         $proc = Start-Process -FilePath "cmd.exe" `
@@ -1375,7 +1389,6 @@ Say "git-bash: $gitBash"
 if (-not $loggedIn) {{
     Say "Claude Code not yet authenticated on this machine."
     Say "Running 'claude /login' (browser will open)..."
-    Say "Complete the login flow, then this script continues automatically."
     Invoke-ClaudeLogin
     Say "Claude authenticated."
 }}
