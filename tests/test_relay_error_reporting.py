@@ -327,3 +327,64 @@ def test_argv_includes_output_format_json():
     assert "--output-format" in captured_argv[0]
     idx = captured_argv[0].index("--output-format")
     assert captured_argv[0][idx + 1] == "json"
+
+
+# ─── reset_to_seed → drop resumed session ──────────────────────────────
+
+
+def test_drop_session_for_reset_clears_session_id():
+    """The reset_to_seed PROJECT_EVENT handler must clear ``_session_id``
+    so the next ``claude -p`` turn starts fresh — otherwise Claude resumes
+    a conversation that believes in pre-reset file state."""
+    _relay._session_id = "stale-uuid"
+    asyncio.run(_relay._drop_session_for_reset())
+    assert _relay._session_id is None
+
+
+def test_drop_session_for_reset_is_noop_when_no_session():
+    """First-turn relay (no session yet) should still tolerate the reset
+    event without error."""
+    _relay._session_id = None
+    asyncio.run(_relay._drop_session_for_reset())
+    assert _relay._session_id is None
+
+
+def test_drop_session_for_reset_serializes_with_in_flight_chat():
+    """If a chat is mid-flight when reset_to_seed arrives, the reset must
+    wait for the in-flight turn to finish (and write its session_id)
+    before clearing — otherwise the chat's post-completion write at the
+    end of ``_handle_chat_locked`` re-pollutes the cleared state."""
+    _relay._session_id = None
+
+    captured_session_during_clear = []
+
+    async def slow_subprocess(*argv, **kwargs):
+        # In-flight chat takes time → makes the reset's lock acquisition
+        # block until this turn completes.
+        await asyncio.sleep(0.05)
+        return FakeProc(
+            returncode=0,
+            stdout_bytes=b'{"session_id":"new-uuid","result":"ok"}',
+            stderr_bytes=b"",
+        )
+
+    async def scenario():
+        with patch(
+            "mpac_mcp.relay.asyncio.create_subprocess_exec",
+            new=slow_subprocess,
+        ), patch(
+            "mpac_mcp.relay._build_mcp_config", return_value="/tmp/fake.json",
+        ), patch(
+            "mpac_mcp.relay.os.path.exists", return_value=False,
+        ):
+            chat_task = asyncio.create_task(handle_chat(_ctx(), "hi"))
+            # Let the chat acquire the lock first.
+            await asyncio.sleep(0.01)
+            reset_task = asyncio.create_task(_relay._drop_session_for_reset())
+            await chat_task
+            await reset_task
+            captured_session_during_clear.append(_relay._session_id)
+
+    asyncio.run(scenario())
+    # After both finish: session must be cleared, not the chat's "new-uuid".
+    assert captured_session_during_clear == [None]

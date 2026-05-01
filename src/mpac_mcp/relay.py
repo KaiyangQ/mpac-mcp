@@ -122,10 +122,21 @@ _SYSTEM_PROMPT = (
     "assume they mean a file inside the shared project. Do NOT say it "
     "doesn't exist until you've checked with list_project_files() or "
     "read_project_file().\n\n"
-    "IMPORTANT — you have NO MEMORY between turns: this conversation is "
-    "served by a fresh subprocess per user message. Any intent_id you "
-    "received in a previous turn is GONE. To find your own dangling "
-    "intents, call list_my_active_intents().\n\n"
+    "MEMORY MODEL — you HAVE memory of prior turns within the current "
+    "session: the relay resumes the conversation, so you can see what "
+    "you said and did in earlier turns. The session resets only when "
+    "the project is reset to seed (file state wiped) — at that point "
+    "everything you remember from before the reset is moot, since the "
+    "files you read no longer exist. Two implications:\n"
+    "  * If a prior-turn intent_id is still relevant, you may use it "
+    "directly. But if you're unsure whether the project state has "
+    "drifted (e.g. user took a long break, or another participant "
+    "may have moved on), call list_my_active_intents() to verify "
+    "before relying on a remembered id — your memory is of YOUR past "
+    "actions, not of the current coordinator state.\n"
+    "  * After a project reset, do NOT cite work you remember doing "
+    "in pre-reset turns; those files are gone. Treat the next turn as "
+    "a fresh project.\n\n"
     "Protocol when editing files:\n"
     "  1. If uncertain what's in the project, call list_project_files first.\n"
     "  2. BEFORE editing, call check_overlap(files). Each returned entry "
@@ -249,8 +260,9 @@ _SYSTEM_PROMPT = (
     "drop everything in one shot. Don't leave dangling intents.\n\n"
     "If the user says 'withdraw' / 'release' / 'cancel' / 'stop' / "
     "'撤回' / '取消' your intent, do NOT just reply 'done' — actually call "
-    "an MCP tool. If you have the intent_id from this turn, use "
-    "withdraw_intent. If not (almost always — see the no-memory rule above), "
+    "an MCP tool. If you have the intent_id from this turn (or a still-"
+    "valid one from a prior turn in the same session), use "
+    "withdraw_intent. If you can't find a usable id, "
     "call withdraw_all_my_intents(reason='user_requested').\n\n"
     "**v0.2.13 — POST-DEFER OVERRIDE RETRY RULE.** When the user says "
     "'proceed anyway' / 'ignore conflict' / '硬上' / '继续' / '再试一次' "
@@ -373,6 +385,25 @@ def _get_chat_lock() -> asyncio.Lock:
     if _chat_lock is None:
         _chat_lock = asyncio.Lock()
     return _chat_lock
+
+
+async def _drop_session_for_reset() -> None:
+    """Clear the resumed Claude session id so the next ``claude -p`` turn
+    starts fresh. Called when the web backend broadcasts a reset_to_seed
+    PROJECT_EVENT — the in-memory conversation otherwise still believes
+    in files that no longer exist on disk, and Claude routinely says "I
+    already added that" and skips the work.
+
+    We acquire the chat lock first so any in-flight turn finishes (and
+    writes its session_id) before we clear; otherwise that write races
+    our clear and we re-resume the very session we just abandoned.
+    """
+    global _session_id
+    async with _get_chat_lock():
+        if _session_id is not None:
+            log.info("reset_to_seed: dropping session %s; next turn fresh",
+                     _session_id)
+            _session_id = None
 
 
 async def handle_chat(ctx: RelayContext, message: str) -> str:
@@ -668,9 +699,22 @@ async def run_relay(args: argparse.Namespace) -> int:
                             _handle_and_reply(ws, ctx, mid, body)
                         )
                     elif mtype == "mpac_envelope":
-                        # MVP: we don't react to coordinator envelopes yet.
-                        log.debug("Received mpac_envelope: %s",
-                                  msg.get("envelope", {}).get("message_type"))
+                        env = msg.get("envelope") or {}
+                        env_type = env.get("message_type")
+                        # PROJECT_EVENT (kind=reset_to_seed) means the web
+                        # backend wiped the project's files back to seed.
+                        # Our resumed Claude conversation now believes in
+                        # files that no longer exist. Schedule a session
+                        # reset so the next chat turn starts fresh; do it
+                        # in a task so the receive loop keeps running, and
+                        # let the chat_lock serialize against any in-flight
+                        # turn (otherwise its session_id write at completion
+                        # would re-pollute our cleared state).
+                        if env_type == "PROJECT_EVENT":
+                            payload = env.get("payload") or {}
+                            if payload.get("kind") == "reset_to_seed":
+                                asyncio.create_task(_drop_session_for_reset())
+                        log.debug("Received mpac_envelope: %s", env_type)
                     else:
                         log.debug("Server sent unknown type=%r", mtype)
         except websockets.exceptions.InvalidStatusCode as e:
