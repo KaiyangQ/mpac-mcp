@@ -166,6 +166,17 @@ class AgentAnnounceIntentResponse(BaseModel):
     # was clean but a parallel announce arrived between check and
     # announce — the v0.2.11 prompt's "race window" gap).
     conflicts: list[dict] = []
+    # v0.2.14: directive-shaped fields that mirror the rejected branch's
+    # response shape so Claude treats the warning as "instruction to
+    # execute" rather than "metadata to optionally surface." 4 rounds
+    # of prompt-only fixes (0.2.12-0.2.14 r2) measured 0/N compliance —
+    # Claude consistently treats `accepted: true` as bookkeeping. The
+    # fields are populated only when conflicts is non-empty.
+    must_surface_to_user: bool = False
+    surface_warning_text: Optional[str] = None
+    # `guidance` mirrors the rejected branch's `guidance` field (same
+    # name) so the prompt teaches Claude one shape across both branches.
+    guidance: Optional[str] = None
 
 class AgentWithdrawIntent(BaseModel):
     project_id: int

@@ -24,7 +24,9 @@ import json
 import logging
 import os
 import secrets
+import time
 import uuid
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from sqlalchemy.orm import Session
@@ -273,6 +275,80 @@ def _get_agent_conn(project_id: int, user_id: int):
     return session, conn
 
 
+# ── v0.2.14: server-side warning surface (chat-injection safety net) ──
+#
+# 4 rounds of LLM-only fixes (0.2.12 sentinel / 0.2.13 user_action_required
+# / 0.2.14 r1 prompt-reframe / 0.2.14 r2 directive-shaped tool response)
+# all measured 0/N compliance for the dependency_breakage warning branch.
+# Pattern: rejected branch (6/6) is on the critical path — Claude must
+# respond. Warning branch is asynchronous-like — Claude completes the
+# main task, treats the warning as bookkeeping, skips it.
+#
+# Server-side fix: every dependency_breakage announce queues a canonical
+# disclosure text against the user's user_id. /api/chat drains the queue
+# right before returning the relay's reply to the user, prepending the
+# disclosure(s) as a system-tagged blockquote. Deterministic, doesn't
+# rely on Claude compliance.
+#
+# Single-worker uvicorn (--workers 1, see deploy/dockerfiles/api/
+# Dockerfile) means a module-level dict is safe across threads + this
+# is async on a single event loop.
+_PendingWarning = dict  # {"text": str, "queued_at": float}
+_pending_user_warnings: dict[int, list[_PendingWarning]] = defaultdict(list)
+_PENDING_WARNING_TTL_SEC = 300.0  # drop entries older than 5 min on drain
+
+
+def _build_warning_disclosure(conflict: dict, our_files: list[str]) -> str:
+    """Generate the canonical ⚠️ parallel-work disclosure for one
+    dependency_breakage conflict. Same wording as the relay-tool client
+    fallback (mpac-mcp 0.2.14 relay_tools.py) so both server-injection
+    and Claude-authored copies look identical when both happen to fire.
+    """
+    other = conflict.get("other_display_name") or "another participant"
+    impact = conflict.get("their_impact_on_us") or []
+    their_file = None
+    sym = None
+    for entry in impact:
+        if entry.get("file") and not their_file:
+            their_file = entry["file"]
+        for s in (entry.get("symbols") or []):
+            if not sym:
+                sym = s
+                break
+        if sym:
+            break
+    our = our_files[0] if our_files else "the file I'm editing"
+    if sym and their_file:
+        return (
+            f"⚠️ {other} is also editing related code: changing "
+            f"`{sym}` in {their_file}, which my work in {our} uses."
+        )
+    if their_file:
+        return (
+            f"⚠️ {other} is also editing {their_file}, which my work "
+            f"in {our} depends on."
+        )
+    return f"⚠️ {other} is editing related code in this project."
+
+
+def drain_pending_warnings_for_user(user_id: int) -> list[str]:
+    """Pop and return queued warning disclosures for ``user_id``,
+    dropping anything older than _PENDING_WARNING_TTL_SEC. Called by
+    /api/chat at end-of-turn to inject the disclosures into the reply.
+    """
+    now = time.monotonic()
+    entries = _pending_user_warnings.pop(user_id, [])
+    fresh = [e["text"] for e in entries
+             if (now - e["queued_at"]) <= _PENDING_WARNING_TTL_SEC]
+    return fresh
+
+
+def _queue_warning_for_user(user_id: int, text: str) -> None:
+    _pending_user_warnings[user_id].append(
+        {"text": text, "queued_at": time.monotonic()}
+    )
+
+
 @router.post("/agent/intents", response_model=AgentAnnounceIntentResponse)
 async def agent_announce_intent(
     req: AgentAnnounceIntent,
@@ -406,10 +482,44 @@ async def agent_announce_intent(
         intent_id,
         len(conflicts),
     )
+
+    # v0.2.14: when a same-tick dep_breakage fired, build the canonical
+    # ⚠️ disclosure server-side and (a) include it in the response so
+    # mpac-mcp 0.2.14 client-side prompts can teach Claude to copy it
+    # verbatim, and (b) queue it on _pending_user_warnings so /api/chat
+    # can prepend it to the reply regardless of Claude's compliance.
+    must_surface_to_user = False
+    surface_warning_text: str | None = None
+    guidance: str | None = None
+    if conflicts:
+        first = conflicts[0]
+        surface_warning_text = _build_warning_disclosure(first, list(req.files))
+        # Queue every conflict for chat-side injection (a single chat
+        # turn can produce multiple warnings if Claude announces twice).
+        for c in conflicts:
+            _queue_warning_for_user(
+                user.id, _build_warning_disclosure(c, list(req.files)),
+            )
+        must_surface_to_user = True
+        guidance = (
+            "Copy `surface_warning_text` verbatim as the FIRST line of "
+            "your reply, then write the rest of your reply (work "
+            "summary + any backward-compat analysis you want to add). "
+            "The disclosure is mandatory regardless of your assessment "
+            "of safety — surface first, judge after. (Server safety "
+            "net: /api/chat will prepend this disclosure to your reply "
+            "before delivering it to the user, so the user sees it "
+            "either way; following the directive yourself just keeps "
+            "your reply coherent with that prefix.)"
+        )
+
     return AgentAnnounceIntentResponse(
         intent_id=intent_id,
         accepted=True,
         conflicts=conflicts,
+        must_surface_to_user=must_surface_to_user,
+        surface_warning_text=surface_warning_text,
+        guidance=guidance,
     )
 
 

@@ -25,7 +25,26 @@ from ..database import get_db
 from ..models import Project, Token, User
 from ..mpac_bridge import registry
 from ..schemas import ChatMessage, ChatReply
+from .agent import drain_pending_warnings_for_user
 from .ws_relay import relay_registry
+
+
+def _format_warning_block(warnings: list[str]) -> str:
+    """Format queued warnings as a markdown blockquote block that's
+    visually distinct from Claude's authored reply. Goes ABOVE Claude's
+    text so users always see the parallel-work disclosure even when
+    Claude skipped the ⚠️ in their own reply.
+
+    Format choice: blockquote + bold "Coordination notice" header makes
+    it obvious this is system-injected, not authored by the agent. If
+    Claude DID also include ⚠️ (because the v0.2.14 directive fields
+    worked), we tolerate the duplicate — the system block is clearly
+    distinct, so a human reader won't be confused.
+    """
+    lines = ["> **Coordination notice (from MPAC):**"]
+    for w in warnings:
+        lines.append(f"> {w}")
+    return "\n".join(lines)
 
 router = APIRouter()
 log = logging.getLogger("mpac.chat")
@@ -60,6 +79,20 @@ async def chat(
             reply = await relay_registry.send_chat(
                 user.id, msg.project_id, msg.message,
             )
+            # v0.2.14: drain any pending parallel-work disclosures the
+            # agent endpoint queued during this turn (when Claude's
+            # announce_intent saw same_tick_conflicts > 0). Prepend
+            # them so the user always sees the warning, even if Claude
+            # skipped ⚠️ in its own reply (4 rounds of 0.2.12-0.2.14
+            # prompt-only fixes measured 0/N compliance — see
+            # routes/agent.py for context).
+            warnings = drain_pending_warnings_for_user(user.id)
+            if warnings:
+                log.info(
+                    "Chat: prepending %d coordination notice(s) for user=%s",
+                    len(warnings), user.id,
+                )
+                reply = _format_warning_block(warnings) + "\n\n" + reply
             return ChatReply(reply=reply)
         except TimeoutError:
             raise HTTPException(504, "Local Claude Code timed out (>90s)")
