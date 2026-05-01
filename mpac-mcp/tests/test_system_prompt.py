@@ -127,3 +127,46 @@ def test_prompt_handles_announce_with_same_tick_conflicts_branch():
     # warning template is reused, not duplicated. Just ensure the
     # warning emoji appears somewhere in the prompt.
     assert "⚠️" in _SYSTEM_PROMPT
+
+
+# ── v0.2.13 lessons ──────────────────────────────────────────────────
+
+
+def test_prompt_references_user_action_required_sentinel():
+    # 2026-04-30 e2e: 0.2.12 prompt's "if conflicts non-empty → ⚠️"
+    # rule had 0/1 compliance because Claude treated conflicts:[...] as
+    # metadata. 0.2.13 adds a sentinel field on the tool response side;
+    # the prompt must teach Claude to recognize it.
+    assert "user_action_required" in _SYSTEM_PROMPT
+    assert "PREFIX_REPLY_WITH_WARNING_AND_NAME_OTHER_PARTY" in _SYSTEM_PROMPT
+
+
+def test_prompt_says_warning_must_be_first_line_not_buried():
+    # The v0.2.12 wording ("PREFIX your eventual reply") was too soft —
+    # Claude could comply by prefixing some inner section. 0.2.13
+    # tightens to "FIRST line ... MUST start with ⚠️" + an explicit
+    # "Do NOT bury the warning mid-paragraph."
+    assert "FIRST line" in _SYSTEM_PROMPT
+    assert "MUST start with ⚠️" in _SYSTEM_PROMPT
+    assert "bury the warning" in _SYSTEM_PROMPT
+
+
+def test_prompt_says_post_defer_override_must_retry_announce():
+    # 2026-04-30 override-flow phase 3: Claude refused to retry
+    # announce_intent on user "硬上" because it was reusing the prior
+    # turn's STALE_INTENT result. Same root cause as the Option C
+    # reactive-event gap: subprocess can't observe state changes
+    # between turns, so the only way to learn is to RETRY.
+    assert "POST-DEFER OVERRIDE RETRY RULE" in _SYSTEM_PROMPT
+    assert "MUST re-call announce_intent" in _SYSTEM_PROMPT
+    assert "硬上" in _SYSTEM_PROMPT  # already asserted above but pin again
+    # Anti-pattern callout: don't refuse based on stale prior result.
+    assert "stale prior tool result" in _SYSTEM_PROMPT
+
+
+def test_prompt_post_defer_retry_lists_both_outcomes():
+    # The retry rule must spell out what to do under each outcome,
+    # otherwise Claude may retry but then mishandle the result. Both
+    # success and second-rejection paths get explicit guidance.
+    assert "Announce succeeds" in _SYSTEM_PROMPT
+    assert "Announce gets rejected again" in _SYSTEM_PROMPT

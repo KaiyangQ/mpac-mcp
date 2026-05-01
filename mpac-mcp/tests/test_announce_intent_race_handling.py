@@ -119,8 +119,12 @@ def test_announce_intent_returns_normal_dict_on_2xx():
 def test_announce_intent_passes_through_same_tick_dependency_breakage_conflicts():
     """v0.2.8 same-tick dependency_breakage warning surface: server
     returns accepted=true with non-empty conflicts. Tool MUST forward
-    verbatim so Claude can inspect category/other_display_name and
-    prefix its reply with the ⚠️ warning."""
+    verbatim so Claude can inspect category/other_display_name. v0.2.13
+    additionally adds a `user_action_required` sentinel so the response
+    shape is qualitatively different from a clean accept (Claude was
+    silently dropping the warning when conflicts looked like metadata —
+    2026-04-30 e2e measured 0/1 ⚠️ compliance vs 6/6 in the rejected
+    branch which has an equivalent sentinel)."""
     response = _FakeResponse(
         status_code=200,
         payload={
@@ -151,6 +155,29 @@ def test_announce_intent_passes_through_same_tick_dependency_breakage_conflicts(
     assert c["category"] == "dependency_breakage"
     assert c["other_display_name"] == "Alice's Claude"
     assert c["their_impact_on_us"][0]["symbols"] == ["notes_app.db.save"]
+    # v0.2.13 sentinel:
+    assert result.get("user_action_required") == \
+        "PREFIX_REPLY_WITH_WARNING_AND_NAME_OTHER_PARTY"
+
+
+def test_announce_intent_clean_accept_does_NOT_get_v0_2_13_sentinel():
+    """v0.2.13 only adds the sentinel when there are actual conflicts to
+    surface. A clean accept (conflicts: []) must look unchanged so Claude
+    doesn't manufacture warnings out of nothing."""
+    response = _FakeResponse(
+        status_code=200,
+        payload={
+            "intent_id": "intent-1",
+            "accepted": True,
+            "conflicts": [],
+        },
+    )
+    p_client, p_pid, _ = _patch_client(response)
+    with p_client, p_pid:
+        result = relay_tools.announce_intent(files=["x.py"], objective="x")
+
+    assert result.get("conflicts") == []
+    assert "user_action_required" not in result
 
 
 def test_announce_intent_still_raises_on_other_4xx_5xx():

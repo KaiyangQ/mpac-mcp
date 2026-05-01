@@ -199,21 +199,25 @@ def announce_intent(
     2. **Accepted with same-tick dependency_breakage warning(s)** (v0.2.8+):
        ``{"intent_id": "...", "accepted": true, "conflicts": [
             {"category": "dependency_breakage", "other_display_name": "...",
-             "their_impact_on_us": [...]}, ...]}``
-       → Proceed BUT prefix your reply to the user with a ⚠️ warning that
-       names the other party + the symbol they're changing. The user can
-       say "wait for X / 让路" to make you defer instead.
+             "their_impact_on_us": [...]}, ...],
+          "user_action_required": "PREFIX_REPLY_WITH_WARNING_AND_NAME_OTHER_PARTY"}``
+       → Proceed BUT the FIRST line of your reply MUST start with ⚠️ and
+       name ``conflicts[0].other_display_name`` + one symbol from
+       ``conflicts[0].their_impact_on_us[*].symbols``. The
+       ``user_action_required`` field is a v0.2.13 sentinel — its
+       presence MEANS "the user must see a warning, not just 'done'."
+       The user can say "wait for X / 让路" to make you defer instead.
 
     3. **REJECTED with race lock** (v0.2.8+):
        ``{"rejected": true, "error_code": "STALE_INTENT", "files": [...],
           "description": "...", "guidance": "..."}``
-       → DO NOT retry the same announce. Call defer_intent(files=...,
-       observed_intent_ids=[...]) using the intent_ids you saw from
-       check_overlap (or call check_overlap NOW if you didn't earlier),
-       then tell the user that the same file is being modified by
-       another participant and you've yielded. The user can override by
-       saying "proceed anyway / 硬上" to retry once the other intent
-       withdraws — but do NOT retry on your own initiative.
+       → DO NOT retry the same announce in THIS turn. Call defer_intent(
+       files=..., observed_intent_ids=[...]) using the intent_ids you saw
+       from check_overlap (or call check_overlap NOW if you didn't
+       earlier), then tell the user that the same file is being modified
+       by another participant and you've yielded. The user can override
+       by saying "proceed anyway / 硬上" — see the v0.2.13 retry rule in
+       the system prompt for what to do then.
 
     ``symbols`` (v0.2.1+, optional): a list of fully-qualified names you
     actually plan to change, e.g. ``["utils.foo", "utils.Cache.get"]``.
@@ -252,7 +256,21 @@ def announce_intent(
                 "guidance": detail.get("guidance", ""),
             }
         r.raise_for_status()
-        return r.json()
+        out = r.json()
+        # v0.2.13: when the server returned same-tick conflict warnings,
+        # add an explicit sentinel. Claude reads tool responses as JSON
+        # blobs and will often summarize the "successful" parts (intent_id,
+        # accepted=true) and treat conflicts:[...] as metadata it doesn't
+        # need to surface — the 2026-04-30 e2e measured 0/1 ⚠️ compliance
+        # in this branch vs 6/6 in the rejected branch (which has an
+        # equivalent sentinel "rejected": True). The sentinel forces the
+        # response shape to look qualitatively different from a clean
+        # accept, which makes the system-prompt branch fire reliably.
+        if isinstance(out, dict) and out.get("conflicts"):
+            out["user_action_required"] = (
+                "PREFIX_REPLY_WITH_WARNING_AND_NAME_OTHER_PARTY"
+            )
+        return out
 
 
 @mcp.tool()
