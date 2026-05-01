@@ -196,16 +196,23 @@ def announce_intent(
        ``{"intent_id": "...", "accepted": true, "conflicts": []}``
        → Proceed to read/write.
 
-    2. **Accepted with same-tick dependency_breakage warning(s)** (v0.2.8+):
-       ``{"intent_id": "...", "accepted": true, "conflicts": [
-            {"category": "dependency_breakage", "other_display_name": "...",
-             "their_impact_on_us": [...]}, ...],
+    2. **Accepted with same-tick dependency_breakage warning(s)** (v0.2.14+):
+       ``{"intent_id": "...", "accepted": true,
+          "must_surface_to_user": true,
+          "surface_warning_text": "⚠️ Alice's Claude is also editing
+                                    related code: changing `notes_app.db.save`
+                                    in notes_app/db.py, ...",
+          "guidance": "Copy `surface_warning_text` verbatim as the FIRST
+                       line of your reply, then write the rest...",
+          "conflicts": [{...}],
           "user_action_required": "PREFIX_REPLY_WITH_WARNING_AND_NAME_OTHER_PARTY"}``
-       → Proceed BUT the FIRST line of your reply MUST start with ⚠️ and
-       name ``conflicts[0].other_display_name`` + one symbol from
-       ``conflicts[0].their_impact_on_us[*].symbols``. The
-       ``user_action_required`` field is a v0.2.13 sentinel — its
-       presence MEANS "the user must see a warning, not just 'done'."
+       → COPY ``surface_warning_text`` verbatim as the FIRST line of
+       your reply, then write the rest of your reply normally. Treat
+       this exactly like the ``guidance`` field on the rejected branch:
+       it's an instruction the tool issued you, not optional advice.
+       Do NOT skip the verbatim copy because you judge your change to
+       be backward-compatible (kwarg with default, new method, etc.)
+       — the disclosure is independent of the safety assessment.
        The user can say "wait for X / 让路" to make you defer instead.
 
     3. **REJECTED with race lock** (v0.2.8+):
@@ -257,19 +264,23 @@ def announce_intent(
             }
         r.raise_for_status()
         out = r.json()
-        # v0.2.13: when the server returned same-tick conflict warnings,
-        # add an explicit sentinel. Claude reads tool responses as JSON
-        # blobs and will often summarize the "successful" parts (intent_id,
-        # accepted=true) and treat conflicts:[...] as metadata it doesn't
-        # need to surface — the 2026-04-30 e2e measured 0/1 ⚠️ compliance
-        # in this branch vs 6/6 in the rejected branch (which has an
-        # equivalent sentinel "rejected": True). The sentinel forces the
-        # response shape to look qualitatively different from a clean
-        # accept, which makes the system-prompt branch fire reliably.
-        if isinstance(out, dict) and out.get("conflicts"):
-            out["user_action_required"] = (
-                "PREFIX_REPLY_WITH_WARNING_AND_NAME_OTHER_PARTY"
-            )
+        # v0.2.14 architecture: server (web-app v0.2.14+) is the single
+        # source of truth for the parallel-work disclosure. When the
+        # announce produced a same-tick dependency_breakage, server
+        # populates `must_surface_to_user` / `surface_warning_text` /
+        # `guidance` in the response AND queues the disclosure on the
+        # /api/chat reply path so it gets prepended regardless of
+        # whether Claude follows the directive (4 rounds of prompt-
+        # only fixes — 0.2.12 sentinel / 0.2.13 user_action_required /
+        # 0.2.14 r1 prompt reframe / 0.2.14 r2 directive fields —
+        # measured 0/N compliance because Claude treats the warning
+        # branch as "task complete + metadata" rather than
+        # "instruction to execute"). Client just passes the response
+        # through. (For backward compat against pre-v0.2.14 servers
+        # that return only `conflicts: [...]`, the system prompt's
+        # legacy-fallback section tells Claude to construct the ⚠️
+        # string from conflicts[0] itself — no client-side generation
+        # needed here.)
         return out
 
 

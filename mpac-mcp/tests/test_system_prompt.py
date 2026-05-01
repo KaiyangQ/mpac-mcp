@@ -117,15 +117,13 @@ def test_prompt_handles_announce_rejected_branch():
 
 
 def test_prompt_handles_announce_with_same_tick_conflicts_branch():
-    # v0.2.12 also added the "announce went through but had a same-tick
-    # dependency_breakage" branch — covers the race window where
-    # check_overlap was clean but a peer's announce arrived between
-    # check and announce. Should continue + ⚠️ warning.
+    # v0.2.12 added the "announce went through but had a same-tick
+    # dependency_breakage" branch. v0.2.14 reshapes the trigger from
+    # "if conflicts is non-empty" to "if must_surface_to_user is true"
+    # to make the response shape directive-like. Pin the newer shape
+    # but accept the legacy fallback string is still present.
     assert "same-tick dependency_breakage" in _SYSTEM_PROMPT
-    assert "conflicts` is " in _SYSTEM_PROMPT  # "conflicts is non-empty"
-    # Both branch outcomes mention the v0.2.11 ⚠️ template — the
-    # warning template is reused, not duplicated. Just ensure the
-    # warning emoji appears somewhere in the prompt.
+    assert "must_surface_to_user" in _SYSTEM_PROMPT
     assert "⚠️" in _SYSTEM_PROMPT
 
 
@@ -135,20 +133,28 @@ def test_prompt_handles_announce_with_same_tick_conflicts_branch():
 def test_prompt_references_user_action_required_sentinel():
     # 2026-04-30 e2e: 0.2.12 prompt's "if conflicts non-empty → ⚠️"
     # rule had 0/1 compliance because Claude treated conflicts:[...] as
-    # metadata. 0.2.13 adds a sentinel field on the tool response side;
-    # the prompt must teach Claude to recognize it.
+    # metadata. 0.2.13 added a sentinel field; v0.2.14 e2e showed that
+    # alone wasn't enough either. v0.2.14 final adds directive-shaped
+    # fields (must_surface_to_user / surface_warning_text / guidance)
+    # AND keeps the legacy `user_action_required` mentioned for
+    # back-compat in case a 0.2.13 server is still running.
     assert "user_action_required" in _SYSTEM_PROMPT
-    assert "PREFIX_REPLY_WITH_WARNING_AND_NAME_OTHER_PARTY" in _SYSTEM_PROMPT
 
 
 def test_prompt_says_warning_must_be_first_line_not_buried():
-    # The v0.2.12 wording ("PREFIX your eventual reply") was too soft —
-    # Claude could comply by prefixing some inner section. 0.2.13
-    # tightens to "FIRST line ... MUST start with ⚠️" + an explicit
-    # "Do NOT bury the warning mid-paragraph."
+    # v0.2.12 said "PREFIX your eventual reply" — too soft.
+    # v0.2.13 tightened to "FIRST line MUST start with ⚠️" — still
+    #   skipped by Claude (judged backward compat).
+    # v0.2.14 reframes from "danger warning" to "parallel-work
+    #   disclosure" AND moves the WARNING TEXT into the tool response
+    #   itself (`surface_warning_text`) so Claude copies verbatim. The
+    #   "FIRST line" rule is still in prompt but framed as the position
+    #   to put the verbatim copy.
     assert "FIRST line" in _SYSTEM_PROMPT
-    assert "MUST start with ⚠️" in _SYSTEM_PROMPT
-    assert "bury the warning" in _SYSTEM_PROMPT
+    assert "verbatim" in _SYSTEM_PROMPT.lower()
+    # Either dep_breakage check_overlap branch or announce-warning
+    # branch should mention the disclosure framing.
+    assert "disclosure" in _SYSTEM_PROMPT
 
 
 def test_prompt_says_post_defer_override_must_retry_announce():
@@ -170,3 +176,72 @@ def test_prompt_post_defer_retry_lists_both_outcomes():
     # success and second-rejection paths get explicit guidance.
     assert "Announce succeeds" in _SYSTEM_PROMPT
     assert "Announce gets rejected again" in _SYSTEM_PROMPT
+
+
+# ── v0.2.14 lessons (⚠️ as situational awareness, not danger warning) ──
+#
+# 2026-04-30 e2e + 2026-05-01 0.2.13 retest both showed the warning
+# branch's listening rate stuck at 0/1 even with the v0.2.13 sentinel.
+# Failure mode: alice's claude correctly identified her change as
+# "kwarg with default = backward compat" and decided ⚠️ wasn't
+# warranted. Wording-level fix wasn't enough — claude was reasoning
+# past the prompt because the wording framed ⚠️ as "this might break"
+# (which gave her a logical out: "well it WON'T break").
+#
+# v0.2.14 reframes ⚠️ from "danger warning" to "mandatory parallel-
+# work disclosure" — closes the backward-compat reasoning escape by
+# making the disclosure independent of the breaking-change assessment.
+
+
+def test_prompt_v0_2_14_reframes_warning_as_situational_awareness():
+    # The old "if their change breaks the contract, my code will fail"
+    # framing made ⚠️ look like a danger warning — Claude could opt out
+    # if she judged the change non-breaking. New framing: "parallel-
+    # work disclosure" / "situational-awareness" — the disclosure is
+    # about the PARALLEL EDITING fact, not the danger.
+    assert "situational" in _SYSTEM_PROMPT.lower() \
+        or "parallel-work" in _SYSTEM_PROMPT \
+        or "parallel work" in _SYSTEM_PROMPT
+
+
+def test_prompt_v0_2_14_says_backward_compat_does_not_skip_warning():
+    # Direct refutation of the alice failure mode: prompt must say
+    # "backward-compat assessment is POST-disclosure, not a substitute
+    # for it." Without this, claude interprets the ⚠️ rule as "warn
+    # if dangerous" and skips when she judges safe.
+    assert "Backward-compat" in _SYSTEM_PROMPT \
+        or "backward compatible" in _SYSTEM_PROMPT.lower()
+    # Specific anti-pattern callout: kwarg-with-default and similar
+    # additive changes do NOT exempt you.
+    assert "kwarg with a default" in _SYSTEM_PROMPT \
+        or "kwarg with default" in _SYSTEM_PROMPT
+    # Direct rule statement.
+    assert "Surface first, judge after" in _SYSTEM_PROMPT \
+        or "MANDATORY regardless of your judgment" in _SYSTEM_PROMPT
+
+
+def test_prompt_v0_2_14_lists_specific_judgment_failure_modes():
+    # The prompt should remind Claude that her own judgment can miss
+    # things — concrete examples (return type, exception type, side
+    # effects) are more persuasive than abstract "you might be wrong".
+    assert "return-type change" in _SYSTEM_PROMPT \
+        or "return type change" in _SYSTEM_PROMPT \
+        or "return type" in _SYSTEM_PROMPT
+    assert "exception" in _SYSTEM_PROMPT.lower()
+
+
+def test_prompt_v0_2_14_teaches_directive_fields():
+    # Round 2 of v0.2.14: the prompt-only reframe (situational awareness
+    # + anti-pattern callout) didn't move the needle in real e2e — bob's
+    # claude still skipped ⚠️. The structural fix is to ship directive-
+    # shaped fields in the tool response (must_surface_to_user +
+    # surface_warning_text + guidance, mirroring the rejected branch).
+    # Prompt must teach Claude to recognize these.
+    assert "must_surface_to_user" in _SYSTEM_PROMPT
+    assert "surface_warning_text" in _SYSTEM_PROMPT
+    # guidance is shared with rejected branch; just check it's mentioned
+    # in the warning context too.
+    # Verbatim-copy instruction is the hard rule: Claude copies the
+    # pre-formed text as-is, not paraphrases.
+    assert "COPY `surface_warning_text` verbatim" in _SYSTEM_PROMPT \
+        or "copy `surface_warning_text` verbatim" in _SYSTEM_PROMPT.lower()
