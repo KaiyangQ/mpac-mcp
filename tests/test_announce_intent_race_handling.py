@@ -116,15 +116,16 @@ def test_announce_intent_returns_normal_dict_on_2xx():
     assert "rejected" not in result
 
 
-def test_announce_intent_passes_through_same_tick_dependency_breakage_conflicts():
-    """v0.2.8 same-tick dependency_breakage warning surface: server
-    returns accepted=true with non-empty conflicts. Tool MUST forward
-    verbatim so Claude can inspect category/other_display_name. v0.2.13
-    additionally adds a `user_action_required` sentinel so the response
-    shape is qualitatively different from a clean accept (Claude was
-    silently dropping the warning when conflicts looked like metadata —
-    2026-04-30 e2e measured 0/1 ⚠️ compliance vs 6/6 in the rejected
-    branch which has an equivalent sentinel)."""
+def test_announce_intent_passes_through_response_verbatim():
+    """v0.2.14 architecture: server is the single source of truth for
+    the parallel-work disclosure (must_surface_to_user, surface_warning_text,
+    guidance — populated by web-app/api/routes/agent.py when same-tick
+    dependency_breakage fires + queued for /api/chat injection). Client
+    side just passes the server response through verbatim, no generation.
+    The earlier 0.2.13 user_action_required sentinel + 0.2.14 r2
+    client-side generation paths were both removed when prompt-only
+    fixes measured 0/N compliance and we moved the surface to server-
+    side chat injection (deterministic, doesn't rely on Claude)."""
     response = _FakeResponse(
         status_code=200,
         payload={
@@ -133,14 +134,20 @@ def test_announce_intent_passes_through_same_tick_dependency_breakage_conflicts(
             "conflicts": [{
                 "conflict_id": "c-1",
                 "category": "dependency_breakage",
-                "severity": "medium",
-                "other_principal_id": "agent:user-1",
                 "other_display_name": "Alice's Claude",
                 "their_impact_on_us": [
                     {"file": "notes_app/api.py",
                      "symbols": ["notes_app.db.save"]}
                 ],
             }],
+            # Server-provided (web-app v0.2.14+) directive fields:
+            "must_surface_to_user": True,
+            "surface_warning_text": (
+                "⚠️ Alice's Claude is also editing related code: "
+                "changing `notes_app.db.save` in notes_app/db.py, "
+                "which my work in notes_app/api.py uses."
+            ),
+            "guidance": "Copy `surface_warning_text` verbatim ...",
         },
     )
     p_client, p_pid, _ = _patch_client(response)
@@ -149,27 +156,31 @@ def test_announce_intent_passes_through_same_tick_dependency_breakage_conflicts(
             files=["notes_app/api.py"], objective="add",
         )
 
+    # Server-provided fields pass through unchanged.
     assert result["accepted"] is True
-    assert len(result["conflicts"]) == 1
-    c = result["conflicts"][0]
-    assert c["category"] == "dependency_breakage"
-    assert c["other_display_name"] == "Alice's Claude"
-    assert c["their_impact_on_us"][0]["symbols"] == ["notes_app.db.save"]
-    # v0.2.13 sentinel:
-    assert result.get("user_action_required") == \
-        "PREFIX_REPLY_WITH_WARNING_AND_NAME_OTHER_PARTY"
+    assert result.get("must_surface_to_user") is True
+    assert "Alice's Claude" in result.get("surface_warning_text", "")
+    assert "notes_app.db.save" in result.get("surface_warning_text", "")
+    assert "verbatim" in result.get("guidance", "")
+    # Conflicts list also forwarded unchanged for clients that want to
+    # render their own UI from the structured data.
+    assert result["conflicts"][0]["category"] == "dependency_breakage"
 
 
-def test_announce_intent_clean_accept_does_NOT_get_v0_2_13_sentinel():
-    """v0.2.13 only adds the sentinel when there are actual conflicts to
-    surface. A clean accept (conflicts: []) must look unchanged so Claude
-    doesn't manufacture warnings out of nothing."""
+def test_announce_intent_clean_accept_passes_through_unchanged():
+    """A clean accept (conflicts: []) returned by server has no
+    directive fields — client must NOT manufacture them."""
     response = _FakeResponse(
         status_code=200,
         payload={
             "intent_id": "intent-1",
             "accepted": True,
             "conflicts": [],
+            # v0.2.14 server returns these as defaults (False / None)
+            # but they should still indicate "no surface needed".
+            "must_surface_to_user": False,
+            "surface_warning_text": None,
+            "guidance": None,
         },
     )
     p_client, p_pid, _ = _patch_client(response)
@@ -177,7 +188,40 @@ def test_announce_intent_clean_accept_does_NOT_get_v0_2_13_sentinel():
         result = relay_tools.announce_intent(files=["x.py"], objective="x")
 
     assert result.get("conflicts") == []
-    assert "user_action_required" not in result
+    assert result.get("must_surface_to_user") is False
+    assert result.get("surface_warning_text") is None
+
+
+def test_announce_intent_legacy_pre_v0_2_14_server_response():
+    """Backward compat: if a 0.2.14 client talks to a pre-0.2.14 server
+    (response has conflicts: [...] but no directive fields), the client
+    still passes whatever server returns through. The system prompt's
+    legacy-fallback section tells Claude to construct ⚠️ from
+    conflicts[0] itself when must_surface_to_user is missing."""
+    response = _FakeResponse(
+        status_code=200,
+        payload={
+            "intent_id": "intent-legacy",
+            "accepted": True,
+            "conflicts": [{
+                "conflict_id": "c-l",
+                "category": "dependency_breakage",
+                "other_display_name": "Bob's Claude",
+                "their_impact_on_us": [
+                    {"file": "notes_app/api.py", "symbols": None}
+                ],
+            }],
+            # No must_surface_to_user / surface_warning_text / guidance.
+        },
+    )
+    p_client, p_pid, _ = _patch_client(response)
+    with p_client, p_pid:
+        result = relay_tools.announce_intent(files=["x.py"], objective="x")
+
+    assert result["conflicts"][0]["other_display_name"] == "Bob's Claude"
+    # Client doesn't backfill — that's prompt's legacy fallback to handle.
+    assert "must_surface_to_user" not in result
+    assert "surface_warning_text" not in result
 
 
 def test_announce_intent_still_raises_on_other_4xx_5xx():
