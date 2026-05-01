@@ -335,6 +335,22 @@ prompt 的"non-empty conflicts → ⚠️ warning"分支,prefix warning 给 user
 (LLM 灵活度,有时不严格用 ⚠️ emoji 而用"注意:"前缀)。检查 jsonl
 `Agent intent announced: ... same_tick_conflicts=N` 看 server 是否真的算了 N≥1。
 
+> **2026-04-30 e2e 实测确认这是真问题**:Alice / Bob 同时贴 prompt(0s 间隔),
+> server log 显示 Bob 的 announce `same_tick_conflicts=1` ✓ 正确触发 dep_breakage,
+> mpac-mcp 0.2.12 announce_intent tool 也正确把 `conflicts: [...]` 返回给 bob 的
+> claude。**但 bob 的 chat reply 完全没出现 ⚠️ 也没"注意:" prefix**,只是平淡地说
+> "done。已在 api.py 第 29-32 行添加 save_with_log()..."。LLM 直接吞了 conflicts
+> 字段的提示价值。
+>
+> 0.2.12 prompt 的 ⚠️ rule 在 race-lock-rejected 路径上听话率 100%(实测 6/6),
+> 但在 dep_breakage-warning 路径上听话率显著低 —— 大概因为 reject 路径有结构化
+> 的 `{"rejected": true}` 信号,而 warning 路径只是 response 里多个 list,
+> Claude 容易把它当 "metadata" 而不是 "must-surface"。
+>
+> 0.2.13 prompt 改进方向(backlog):把 `conflicts: [...]` 包成更显眼的 sentinel
+> 形式,或者在 announce_intent 工具的 docstring 里加 MUST 级别的 "⚠️ if conflicts
+> non-empty" 强制条款。
+
 ---
 
 ## 场景 8 — Same-file race(测 STALE_INTENT race lock)
@@ -365,6 +381,23 @@ prompt 的"non-empty conflicts → ⚠️ warning"分支,prefix warning 给 user
 > **A 任务故意设计成 5 个函数 + 强制 docstring + 强制 read 多文件,保证 Alice
 > 的 intent 持有 30-60 秒。** Bob 任务轻量(2 个函数 ~10 秒),保证 Bob announce
 > 时 Alice 还 active —— 这是触发 race lock 的必要条件。
+
+> **⚠️ 2026-04-30 e2e 实测教训:**`A 重 / B 轻` 这套 prompt 设计的"先到=赢"
+> 假设**反了** —— 重 prompt = Claude 需要更多前置 read+think → **更慢**到达
+> `announce_intent` 那一刻,所以**重 prompt 反而 race lock 输,被 STALE_INTENT
+> 拒**。实测 6 轮里:`A 重 / B 轻` 每次都是 Bob 抢到 + Alice 让路;swap 之后
+> 才是 doc 期望的"Alice 赢"。
+>
+> 想让 doc 写的"Alice 赢"剧本可靠复现,有两条路:
+> (a) 用 prompt 强制 Alice 先 announce 再 read:把"announce 时把 symbols 设
+>     成 [...],announce 完再开始 read"写在 prompt 第一行。这样 Alice 的 LLM
+>     工作流是 announce → read → write,前置 think 时间最小。
+> (b) 用 [`scripts/conflict_test_harness.py`](../scripts/conflict_test_harness.py)
+>     直接发 envelope 绕开 LLM 不确定性 —— 协议层断言不需要真 Claude。
+>
+> 真的"两个真 Claude 都跑"测试更适合验证**LLM 行为**(0.2.12 prompt 是否被
+> 听话执行),不适合验证"谁先到"。要测前者就接受 race outcome 不可控,只看
+> "loser 那一方是不是按 prompt defer + chat 解释 + 提供 override 选项"。
 
 **期望看到**(v0.2.8 race lock 行为):
 - **先到的那一方 announce 成功 + 写文件**(假设 Alice 先到)
