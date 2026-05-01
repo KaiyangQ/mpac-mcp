@@ -66,6 +66,11 @@ export type LiveDeferral = {
   observed_principals: string[];
   /** epoch ms; computed client-side from expires_at, used for TTL countdown. */
   expires_at_ms?: number;
+  /** epoch ms when the active broadcast first arrived. Used to enforce
+   * a min-visible lifetime so chips that defer + fast-resolve in the
+   * same tick (mpac 0.2.7 fast-resolve fires within ms of holder
+   * withdraw) don't render-and-vanish faster than the user can see. */
+  mounted_at_ms: number;
 };
 
 export type MpacSessionState = {
@@ -113,6 +118,14 @@ export type UseMpacSessionOpts = {
 };
 
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 15000];
+
+/** Minimum time a yield chip stays visible. Without this, a deferral
+ * that fast-resolves in the same tick (the common case when the
+ * defer arrives just after the holder withdraws — see mpac 0.2.7
+ * fast-resolve) renders and vanishes within milliseconds, and humans
+ * miss the "yielded" signal entirely. 2026-04-30 e2e measured chip
+ * windows of 1-3s when LLM timing aligned poorly. */
+const MIN_DEFERRAL_VISIBLE_MS = 2500;
 
 function randomId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -358,9 +371,25 @@ export function useMpacSession({
           const p = env.payload as IntentDeferredPayload;
           if (!p.deferral_id) break;
           if (p.status === "resolved" || p.status === "expired") {
-            setDeferrals((prev) =>
-              prev.filter((d) => d.deferral_id !== p.deferral_id),
-            );
+            // Enforce MIN_DEFERRAL_VISIBLE_MS — if the chip just
+            // mounted, defer the actual removal so users can read it.
+            // Removing two paths (immediate vs delayed) inside a single
+            // setter is fine because the delayed path's filter is a
+            // no-op if the chip is already gone.
+            setDeferrals((prev) => {
+              const found = prev.find((d) => d.deferral_id === p.deferral_id);
+              if (!found) return prev;
+              const elapsed = Date.now() - found.mounted_at_ms;
+              if (elapsed >= MIN_DEFERRAL_VISIBLE_MS) {
+                return prev.filter((d) => d.deferral_id !== p.deferral_id);
+              }
+              setTimeout(() => {
+                setDeferrals((curr) =>
+                  curr.filter((d) => d.deferral_id !== p.deferral_id),
+                );
+              }, MIN_DEFERRAL_VISIBLE_MS - elapsed);
+              return prev;
+            });
             break;
           }
           // Active deferral.
@@ -370,7 +399,10 @@ export function useMpacSession({
             : undefined;
           setDeferrals((prev) => {
             // Replace any existing entry with the same deferral_id
-            // (idempotent broadcast retries).
+            // (idempotent broadcast retries). On replace, retain the
+            // ORIGINAL mounted_at_ms so a quick re-broadcast doesn't
+            // reset the lifetime budget.
+            const existing = prev.find((d) => d.deferral_id === p.deferral_id);
             const without = prev.filter(
               (d) => d.deferral_id !== p.deferral_id,
             );
@@ -386,6 +418,7 @@ export function useMpacSession({
                 expires_at_ms: Number.isFinite(expiresAtMs)
                   ? (expiresAtMs as number)
                   : undefined,
+                mounted_at_ms: existing?.mounted_at_ms ?? Date.now(),
               },
             ];
           });
