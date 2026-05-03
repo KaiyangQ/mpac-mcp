@@ -418,7 +418,20 @@ def defer_intent(
         r = c.post("/api/agent/intents/defer", json=body)
         if r.status_code >= 400:
             return {"error": f"defer failed ({r.status_code}): {r.text[:200]}"}
-        return r.json()
+        data = r.json()
+        if (
+            data.get("status") == "resolved"
+            and data.get("reason") == "observed_intents_terminated"
+        ):
+            data["must_retry_announce"] = True
+            if not data.get("guidance"):
+                data["guidance"] = (
+                    "The intent you yielded to is already gone. Do not tell "
+                    "the user you are waiting; immediately retry by calling "
+                    "check_overlap/announce_intent for the same files, then "
+                    "continue or handle the new response."
+                )
+        return data
 
 
 @mcp.tool()

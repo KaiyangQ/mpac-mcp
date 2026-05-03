@@ -236,3 +236,52 @@ def test_announce_intent_still_raises_on_other_4xx_5xx():
             relay_tools.announce_intent(
                 files=["x.py"], objective="x",
             )
+
+
+def test_defer_intent_marks_fast_resolved_response_as_retry_directive():
+    """If the server says a deferral resolved immediately because the
+    observed intent is already gone, the MCP result must be directive-shaped.
+
+    This is the post-defer mirror of the v0.2.13 override retry rule: Claude
+    has to retry announce in the same turn instead of telling the user it is
+    waiting on a stale intent.
+    """
+    response = _FakeResponse(
+        status_code=200,
+        payload={
+            "deferral_id": "defer-agent-3-fast",
+            "accepted": True,
+            "status": "resolved",
+            "reason": "observed_intents_terminated",
+        },
+    )
+    p_client, p_pid, fake = _patch_client(response)
+    with p_client, p_pid:
+        result = relay_tools.defer_intent(
+            files=["notes_app/api.py"],
+            reason="yielding to alice",
+            observed_intent_ids=["intent-agent-1-old"],
+        )
+
+    assert result["status"] == "resolved"
+    assert result["reason"] == "observed_intents_terminated"
+    assert result["must_retry_announce"] is True
+    assert "announce_intent" in result["guidance"]
+    assert fake.posts[0][1]["observed_intent_ids"] == ["intent-agent-1-old"]
+
+
+def test_defer_intent_leaves_active_response_non_directive():
+    response = _FakeResponse(
+        status_code=200,
+        payload={
+            "deferral_id": "defer-agent-2-active",
+            "accepted": True,
+            "status": "active",
+        },
+    )
+    p_client, p_pid, _ = _patch_client(response)
+    with p_client, p_pid:
+        result = relay_tools.defer_intent(files=["notes_app/db.py"])
+
+    assert result["status"] == "active"
+    assert result.get("must_retry_announce") is not True

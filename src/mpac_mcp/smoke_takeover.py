@@ -110,10 +110,24 @@ def _prepare_workspace(source_workspace: str | Path, file_path: str) -> tempfile
     return temp_dir
 
 
+def _finish_process(process: subprocess.Popen, timeout: float) -> None:
+    try:
+        process.wait(timeout=timeout)
+        return
+    except subprocess.TimeoutExpired:
+        process.terminate()
+    try:
+        process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=1.0)
+
+
 async def run_smoke(args: argparse.Namespace) -> int:
     temp_dir = _prepare_workspace(args.workspace, args.file)
     config, sidecar_process = await launch_ephemeral_sidecar(temp_dir.name)
     previous_env = _set_bridge_identity()
+    owner = None
     try:
         owner = _spawn_suspending_client(
             uri=config.uri,
@@ -122,7 +136,7 @@ async def run_smoke(args: argparse.Namespace) -> int:
             file_path=args.file,
             hold_sec=args.hold_sec,
         )
-        owner.wait(timeout=args.hold_sec + 3.0)
+        _finish_process(owner, args.hold_sec + 3.0)
         await asyncio.sleep(0.3)
 
         before = await who_is_working(config.workspace_dir)
@@ -174,8 +188,12 @@ async def run_smoke(args: argparse.Namespace) -> int:
         return 0 if passed else 1
     finally:
         _restore_bridge_identity(previous_env)
-        stop_sidecar(sidecar_process)
-        temp_dir.cleanup()
+        try:
+            if owner is not None:
+                _finish_process(owner, max(0.1, args.hold_sec + 1.0))
+        finally:
+            stop_sidecar(sidecar_process)
+            temp_dir.cleanup()
 
 
 def main(argv: list[str] | None = None) -> int:

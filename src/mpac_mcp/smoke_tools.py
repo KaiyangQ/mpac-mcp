@@ -58,6 +58,19 @@ def _prepare_workspace(source_workspace: str | Path, file_path: str) -> tempfile
     return temp_dir
 
 
+def _finish_process(process: subprocess.Popen, timeout: float) -> None:
+    try:
+        process.wait(timeout=timeout)
+        return
+    except subprocess.TimeoutExpired:
+        process.terminate()
+    try:
+        process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=1.0)
+
+
 async def run_smoke(args: argparse.Namespace) -> int:
     temp_dir = _prepare_workspace(args.workspace, args.file)
     config, sidecar_process = await launch_ephemeral_sidecar(temp_dir.name)
@@ -103,6 +116,8 @@ async def run_smoke(args: argparse.Namespace) -> int:
         print(f"  Before intents:   {before['active_intent_count']}")
         print(f"  Begin status:     {begun['status']}")
         print(f"  Begin conflict:   {begun['has_conflict']}")
+        if begun.get("errors"):
+            print(f"  Begin error:      {begun['errors'][0].get('error_code')}")
         print(f"  Overlap found:    {overlap['has_overlap']}")
         print(f"  After intents:    {after['active_intent_count']}")
         if overlap["overlaps"]:
@@ -112,20 +127,26 @@ async def run_smoke(args: argparse.Namespace) -> int:
                 f"{first['scope']}"
             )
 
+        stale_intent = any(
+            error.get("error_code") == "STALE_INTENT"
+            for error in begun.get("errors", [])
+        )
         passed = (
             before["active_intent_count"] >= 1
-            and begun["status"] == "ok"
-            and begun["has_conflict"] is True
+            and begun["status"] == "error"
+            and stale_intent
             and overlap["has_overlap"] is True
             and after["active_intent_count"] >= 1
         )
         return 0 if passed else 1
     finally:
         deadline = time.time() + args.hold_sec + 2.0
-        timeout = max(0.1, deadline - time.time())
-        other.wait(timeout=timeout)
-        stop_sidecar(sidecar_process)
-        temp_dir.cleanup()
+        try:
+            timeout = max(0.1, deadline - time.time())
+            _finish_process(other, timeout)
+        finally:
+            stop_sidecar(sidecar_process)
+            temp_dir.cleanup()
 
 
 def main(argv: list[str] | None = None) -> int:

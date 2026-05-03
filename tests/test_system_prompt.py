@@ -178,6 +178,17 @@ def test_prompt_post_defer_retry_lists_both_outcomes():
     assert "Announce gets rejected again" in _SYSTEM_PROMPT
 
 
+def test_prompt_says_fast_resolved_defer_must_retry_immediately():
+    # 2026-05-02 real scenario 2.4: Carol deferred to Alice's intent, but
+    # Alice had already withdrawn by the time defer_intent arrived. The
+    # coordinator fast-resolved the deferral; Claude must treat that as a
+    # retry directive, not as "tell the user I yielded."
+    assert "must_retry_announce" in _SYSTEM_PROMPT
+    assert "observed_intents_terminated" in _SYSTEM_PROMPT
+    assert "DO NOT tell the user" in _SYSTEM_PROMPT
+    assert "Immediately retry" in _SYSTEM_PROMPT
+
+
 # ── v0.2.14 lessons (⚠️ as situational awareness, not danger warning) ──
 #
 # 2026-04-30 e2e + 2026-05-01 0.2.13 retest both showed the warning

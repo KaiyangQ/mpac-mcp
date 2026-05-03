@@ -44,6 +44,19 @@ def _prepare_workspace(source_workspace: str | Path, file_path: str) -> tempfile
     return temp_dir
 
 
+def _finish_process(process: subprocess.Popen, timeout: float) -> None:
+    try:
+        process.wait(timeout=timeout)
+        return
+    except subprocess.TimeoutExpired:
+        process.terminate()
+    try:
+        process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=1.0)
+
+
 async def run_smoke(args: argparse.Namespace) -> int:
     temp_dir = _prepare_workspace(args.workspace, args.file)
     config, sidecar_process = await launch_ephemeral_sidecar(temp_dir.name)
@@ -97,10 +110,13 @@ async def run_smoke(args: argparse.Namespace) -> int:
         await asyncio.sleep(1.5)
         summary = await who_is_working(config.workspace_dir)
 
+        # Same-file scope is now race-locked at INTENT_ANNOUNCE. The second
+        # client stays connected, but its overlapping intent is rejected with
+        # STALE_INTENT instead of becoming an open advisory conflict.
         passed = (
             summary["participant_count"] >= 2
-            and summary["active_intent_count"] >= 2
-            and summary["open_conflict_count"] >= 1
+            and summary["active_intent_count"] == 1
+            and summary["open_conflict_count"] == 0
         )
 
         print("Milestone 0 Summary")
@@ -120,11 +136,13 @@ async def run_smoke(args: argparse.Namespace) -> int:
         return 0 if passed else 1
     finally:
         deadline = time.time() + args.hold_sec + 2.0
-        for client in clients:
-            timeout = max(0.1, deadline - time.time())
-            client.wait(timeout=timeout)
-        stop_sidecar(sidecar_process)
-        temp_dir.cleanup()
+        try:
+            for client in clients:
+                timeout = max(0.1, deadline - time.time())
+                _finish_process(client, timeout)
+        finally:
+            stop_sidecar(sidecar_process)
+            temp_dir.cleanup()
 
 
 def main(argv: list[str] | None = None) -> int:

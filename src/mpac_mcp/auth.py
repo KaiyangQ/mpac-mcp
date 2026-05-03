@@ -16,7 +16,10 @@ import logging
 import os
 from typing import Any, Callable, Dict, Optional
 
-from ._compat import ensure_local_mpac_import
+if __package__ in (None, ""):
+    from _compat import ensure_local_mpac_import
+else:
+    from ._compat import ensure_local_mpac_import
 
 ensure_local_mpac_import()
 

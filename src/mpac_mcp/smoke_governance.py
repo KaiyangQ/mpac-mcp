@@ -47,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--workspace", default=".")
     parser.add_argument("--file", default="README.md")
+    parser.add_argument("--dependent-file", default="dependent.md")
     parser.add_argument("--hold-sec", type=float, default=6.0)
     return parser
 
@@ -61,6 +62,7 @@ def _spawn_dev_client(
     hold_sec: float,
     objective: str | None = None,
     file_path: str | None = None,
+    impact_file: str | None = None,
 ) -> subprocess.Popen:
     cmd = [
         sys.executable,
@@ -78,6 +80,8 @@ def _spawn_dev_client(
     ]
     if objective and file_path:
         cmd.extend(["--objective", objective, "--file", file_path])
+    if impact_file:
+        cmd.extend(["--impact-file", impact_file])
     return subprocess.Popen(
         cmd,
         cwd=workspace_dir,
@@ -119,6 +123,19 @@ def _prepare_workspace(source_workspace: str | Path, file_path: str) -> tempfile
     return temp_dir
 
 
+def _finish_process(process: subprocess.Popen, timeout: float) -> None:
+    try:
+        process.wait(timeout=timeout)
+        return
+    except subprocess.TimeoutExpired:
+        process.terminate()
+    try:
+        process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=1.0)
+
+
 async def _wait_for_conflict(
     workspace_dir: str | Path,
     intent_id: str,
@@ -146,6 +163,9 @@ async def _wait_for_conflict(
 async def run_smoke(args: argparse.Namespace) -> int:
     temp_dir = _prepare_workspace(args.workspace, args.file)
     workspace_dir = temp_dir.name
+    dependent_path = Path(workspace_dir) / args.dependent_file
+    dependent_path.parent.mkdir(parents=True, exist_ok=True)
+    dependent_path.write_text("# dependency target\n", encoding="utf-8")
     config, sidecar_process = await launch_ephemeral_sidecar(workspace_dir)
     alice = _spawn_dev_client(
         uri=config.uri,
@@ -156,6 +176,7 @@ async def run_smoke(args: argparse.Namespace) -> int:
         hold_sec=args.hold_sec,
         objective=f"Refactor {args.file} for a governance smoke",
         file_path=args.file,
+        impact_file=args.dependent_file,
     )
 
     arbiter = None
@@ -170,8 +191,8 @@ async def run_smoke(args: argparse.Namespace) -> int:
     try:
         await asyncio.sleep(1.0)
         begun = await begin_task(
-            f"Add a coordination banner to {args.file}",
-            [args.file],
+            f"Update dependent file {args.dependent_file}",
+            [args.dependent_file],
             config.workspace_dir,
         )
         conflict, summary = await _wait_for_conflict(
@@ -229,13 +250,15 @@ async def run_smoke(args: argparse.Namespace) -> int:
     finally:
         _restore_bridge_identity(previous_env)
         deadline = time.time() + args.hold_sec + 2.0
-        for proc in [alice, arbiter]:
-            if proc is None:
-                continue
-            timeout = max(0.1, deadline - time.time())
-            proc.wait(timeout=timeout)
-        stop_sidecar(sidecar_process)
-        temp_dir.cleanup()
+        try:
+            for proc in [alice, arbiter]:
+                if proc is None:
+                    continue
+                timeout = max(0.1, deadline - time.time())
+                _finish_process(proc, timeout)
+        finally:
+            stop_sidecar(sidecar_process)
+            temp_dir.cleanup()
 
     print("Governance Smoke Summary")
     print(f"  Source workspace:   {Path(args.workspace).expanduser().resolve()}")

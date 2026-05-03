@@ -29,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--name", required=True)
     parser.add_argument("--objective")
     parser.add_argument("--file")
+    parser.add_argument("--impact-file", action="append", default=[])
     parser.add_argument("--roles", default="contributor")
     parser.add_argument("--goodbye-disposition", default="withdraw")
     parser.add_argument("--hold-sec", type=float, default=4.0)
@@ -59,11 +60,12 @@ async def run_client(args: argparse.Namespace) -> None:
 
         announced = False
         if args.objective and args.file:
+            extensions = {"impact": args.impact_file} if args.impact_file else None
             msg = participant.announce_intent(
                 args.session_id,
                 intent_id,
                 args.objective,
-                Scope(kind="file_set", resources=[args.file]),
+                Scope(kind="file_set", resources=[args.file], extensions=extensions),
             )
             await ws.send(json.dumps(msg))
             announced = True
