@@ -12,15 +12,17 @@ from unittest.mock import patch, AsyncMock
 
 import pytest
 
-from mpac_mcp.relay import handle_chat, RelayContext
+from mpac_mcp.relay import build_parser, handle_chat, RelayContext
 
 
-def _ctx():
+def _ctx(agent_runner="claude"):
     return RelayContext(
         claude_binary="fake-claude",
         project_id=1,
         web_http_url="http://localhost:8001",
         agent_token="test-token",
+        agent_runner=agent_runner,
+        codex_binary="fake-codex" if agent_runner == "codex" else None,
     )
 
 
@@ -30,8 +32,10 @@ class FakeProc:
         self.returncode = returncode
         self._stdout = stdout_bytes
         self._stderr = stderr_bytes
+        self.input = None
 
     async def communicate(self, input=None):
+        self.input = input
         return self._stdout, self._stderr
 
 
@@ -211,6 +215,155 @@ def test_cleanup_failure_does_not_corrupt_user_facing_error():
     assert "exit 1" in reply
 
 
+# ── 2026-05-06: Codex subscription runner path ─────────────────────────
+#
+# Codex does not accept Claude's temp --mcp-config file, so the relay passes
+# equivalent MCP server settings through `codex exec -c ...` overrides and
+# keeps session continuity with `codex exec resume --last` from a stable
+# per-relay scratch cwd.
+
+
+def test_parser_accepts_codex_runner():
+    args = build_parser().parse_args([
+        "--project-url", "ws://127.0.0.1:8001/ws/relay/1",
+        "--token", "mpac_agent_test",
+        "--agent-runner", "codex",
+        "--codex-binary", "/tmp/fake-codex",
+        "--codex-model", "gpt-test",
+    ])
+    assert args.agent_runner == "codex"
+    assert args.codex_binary == "/tmp/fake-codex"
+    assert args.codex_model == "gpt-test"
+
+
+def test_codex_exec_uses_temp_mcp_overrides_and_scratch_cwd():
+    _reset_session()
+    captured = []
+
+    async def fake_subprocess_exec(*argv, **kwargs):
+        captured.append((argv, kwargs))
+        reply_path = argv[argv.index("--output-last-message") + 1]
+        with open(reply_path, "w", encoding="utf-8") as f:
+            f.write("codex reply")
+        return FakeProc(
+            returncode=0,
+            stdout_bytes=b'{"type":"turn.completed"}\n',
+            stderr_bytes=b"",
+        )
+
+    with patch(
+        "mpac_mcp.relay.asyncio.create_subprocess_exec",
+        new=fake_subprocess_exec,
+    ), patch(
+        "mpac_mcp.relay._ensure_codex_workspace",
+        return_value="/tmp/mpac-codex-test-workspace",
+    ):
+        reply = asyncio.run(handle_chat(_ctx("codex"), "hi"))
+
+    assert reply == "codex reply"
+    assert len(captured) == 1
+    argv, kwargs = captured[0]
+    assert argv[:2] == ("fake-codex", "exec")
+    assert "resume" not in argv
+    assert "--dangerously-bypass-approvals-and-sandbox" in argv
+    assert "--sandbox" not in argv
+    assert kwargs["cwd"] == "/tmp/mpac-codex-test-workspace"
+    assert "OPENAI_API_KEY" not in kwargs["env"]
+    joined = " ".join(argv)
+    assert "mcp_servers.mpac-coding.command" in joined
+    assert "mcp_servers.mpac-coding.env.MPAC_WEB_URL" in joined
+    assert "mcp_servers.mpac-coding.env.MPAC_AGENT_TOKEN" in joined
+    assert captured[0][1]["stdin"] == asyncio.subprocess.PIPE
+
+
+def test_codex_second_turn_uses_resume_last_from_same_cwd():
+    _reset_session()
+    captured = []
+
+    async def fake_subprocess_exec(*argv, **kwargs):
+        captured.append((argv, kwargs))
+        reply_path = argv[argv.index("--output-last-message") + 1]
+        with open(reply_path, "w", encoding="utf-8") as f:
+            f.write(f"reply {len(captured)}")
+        return FakeProc(returncode=0, stdout_bytes=b"{}\n", stderr_bytes=b"")
+
+    with patch(
+        "mpac_mcp.relay.asyncio.create_subprocess_exec",
+        new=fake_subprocess_exec,
+    ), patch(
+        "mpac_mcp.relay._ensure_codex_workspace",
+        return_value="/tmp/mpac-codex-test-workspace",
+    ):
+        assert asyncio.run(handle_chat(_ctx("codex"), "first")) == "reply 1"
+        assert asyncio.run(handle_chat(_ctx("codex"), "second")) == "reply 2"
+
+    assert len(captured) == 2
+    assert captured[0][0][:2] == ("fake-codex", "exec")
+    assert captured[1][0][:3] == ("fake-codex", "exec", "resume")
+    assert "--last" in captured[1][0]
+    assert "--dangerously-bypass-approvals-and-sandbox" in captured[1][0]
+    assert "--sandbox" not in captured[1][0]
+    assert captured[0][1]["cwd"] == captured[1][1]["cwd"]
+
+
+def test_codex_manual_debug_mode_keeps_initial_sandbox():
+    _reset_session()
+    captured = []
+
+    async def fake_subprocess_exec(*argv, **kwargs):
+        captured.append((argv, kwargs))
+        reply_path = argv[argv.index("--output-last-message") + 1]
+        with open(reply_path, "w", encoding="utf-8") as f:
+            f.write("manual mode")
+        return FakeProc(returncode=0, stdout_bytes=b"{}\n", stderr_bytes=b"")
+
+    ctx = _ctx("codex")
+    ctx.codex_require_approval = True
+    ctx.codex_sandbox = "workspace-write"
+    with patch(
+        "mpac_mcp.relay.asyncio.create_subprocess_exec",
+        new=fake_subprocess_exec,
+    ), patch(
+        "mpac_mcp.relay._ensure_codex_workspace",
+        return_value="/tmp/mpac-codex-test-workspace",
+    ):
+        assert asyncio.run(handle_chat(ctx, "hi")) == "manual mode"
+
+    argv = captured[0][0]
+    assert "--dangerously-bypass-approvals-and-sandbox" not in argv
+    assert "--sandbox" in argv
+    assert argv[argv.index("--sandbox") + 1] == "workspace-write"
+
+
+def test_codex_auth_error_triggers_login_hint():
+    _reset_session()
+    fake = _FakeAsyncClient(
+        post_response=_FakeResponse(200, {"withdrawn_intent_ids": []}),
+    )
+
+    async def fake_subprocess_exec(*argv, **kwargs):
+        return FakeProc(
+            returncode=1,
+            stdout_bytes=b"Not logged in. Please authenticate.",
+            stderr_bytes=b"",
+        )
+
+    with patch(
+        "mpac_mcp.relay.asyncio.create_subprocess_exec",
+        new=fake_subprocess_exec,
+    ), patch(
+        "mpac_mcp.relay._ensure_codex_workspace",
+        return_value="/tmp/mpac-codex-test-workspace",
+    ), patch(
+        "mpac_mcp.relay.httpx.AsyncClient", return_value=fake,
+    ):
+        reply = asyncio.run(handle_chat(_ctx("codex"), "hi"))
+
+    assert "Codex isn't authenticated" in reply
+    assert "codex login" in reply
+    assert "Not logged in" in reply
+
+
 # ── 2026-04-29: cross-turn session continuity (v0.2.8) ────────────────
 #
 # `--output-format json` makes claude -p emit
@@ -225,6 +378,7 @@ import mpac_mcp.relay as _relay
 
 def _reset_session():
     _relay._session_id = None
+    _relay._codex_has_session = False
 
 
 def test_json_output_extracts_session_id_and_result():

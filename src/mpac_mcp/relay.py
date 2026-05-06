@@ -1,6 +1,6 @@
-"""mpac-mcp-relay — local Claude Code bridge for MPAC web app.
+"""mpac-mcp-relay — local subscription-CLI bridge for MPAC web app.
 
-Run this on your laptop after clicking "Connect Claude" in the web app:
+Run this on your laptop after clicking "Connect agent" in the web app:
 
     mpac-mcp-relay \\
         --project-url ws://127.0.0.1:8001/ws/relay/1 \\
@@ -10,12 +10,12 @@ What it does
 ------------
 Opens a single WebSocket to the web app. The web app:
   1. Registers this process as an MPAC participant in the project's session,
-     so you show up as "<your-name>'s Claude" in WHO'S WORKING on every
-     connected browser.
+     so you show up as "<your-name>'s Claude" or "<your-name>'s Codex"
+     in WHO'S WORKING on every connected browser.
   2. When a human user on that project types in the in-browser AI chat,
-     forwards the message to this relay. We spawn `claude -p` locally
-     (using your Claude Code subscription — no API key needed) and send
-     the reply back.
+     forwards the message to this relay. We spawn a local subscription CLI
+     (`claude -p` by default, or `codex exec` with --agent-runner codex)
+     and send the reply back.
 
 Protocol (JSON frames):
   Server → us:  {"type":"chat", "message_id":..., "message":"..."}
@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -70,7 +71,7 @@ CLAUDE_TIMEOUT_SEC = 180.0  # Milestone B: Claude using MCP tools takes longer
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="mpac-mcp-relay",
-        description="Local Claude Code bridge for the MPAC web app.",
+        description="Local Claude Code / Codex bridge for the MPAC web app.",
     )
     p.add_argument(
         "--project-url", required=True,
@@ -78,11 +79,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--token", required=True,
-        help="Agent bearer token from the web app's 'Connect Claude' modal.",
+        help="Agent bearer token from the web app's 'Connect agent' modal.",
     )
     p.add_argument(
         "--claude-binary", default=None,
         help="Path to the claude CLI (default: auto-detect via $PATH).",
+    )
+    p.add_argument(
+        "--agent-runner",
+        choices=("claude", "codex"),
+        default=os.environ.get("MPAC_AGENT_RUNNER", "claude"),
+        help=(
+            "Local subscription CLI to spawn for chat turns "
+            "(default: claude; env: MPAC_AGENT_RUNNER)."
+        ),
+    )
+    p.add_argument(
+        "--codex-binary", default=None,
+        help="Path to the codex CLI (default: auto-detect via $PATH).",
+    )
+    p.add_argument(
+        "--codex-model", default=os.environ.get("MPAC_CODEX_MODEL"),
+        help="Optional model name to pass to `codex exec`.",
+    )
+    p.add_argument(
+        "--codex-sandbox",
+        choices=("read-only", "workspace-write", "danger-full-access"),
+        default=os.environ.get("MPAC_CODEX_SANDBOX", "read-only"),
+        help=(
+            "Sandbox mode for the initial `codex exec` session when "
+            "--codex-require-approval is set."
+        ),
+    )
+    p.add_argument(
+        "--codex-require-approval",
+        action="store_true",
+        help=(
+            "Do not auto-approve Codex MCP tool calls. Intended for manual "
+            "debugging; unattended relay turns need auto-approval."
+        ),
     )
     p.add_argument(
         "--verbose", "-v", action="store_true",
@@ -95,20 +130,26 @@ def build_parser() -> argparse.ArgumentParser:
 
 @dataclass
 class RelayContext:
-    claude_binary: str
+    claude_binary: Optional[str]
     project_id: int
     web_http_url: str      # http:// or https:// base for the MCP subprocess
     agent_token: str       # bearer token for the web app
+    agent_runner: str = "claude"
+    codex_binary: Optional[str] = None
+    codex_model: Optional[str] = None
+    codex_sandbox: str = "read-only"
+    codex_require_approval: bool = False
 
 
 _SYSTEM_PROMPT = (
     "You are the AI participant of a human↔agent coding session coordinated "
     "by MPAC (Multi-Principal Agent Coordination).\n\n"
     "CRITICAL: The 'project' the user is talking about is a SHARED virtual "
-    "workspace stored in a web app, NOT your local filesystem. You CANNOT "
-    "see it through your usual Read/Glob/Bash/LS tools — those have been "
-    "disabled. The ONLY way to interact with this project's files is via "
-    "the `mpac-coding` MCP server tools:\n"
+    "workspace stored in a web app, NOT your local filesystem. Do NOT use "
+    "your usual local filesystem or shell tools for this project; depending "
+    "on the runtime they may be disabled, or they may only see a relay "
+    "scratch directory. The ONLY way to interact with this project's files "
+    "is via the `mpac-coding` MCP server tools:\n"
     "  - list_project_files()\n"
     "  - read_project_file(path)\n"
     "  - write_project_file(path, content)\n"
@@ -336,6 +377,92 @@ def _build_mcp_config(ctx: RelayContext) -> str:
     return path
 
 
+def _toml_string(value: str) -> str:
+    """Return a TOML-compatible quoted string for Codex ``-c key=value``."""
+    return json.dumps(value)
+
+
+def _codex_mcp_config_overrides(ctx: RelayContext) -> list[str]:
+    """Build ``codex exec -c`` overrides for the mpac-coding MCP server.
+
+    Codex CLI does not currently expose Claude's ``--mcp-config`` temp-file
+    flag. Instead, we pass the equivalent config as command-line overrides.
+    That keeps the user's global ``~/.codex/config.toml`` untouched while
+    still letting Codex spawn the same ``mpac_mcp.relay_tools`` stdio server.
+    """
+    python_exe = sys.executable
+    return [
+        "-c", f"mcp_servers.mpac-coding.command={_toml_string(python_exe)}",
+        "-c", 'mcp_servers.mpac-coding.args=["-m","mpac_mcp.relay_tools"]',
+        "-c", (
+            "mcp_servers.mpac-coding.env.MPAC_WEB_URL="
+            f"{_toml_string(ctx.web_http_url)}"
+        ),
+        "-c", (
+            "mcp_servers.mpac-coding.env.MPAC_AGENT_TOKEN="
+            f"{_toml_string(ctx.agent_token)}"
+        ),
+        "-c", (
+            "mcp_servers.mpac-coding.env.MPAC_PROJECT_ID="
+            f"{_toml_string(str(ctx.project_id))}"
+        ),
+    ]
+
+
+def _codex_workspace_dir(ctx: RelayContext) -> str:
+    """Stable scratch cwd so ``codex exec resume --last`` is relay-local.
+
+    ``resume --last`` filters by cwd unless ``--all`` is passed. Hashing the
+    agent token gives each relay process a distinct cwd without leaking the
+    bearer into a filesystem path.
+    """
+    token_hash = hashlib.sha256(ctx.agent_token.encode("utf-8")).hexdigest()[:12]
+    return os.path.join(
+        tempfile.gettempdir(),
+        "mpac-codex-relay",
+        f"project-{ctx.project_id}-{token_hash}",
+    )
+
+
+def _ensure_codex_workspace(ctx: RelayContext) -> str:
+    workspace = _codex_workspace_dir(ctx)
+    os.makedirs(workspace, exist_ok=True)
+    agents_path = os.path.join(workspace, "AGENTS.md")
+    content = (
+        "# MPAC Relay Instructions\n\n"
+        f"{_SYSTEM_PROMPT}\n\n"
+        "## Codex Runtime Notes\n\n"
+        "- This directory is relay scratch space, not the MPAC project.\n"
+        "- Use the `mpac-coding` MCP tools for project files and intents.\n"
+        "- Do not create, edit, or inspect local files to answer project-file questions.\n"
+    )
+    try:
+        with open(agents_path, "r", encoding="utf-8") as existing:
+            if existing.read() == content:
+                return workspace
+    except FileNotFoundError:
+        pass
+    with open(agents_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return workspace
+
+
+def _codex_prompt(message: str) -> str:
+    return (
+        "MPAC chat message from the user. Follow AGENTS.md and use only "
+        "the mpac-coding MCP server for shared project files.\n\n"
+        f"{message}"
+    )
+
+
+def _read_text_if_exists(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
+
+
 async def _withdraw_orphan_intents(
     ctx: "RelayContext", reason: str
 ) -> list[str]:
@@ -396,6 +523,7 @@ async def _withdraw_orphan_intents(
 
 _chat_lock: Optional[asyncio.Lock] = None
 _session_id: Optional[str] = None
+_codex_has_session: bool = False
 
 
 def _get_chat_lock() -> asyncio.Lock:
@@ -416,21 +544,24 @@ async def _drop_session_for_reset() -> None:
     writes its session_id) before we clear; otherwise that write races
     our clear and we re-resume the very session we just abandoned.
     """
-    global _session_id
+    global _session_id, _codex_has_session
     async with _get_chat_lock():
         if _session_id is not None:
             log.info("reset_to_seed: dropping session %s; next turn fresh",
                      _session_id)
             _session_id = None
+        if _codex_has_session:
+            log.info("reset_to_seed: dropping Codex resume marker; next turn fresh")
+            _codex_has_session = False
 
 
 async def handle_chat(ctx: RelayContext, message: str) -> str:
-    """Spawn `claude -p` with MCP_CONNECTION_BLOCKING=1 + the mpac-coding
-    MCP server and return its stdout.
+    """Spawn the configured local agent runner with the mpac-coding MCP
+    server and return its final reply.
 
-    Resumes the per-relay session if one exists, so Claude has full
-    memory of prior turns (intent_ids, file edits, reasoning). First call
-    starts a fresh session; subsequent calls add `--resume <id>`.
+    Resumes the per-relay session if one exists, so the runner has memory
+    of prior turns (intent_ids, file edits, reasoning). First call starts a
+    fresh session; subsequent calls resume the runner-specific session.
 
     Errors are caught and returned as a user-facing message so the web app
     chat always gets SOMETHING back — surfacing relay failures in-line is
@@ -441,7 +572,18 @@ async def handle_chat(ctx: RelayContext, message: str) -> str:
 
 
 async def _handle_chat_locked(ctx: RelayContext, message: str) -> str:
+    if ctx.agent_runner == "codex":
+        return await _handle_codex_chat_locked(ctx, message)
+    return await _handle_claude_chat_locked(ctx, message)
+
+
+async def _handle_claude_chat_locked(ctx: RelayContext, message: str) -> str:
     global _session_id
+    if not ctx.claude_binary:
+        return (
+            "[relay] `claude` CLI not configured. "
+            "Pass --claude-binary or use --agent-runner codex."
+        )
     env = os.environ.copy()
     env["MCP_CONNECTION_BLOCKING"] = "1"
     # Neutralize any API keys that might be hanging around — we explicitly
@@ -604,6 +746,137 @@ async def _handle_chat_locked(ctx: RelayContext, message: str) -> str:
                 pass
 
 
+async def _handle_codex_chat_locked(ctx: RelayContext, message: str) -> str:
+    global _codex_has_session
+    if not ctx.codex_binary:
+        return (
+            "[relay] `codex` CLI not configured. "
+            "Install Codex CLI or pass --codex-binary."
+        )
+
+    env = os.environ.copy()
+    env["MCP_CONNECTION_BLOCKING"] = "1"
+    # Prefer the user's Codex / ChatGPT subscription login over an API key
+    # that might be present in a shell profile.
+    env.pop("OPENAI_API_KEY", None)
+
+    reply_fd, reply_path = tempfile.mkstemp(
+        prefix="mpac-codex-reply-", suffix=".txt"
+    )
+    os.close(reply_fd)
+    try:
+        workspace = _ensure_codex_workspace(ctx)
+        if _codex_has_session:
+            argv = [
+                ctx.codex_binary, "exec", "resume",
+                "--last",
+                "--json",
+                "--output-last-message", reply_path,
+                "--skip-git-repo-check",
+            ]
+        else:
+            argv = [
+                ctx.codex_binary, "exec",
+                "--json",
+                "--output-last-message", reply_path,
+                "--skip-git-repo-check",
+            ]
+        if ctx.codex_require_approval:
+            if not _codex_has_session:
+                argv.extend(["--sandbox", ctx.codex_sandbox])
+        else:
+            # Non-interactive `codex exec` cancels MCP tool calls that need
+            # approval. A relay has no terminal human to click "allow", so
+            # mirror Claude's `--dangerously-skip-permissions`: auto-approve
+            # the turn, with safety scoped by a scratch cwd and the project-
+            # scoped MPAC bearer token injected into the MCP server.
+            argv.append("--dangerously-bypass-approvals-and-sandbox")
+        if ctx.codex_model:
+            argv.extend(["--model", ctx.codex_model])
+        argv.extend(_codex_mcp_config_overrides(ctx))
+        argv.append("-")
+
+        log.info(
+            "Spawning codex exec (msg len=%d, cwd=%s, resume=%s)",
+            len(message), workspace, _codex_has_session,
+        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+                cwd=workspace,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(
+                        input=_codex_prompt(message).encode("utf-8"),
+                    ),
+                    timeout=CLAUDE_TIMEOUT_SEC,
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                cleaned = await _withdraw_orphan_intents(ctx, "codex_timeout")
+                if cleaned:
+                    log.info("Cleaned %d orphan intents after Codex timeout: %s",
+                             len(cleaned), cleaned)
+                return f"[relay] Codex timed out after {CLAUDE_TIMEOUT_SEC:.0f}s"
+        except FileNotFoundError:
+            return (
+                "[relay] `codex` CLI not found on PATH. "
+                "Install Codex or pass --codex-binary."
+            )
+        except Exception as e:
+            log.exception("codex exec spawn failed")
+            return f"[relay] Failed to run Codex: {e}"
+
+        err = stderr.decode("utf-8", errors="replace").strip()
+        out = stdout.decode("utf-8", errors="replace").strip()
+        if proc.returncode != 0:
+            log.warning("codex exec exit=%s stderr=%r stdout=%r",
+                        proc.returncode, err[:500], out[:500])
+            cleaned = await _withdraw_orphan_intents(
+                ctx, f"codex_exit_{proc.returncode}",
+            )
+            if cleaned:
+                log.info("Cleaned %d orphan intents after Codex exit %d: %s",
+                         len(cleaned), proc.returncode, cleaned)
+            if err and out:
+                body = f"{err}\n{out}"
+            else:
+                body = err or out or "(no output on stderr or stdout)"
+            hay = (err + " " + out).lower()
+            if "login" in hay or "auth" in hay:
+                return (
+                    "[relay] Codex isn't authenticated on this machine.\n"
+                    "Run `codex login` (or `codex login --device-auth`) "
+                    "in a terminal, then retry.\n\n"
+                    f"Raw error: {body[:400]}"
+                )
+            return f"[relay] Codex failed (exit {proc.returncode}): {body[:400]}"
+
+        _codex_has_session = True
+        reply = _read_text_if_exists(reply_path).rstrip()
+        if reply:
+            log.info("codex exec completed reply_len=%d", len(reply))
+            return reply
+
+        log.warning(
+            "codex exec succeeded but %s was empty; stdout first 500 chars: %r",
+            reply_path, out[:500],
+        )
+        return "[relay] Codex returned no final message."
+    finally:
+        if os.path.exists(reply_path):
+            try:
+                os.unlink(reply_path)
+            except OSError:
+                pass
+
+
 # ── WebSocket loop ──────────────────────────────────────────────────────
 
 def _parse_project_url(url: str) -> tuple[int, str]:
@@ -627,14 +900,33 @@ def _parse_project_url(url: str) -> tuple[int, str]:
 
 
 async def run_relay(args: argparse.Namespace) -> int:
-    claude_binary = args.claude_binary or shutil.which("claude")
-    if not claude_binary:
-        print(
-            "error: could not find `claude` on PATH. "
-            "Install via `npm install -g @anthropic-ai/claude-code` "
-            "or pass --claude-binary.",
-            file=sys.stderr,
-        )
+    claude_binary: Optional[str] = None
+    codex_binary: Optional[str] = None
+    if args.agent_runner == "claude":
+        claude_binary = args.claude_binary or shutil.which("claude")
+        if not claude_binary:
+            print(
+                "error: could not find `claude` on PATH. "
+                "Install via `npm install -g @anthropic-ai/claude-code` "
+                "or pass --claude-binary.",
+                file=sys.stderr,
+            )
+            return 2
+    elif args.agent_runner == "codex":
+        codex_binary = args.codex_binary or shutil.which("codex")
+        mac_app_codex = "/Applications/Codex.app/Contents/Resources/codex"
+        if not codex_binary and os.path.exists(mac_app_codex):
+            codex_binary = mac_app_codex
+        if not codex_binary:
+            print(
+                "error: could not find `codex` on PATH. "
+                "Install Codex CLI, open Codex once, or pass --codex-binary.",
+                file=sys.stderr,
+            )
+            return 2
+    else:
+        print(f"error: unsupported --agent-runner {args.agent_runner!r}",
+              file=sys.stderr)
         return 2
 
     try:
@@ -648,6 +940,11 @@ async def run_relay(args: argparse.Namespace) -> int:
         project_id=project_id,
         web_http_url=web_http_url,
         agent_token=args.token,
+        agent_runner=args.agent_runner,
+        codex_binary=codex_binary,
+        codex_model=args.codex_model,
+        codex_sandbox=args.codex_sandbox,
+        codex_require_approval=args.codex_require_approval,
     )
 
     uri = args.project_url
@@ -698,7 +995,11 @@ async def run_relay(args: argparse.Namespace) -> int:
                     "version": RELAY_VERSION,
                 }))
                 print(f"[relay] Connected to {uri}")
-                print(f"[relay] Claude binary: {ctx.claude_binary}")
+                print(f"[relay] Agent runner: {ctx.agent_runner}")
+                if ctx.agent_runner == "codex":
+                    print(f"[relay] Codex binary: {ctx.codex_binary}")
+                else:
+                    print(f"[relay] Claude binary: {ctx.claude_binary}")
                 print(f"[relay] Waiting for chat messages…")
 
                 async for raw in ws:
@@ -737,13 +1038,13 @@ async def run_relay(args: argparse.Namespace) -> int:
                         log.debug("Server sent unknown type=%r", mtype)
         except websockets.exceptions.InvalidStatusCode as e:
             # 401 from the server usually means the agent token was revoked
-            # (e.g. user clicked "Connect Claude" again and rotated tokens).
+            # (e.g. user clicked "Connect agent" again and rotated tokens).
             # Bail — reconnecting forever with a dead token is wasteful.
             status = getattr(e, 'status_code', None)
             if status in (401, 403):
                 print(
                     f"error: WebSocket handshake rejected ({e}). "
-                    f"Token is invalid or revoked. Click 'Connect Claude' "
+                    f"Token is invalid or revoked. Click 'Connect agent' "
                     f"in the web app to get a fresh command.",
                     file=sys.stderr,
                 )

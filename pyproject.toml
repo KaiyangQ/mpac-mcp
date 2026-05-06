@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mpac-mcp"
-version = "0.2.17"
+version = "0.2.18"
 description = "MCP bridge for MPAC: coordinate coding agents working on the same repository"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -44,7 +44,7 @@ dependencies = [
     # files already overlap an active intent owned by a different
     # principal. The 0.2.12 announce_intent tool surfaces this 409 to
     # Claude so it can call defer_intent instead of retrying blindly.
-    "mpac>=0.2.8",
+    "mpac>=0.2.11",
     # relay_tools uses httpx to talk to the web app's file + intent APIs.
     "httpx>=0.27",
 ]
