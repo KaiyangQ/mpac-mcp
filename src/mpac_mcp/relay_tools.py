@@ -181,6 +181,7 @@ def announce_intent(
     files: list[str],
     objective: str = "editing",
     symbols: list[str] | None = None,
+    intent_semantics: dict | None = None,
 ) -> dict:
     """Announce to the whole session that you're going to modify these files.
     Every browser will see your intent appear in the 'Who's working' panel
@@ -217,14 +218,18 @@ def announce_intent(
 
     3. **REJECTED with race lock** (v0.2.8+):
        ``{"rejected": true, "error_code": "STALE_INTENT", "files": [...],
-          "description": "...", "guidance": "..."}``
+          "description": "...", "guidance": "...",
+          "duplicate_candidate": {... optional ...}}``
        → DO NOT retry the same announce in THIS turn. Call defer_intent(
        files=..., observed_intent_ids=[...]) using the intent_ids you saw
        from check_overlap (or call check_overlap NOW if you didn't
        earlier), then tell the user that the same file is being modified
        by another participant and you've yielded. The user can override
        by saying "proceed anyway / 硬上" — see the v0.2.13 retry rule in
-       the system prompt for what to do then.
+       the system prompt for what to do then. If ``duplicate_candidate`` is
+       present, after the other intent withdraws, re-read the latest file and
+       verify whether your target/postcondition is already satisfied before
+       writing.
 
     ``symbols`` (v0.2.1+, optional): a list of fully-qualified names you
     actually plan to change, e.g. ``["utils.foo", "utils.Cache.get"]``.
@@ -238,11 +243,23 @@ def announce_intent(
     don't know yet or you're touching the file broadly; the server will
     fall back to file-level detection and behaviour is identical to
     v0.2.0.
+
+    ``intent_semantics`` (experimental, optional): structured hint for
+    duplicate-candidate detection, e.g.
+    ``{"action": "add_symbol", "targets": [{"file": "db.py",
+    "symbol": "db.sort_by_recent"}], "postconditions": [{"kind":
+    "behavior", "text": "returns notes sorted by created_at descending"}]}``.
+    If a same-file race is rejected and another active intent has matching
+    semantics, the response includes ``duplicate_candidate``; after that
+    holder withdraws, re-read the file and verify the postcondition before
+    writing.
     """
     pid = _project_id()
     body: dict = {"project_id": pid, "files": files, "objective": objective}
     if symbols:
         body["symbols"] = symbols
+    if intent_semantics:
+        body["intent_semantics"] = intent_semantics
     with _client() as c:
         r = c.post("/api/agent/intents", json=body)
         # v0.2.12: don't raise on 409 — that's the new race-lock signal
@@ -254,7 +271,7 @@ def announce_intent(
                 detail = r.json().get("detail", {})
             except Exception:
                 detail = {}
-            return {
+            out = {
                 "rejected": True,
                 "error_code": detail.get("error_code", "STALE_INTENT"),
                 "intent_id_attempted": detail.get("intent_id_attempted"),
@@ -262,6 +279,9 @@ def announce_intent(
                 "description": detail.get("description", ""),
                 "guidance": detail.get("guidance", ""),
             }
+            if detail.get("duplicate_candidate"):
+                out["duplicate_candidate"] = detail.get("duplicate_candidate")
+            return out
         r.raise_for_status()
         out = r.json()
         # v0.2.14 architecture: server (web-app v0.2.14+) is the single

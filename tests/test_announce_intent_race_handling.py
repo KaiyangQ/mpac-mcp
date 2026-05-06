@@ -94,6 +94,49 @@ def test_announce_intent_returns_dict_on_409_stale_intent():
     assert "defer_intent" in result.get("guidance", "")
 
 
+def test_announce_intent_sends_semantics_and_returns_duplicate_candidate():
+    candidate = {
+        "candidate": True,
+        "confidence": "high",
+        "reason": "same_symbol_and_action",
+        "other_intent_id": "intent-agent-1-existing",
+    }
+    response = _FakeResponse(
+        status_code=409,
+        payload={
+            "detail": {
+                "error_code": "STALE_INTENT",
+                "intent_id_attempted": "intent-agent-2-attempted",
+                "files": ["notes_app/db.py"],
+                "description": "Files ['notes_app/db.py'] are already claimed",
+                "guidance": "Call defer_intent ...",
+                "duplicate_candidate": candidate,
+            }
+        },
+    )
+    p_client, p_pid, fake = _patch_client(response)
+    with p_client, p_pid:
+        result = relay_tools.announce_intent(
+            files=["notes_app/db.py"],
+            objective="add recent sorter",
+            symbols=["notes_app.db.sort_by_recent"],
+            intent_semantics={
+                "action": "add_symbol",
+                "targets": [
+                    {
+                        "file": "notes_app/db.py",
+                        "symbol": "notes_app.db.sort_by_recent",
+                    }
+                ],
+            },
+        )
+
+    _, body, _ = fake.posts[0]
+    assert body["intent_semantics"]["action"] == "add_symbol"
+    assert body["symbols"] == ["notes_app.db.sort_by_recent"]
+    assert result["duplicate_candidate"] == candidate
+
+
 def test_announce_intent_returns_normal_dict_on_2xx():
     """Success path unchanged: returns server JSON verbatim, no
     rejected key (the v0.2.8 conflicts field passes through too)."""
