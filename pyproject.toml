@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mpac-mcp"
-version = "0.2.21"
+version = "0.2.22"
 description = "MCP bridge for MPAC: coordinate coding agents working on the same repository"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -46,7 +46,12 @@ dependencies = [
     # Claude so it can call defer_intent instead of retrying blindly.
     # 0.2.12 adds extensions.depends_on_symbols for future-use dependency
     # warnings (e.g. api.py about to call a new db.py symbol).
-    "mpac>=0.2.12",
+    # 0.2.13 adds INTENT_DEFERRED.payload.category ("queue" |
+    # "duplicate_yield") so siblings can render the chip in the right
+    # flavour. Pre-0.2.13 coordinators ignore the field and treat all
+    # deferrals as the legacy "yielded" framing — the field is purely
+    # additive in protocol terms.
+    "mpac>=0.2.13",
     # relay_tools uses httpx to talk to the web app's file + intent APIs.
     "httpx>=0.27",
 ]

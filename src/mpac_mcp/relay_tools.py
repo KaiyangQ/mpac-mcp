@@ -468,6 +468,7 @@ def defer_intent(
     observed_intent_ids: list[str] | None = None,
     observed_principals: list[str] | None = None,
     ttl_sec: float = 60.0,
+    category: str | None = None,
 ) -> dict:
     """v0.2.9 (mpac-mcp): record that you SAW existing intent(s) on
     ``files`` (e.g. via :func:`check_overlap`) and chose to **yield**
@@ -494,6 +495,17 @@ def defer_intent(
     ``observed_intent_ids`` and ``observed_principals`` come from
     :func:`check_overlap`'s return value or :func:`list_active_intents`.
     Pass them so siblings know which intent you're yielding to.
+
+    ``category`` (v0.2.22+, optional): drives sibling UI rendering.
+    Pass ``"queue"`` (default) when the prior STALE_INTENT or
+    check_overlap response did NOT contain ``duplicate_candidate`` —
+    you and the holder are editing different parts of the same file
+    and the protocol is queueing your write. Sibling UIs show a blue
+    "Queued behind X" chip. Pass ``"duplicate_yield"`` when the prior
+    response DID contain ``duplicate_candidate`` — you may be
+    implementing the same target as the holder. Sibling UIs show a
+    "Yielded — may be doing same target" chip. Older coordinators
+    ignore unknown values and treat them as ``"queue"``.
     """
     pid = _project_id()
     body: dict = {
@@ -506,6 +518,8 @@ def defer_intent(
         body["observed_intent_ids"] = list(observed_intent_ids)
     if observed_principals:
         body["observed_principals"] = list(observed_principals)
+    if category is not None:
+        body["category"] = category
     with _client() as c:
         r = c.post("/api/agent/intents/defer", json=body)
         if r.status_code >= 400:
