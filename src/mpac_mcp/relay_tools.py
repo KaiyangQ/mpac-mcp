@@ -173,9 +173,23 @@ def check_overlap(
     ``duplicate_candidate`` so you can re-read after yielding and avoid
     duplicate work.
 
-    If the list is non-empty, consider:
-      - yielding (don't announce) and suggesting the user wait
-      - or asking the user whether to escalate (both parties try anyway)
+    If the list is non-empty (v0.2.20+ guidance):
+      - **Overlap with ``duplicate_candidate``**: the holder may be
+        implementing the same thing you intend. Best move is to yield
+        via :func:`defer_intent` and re-read after fast-resolve to
+        verify whether your target is already done.
+      - **Overlap WITHOUT ``duplicate_candidate``** (just same file,
+        different parts): you can proceed straight to
+        :func:`announce_intent`. It will return a STALE_INTENT-shaped
+        rejection (race lock); the response handling is "queue, not
+        conflict" — see ``announce_intent`` case 3b. Or skip the
+        announce entirely and yield via :func:`defer_intent`; both end
+        states are equivalent (your edit lands after the holder's).
+      - **Cross-file dependency overlap** (you and holder edit
+        different files but the import graph connects them): server
+        will surface a ``CONFLICT_REPORT`` after announce; just
+        announce normally and follow the ``surface_warning_text``
+        directive in case 2.
     """
     pid = _project_id()
     body: dict[str, Any] = {
@@ -243,16 +257,42 @@ def announce_intent(
        ``{"rejected": true, "error_code": "STALE_INTENT", "files": [...],
           "description": "...", "guidance": "...",
           "duplicate_candidate": {... optional ...}}``
-       → DO NOT retry the same announce in THIS turn. Call defer_intent(
-       files=..., observed_intent_ids=[...]) using the intent_ids you saw
-       from check_overlap (or call check_overlap NOW if you didn't
-       earlier), then tell the user that the same file is being modified
-       by another participant and you've yielded. The user can override
-       by saying "proceed anyway / 硬上" — see the v0.2.13 retry rule in
-       the system prompt for what to do then. If ``duplicate_candidate`` is
-       present, after the other intent withdraws, re-read the latest file and
-       verify whether your target/postcondition is already satisfied before
-       writing.
+
+       Same-file edits are serialized because ``write_project_file``
+       overwrites the entire file (no patch merge). DO NOT retry the
+       same announce in THIS turn. Call ``defer_intent(files=...,
+       observed_intent_ids=[...])`` using the intent_ids you saw from
+       check_overlap (or call check_overlap NOW if you didn't). After
+       defer, branch on whether ``duplicate_candidate`` is present:
+
+       3a. **``duplicate_candidate`` IS present (v0.2.10+):** you and
+           the holder may be implementing the same thing. Tell the user
+           something like *"另一位可能在做同一件事 (<reason>),我等他
+           完成后会先核实再决定写不写"* (or English equivalent). When
+           defer_intent fast-resolves (holder withdrew), **re-read the
+           file** and verify whether your target symbol/postcondition
+           is already satisfied. If yes, DO NOT write a duplicate
+           change — summarise the existing implementation in your
+           reply. If no, write your own change.
+
+       3b. **``duplicate_candidate`` is NOT present (v0.2.20+):** you
+           and the holder are editing DIFFERENT parts of the same
+           file. This is a FIFO queue, not a conflict. Tell the user
+           something like *"另一位也在改 <file> 的不同部分,我等他完成
+           后会自动接着写,不需要你做任何操作"* (or English equivalent).
+           Do NOT prompt the user for "proceed anyway / 硬上" — the
+           coordinator will reject any retry until the holder withdraws
+           regardless. When defer_intent fast-resolves, retry
+           ``announce_intent`` with the SAME parameters (the queue is
+           implicit). Once accepted, read the latest file (which will
+           now contain the holder's edit) and add your change without
+           overwriting theirs.
+
+       The "硬上 / proceed anyway" override only matters when the user
+       genuinely wants to break the FIFO order (e.g. their request is
+       urgent and they accept the risk of overwrite). It does NOT
+       skip the lock — it just makes you re-call announce immediately
+       instead of waiting for fast-resolve.
 
     ``symbols`` (v0.2.1+, optional): a list of fully-qualified names you
     actually plan to change, e.g. ``["utils.foo", "utils.Cache.get"]``.
