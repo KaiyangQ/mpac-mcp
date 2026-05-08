@@ -364,6 +364,45 @@ def test_codex_auth_error_triggers_login_hint():
     assert "Not logged in" in reply
 
 
+def test_codex_timeout_terminates_process_tree_and_withdraws_intents():
+    _reset_session()
+
+    class HangingProc:
+        returncode = None
+
+        async def communicate(self, input=None):
+            await asyncio.sleep(10)
+            return b"", b""
+
+    proc = HangingProc()
+    terminate = AsyncMock()
+    withdraw = AsyncMock(return_value=["intent-1"])
+
+    async def fake_subprocess_exec(*argv, **kwargs):
+        return proc
+
+    with patch(
+        "mpac_mcp.relay.AGENT_TURN_TIMEOUT_SEC", 0.01,
+    ), patch(
+        "mpac_mcp.relay.asyncio.create_subprocess_exec",
+        new=fake_subprocess_exec,
+    ), patch(
+        "mpac_mcp.relay._ensure_codex_workspace",
+        return_value="/tmp/mpac-codex-test-workspace",
+    ), patch(
+        "mpac_mcp.relay._terminate_process_tree",
+        new=terminate,
+    ), patch(
+        "mpac_mcp.relay._withdraw_orphan_intents",
+        new=withdraw,
+    ):
+        reply = asyncio.run(handle_chat(_ctx("codex"), "hi"))
+
+    assert "Codex timed out after" in reply
+    terminate.assert_awaited_once_with(proc, "Codex")
+    withdraw.assert_awaited_once()
+
+
 # ── 2026-04-29: cross-turn session continuity (v0.2.8) ────────────────
 #
 # `--output-format json` makes claude -p emit

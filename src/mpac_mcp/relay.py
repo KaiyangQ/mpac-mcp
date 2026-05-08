@@ -49,7 +49,9 @@ import json
 import logging
 import os
 import re
+import signal
 import shutil
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -58,12 +60,93 @@ from urllib.parse import urlparse
 
 import httpx
 import websockets
+from websockets.exceptions import ConnectionClosed, InvalidStatusCode
+
+try:  # websockets >=14 renamed the handshake exception.
+    from websockets.exceptions import InvalidStatus
+except ImportError:  # pragma: no cover - older websockets
+    InvalidStatus = None  # type: ignore[assignment]
 
 
 log = logging.getLogger("mpac.relay")
 
 RELAY_VERSION = "0.1.0"
-CLAUDE_TIMEOUT_SEC = 180.0  # Milestone B: Claude using MCP tools takes longer
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+AGENT_TURN_TIMEOUT_SEC = _env_float("MPAC_AGENT_TURN_TIMEOUT_SEC", 180.0)
+# Back-compat alias for older tests and downstream imports.
+CLAUDE_TIMEOUT_SEC = AGENT_TURN_TIMEOUT_SEC
+
+
+def _subprocess_group_kwargs() -> dict:
+    """Start agent CLI turns in their own process group when possible."""
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+async def _terminate_process_tree(proc, label: str) -> None:
+    """Terminate the spawned CLI and any children it created."""
+    if getattr(proc, "returncode", None) is not None:
+        return
+
+    try:
+        if os.name == "nt":
+            proc.terminate()
+        else:
+            os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+        return
+    except Exception:
+        log.debug("Failed to terminate %s process group", label, exc_info=True)
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+        return
+    except asyncio.TimeoutError:
+        pass
+    except Exception:
+        log.debug("Failed while waiting for %s termination", label, exc_info=True)
+
+    try:
+        if os.name == "nt":
+            proc.kill()
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+        return
+    except Exception:
+        log.debug("Failed to kill %s process group", label, exc_info=True)
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        log.warning("Timed out waiting for killed %s process", label)
+    except Exception:
+        log.debug("Failed while waiting for killed %s process", label, exc_info=True)
 
 
 # ── Argparse ────────────────────────────────────────────────────────────
@@ -153,8 +236,8 @@ _SYSTEM_PROMPT = (
     "  - list_project_files()\n"
     "  - read_project_file(path)\n"
     "  - write_project_file(path, content)\n"
-    "  - check_overlap(files)\n"
-    "  - announce_intent(files, objective, symbols?, intent_semantics?) → returns intent_id\n"
+    "  - check_overlap(files, objective?, symbols?, depends_on_symbols?, intent_semantics?)\n"
+    "  - announce_intent(files, objective, symbols?, depends_on_symbols?, intent_semantics?) → returns intent_id\n"
     "  - withdraw_intent(intent_id, reason)\n"
     "  - list_my_active_intents()              ← v0.2.7, see below\n"
     "  - withdraw_all_my_intents(reason)       ← v0.2.7, see below\n"
@@ -180,7 +263,9 @@ _SYSTEM_PROMPT = (
     "a fresh project.\n\n"
     "Protocol when editing files:\n"
     "  1. If uncertain what's in the project, call list_project_files first.\n"
-    "  2. BEFORE editing, call check_overlap(files). Each returned entry "
+    "  2. BEFORE editing, call check_overlap(files, objective, symbols?, "
+    "depends_on_symbols?, intent_semantics?) when you can state the work "
+    "structurally; otherwise at least call check_overlap(files). Each returned entry "
     "has a `category` field — `scope_overlap` (same file, almost always "
     "a real conflict) vs `dependency_breakage` (cross-file dependency, "
     "often backward-compatible like adding kwargs or new methods). Treat "
@@ -236,12 +321,23 @@ _SYSTEM_PROMPT = (
     "\n"
     "     * **If check_overlap returns empty:** proceed normally to "
     "step 3.\n"
+    "If a `scope_overlap` entry includes `duplicate_candidate`, mention that "
+    "the other participant may already be doing the same target. After they "
+    "withdraw and before you write, re-read the latest file and verify whether "
+    "your symbol or postcondition is already satisfied; if it is, do NOT write "
+    "a duplicate change.\n"
     "  3. Call announce_intent(files, objective) BEFORE the first write. "
-    "When you can state the work structurally, include `symbols` and "
-    "`intent_semantics` (for example: action='add_symbol', targets=[{file, "
-    "symbol}], postconditions=[{kind, text}]). This lets the coordinator "
-    "flag possible duplicate work after a same-file race without making "
-    "a risky natural-language judgment.\n"
+    "When you can state the work structurally, include `symbols`, "
+    "`depends_on_symbols`, and `intent_semantics`. Use `symbols` for "
+    "symbols you will modify in your files. Use `depends_on_symbols` "
+    "for symbols in OTHER files that your edit will call/use, especially "
+    "future dependencies not visible in the current source yet (for "
+    "example editing api.py to call notes_app.db.sort_by_recent). Use "
+    "`intent_semantics` for duplicate-target hints (for example: "
+    "action='add_symbol', targets=[{file, symbol}], postconditions=[{kind, "
+    "text}]). This lets the coordinator flag possible duplicate work "
+    "after a same-file race without making a risky natural-language "
+    "judgment.\n"
     "Remember the returned intent_id within THIS turn. **Inspect the "
     "response shape — v0.2.8+ announce can come back with race-lock "
     "rejections or same-tick conflict warnings even if your earlier "
@@ -641,15 +737,15 @@ async def _handle_claude_chat_locked(ctx: RelayContext, message: str) -> str:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                **_subprocess_group_kwargs(),
             )
             try:
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(input=message.encode("utf-8")),
-                    timeout=CLAUDE_TIMEOUT_SEC,
+                    timeout=AGENT_TURN_TIMEOUT_SEC,
                 )
             except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
+                await _terminate_process_tree(proc, "Claude Code")
                 # Subprocess died mid-flight; if it had already announced an
                 # intent, the orphan would block siblings on the same files
                 # forever. Cleanup is async to keep the UX response snappy.
@@ -657,7 +753,7 @@ async def _handle_claude_chat_locked(ctx: RelayContext, message: str) -> str:
                 if cleaned:
                     log.info("Cleaned %d orphan intents after timeout: %s",
                              len(cleaned), cleaned)
-                return f"[relay] Claude Code timed out after {CLAUDE_TIMEOUT_SEC:.0f}s"
+                return f"[relay] Claude Code timed out after {AGENT_TURN_TIMEOUT_SEC:.0f}s"
         except FileNotFoundError:
             return (
                 "[relay] `claude` CLI not found on PATH. "
@@ -808,22 +904,22 @@ async def _handle_codex_chat_locked(ctx: RelayContext, message: str) -> str:
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
                 cwd=workspace,
+                **_subprocess_group_kwargs(),
             )
             try:
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(
                         input=_codex_prompt(message).encode("utf-8"),
                     ),
-                    timeout=CLAUDE_TIMEOUT_SEC,
+                    timeout=AGENT_TURN_TIMEOUT_SEC,
                 )
             except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
+                await _terminate_process_tree(proc, "Codex")
                 cleaned = await _withdraw_orphan_intents(ctx, "codex_timeout")
                 if cleaned:
                     log.info("Cleaned %d orphan intents after Codex timeout: %s",
                              len(cleaned), cleaned)
-                return f"[relay] Codex timed out after {CLAUDE_TIMEOUT_SEC:.0f}s"
+                return f"[relay] Codex timed out after {AGENT_TURN_TIMEOUT_SEC:.0f}s"
         except FileNotFoundError:
             return (
                 "[relay] `codex` CLI not found on PATH. "
@@ -972,6 +1068,9 @@ async def run_relay(args: argparse.Namespace) -> int:
         _ws_major = 0
     _ws_header_kwarg = "additional_headers" if _ws_major >= 14 else "extra_headers"
     ws_connect_extra: dict = {_ws_header_kwarg: auth_headers}
+    invalid_status_errors: list[type[BaseException]] = [InvalidStatusCode]
+    if InvalidStatus is not None:
+        invalid_status_errors.append(InvalidStatus)
 
     # Reconnect loop with exponential backoff (capped at 60 s). A production
     # backend restart or a brief network blip should NOT require the user to
@@ -1036,11 +1135,14 @@ async def run_relay(args: argparse.Namespace) -> int:
                         log.debug("Received mpac_envelope: %s", env_type)
                     else:
                         log.debug("Server sent unknown type=%r", mtype)
-        except websockets.exceptions.InvalidStatusCode as e:
+        except tuple(invalid_status_errors) as e:
             # 401 from the server usually means the agent token was revoked
             # (e.g. user clicked "Connect agent" again and rotated tokens).
             # Bail — reconnecting forever with a dead token is wasteful.
             status = getattr(e, 'status_code', None)
+            if status is None:
+                response = getattr(e, "response", None)
+                status = getattr(response, "status_code", None)
             if status in (401, 403):
                 print(
                     f"error: WebSocket handshake rejected ({e}). "
@@ -1051,8 +1153,7 @@ async def run_relay(args: argparse.Namespace) -> int:
                 return 3
             # Other status codes: backoff and retry (maybe backend booting).
             log.warning("WS handshake unexpected status: %s", e)
-        except (websockets.exceptions.ConnectionClosed,
-                ConnectionRefusedError, OSError) as e:
+        except (ConnectionClosed, ConnectionRefusedError, OSError) as e:
             log.info("Disconnected: %s", e)
 
         attempts += 1

@@ -21,7 +21,7 @@ Tools exposed to Claude:
       Create or overwrite a file. Full content required (not a diff). Wakes
       up everyone's browser editor immediately via the web app's WS.
 
-  announce_intent(files, objective)
+  announce_intent(files, objective, symbols, depends_on_symbols, intent_semantics)
       Declare to all session participants that you're about to modify the
       given files. Returns intent_id — you MUST remember it and call
       withdraw_intent when done.
@@ -41,9 +41,11 @@ Tools exposed to Claude:
       to YIELD without announcing. Surfaces a "yield" chip in the UI
       so the user can see your decision.
 
-  check_overlap(files)
+  check_overlap(files, objective?, symbols?, depends_on_symbols?, intent_semantics?)
       BEFORE announce_intent, see whether any other participant has an
       active intent on the same files. Returns a list (empty = clear to go).
+      Same-file overlaps may include duplicate_candidate when you pass
+      objective/symbol hints.
 
 Scope / safety
 --------------
@@ -157,20 +159,40 @@ def write_project_file(path: str, content: str) -> dict:
 # ── Tools: MPAC intents ─────────────────────────────────────────────────
 
 @mcp.tool()
-def check_overlap(files: list[str]) -> dict:
+def check_overlap(
+    files: list[str],
+    objective: str = "editing",
+    symbols: Optional[list[str]] = None,
+    depends_on_symbols: Optional[list[str]] = None,
+    intent_semantics: Optional[dict[str, Any]] = None,
+) -> dict:
     """Before announcing an intent, check if any OTHER participant is
     already working on any of these files. Returns a list of overlapping
-    intents — empty list means you're clear to proceed.
+    intents — empty list means you're clear to proceed. When you pass
+    objective/symbol hints, same-file overlaps can include
+    ``duplicate_candidate`` so you can re-read after yielding and avoid
+    duplicate work.
 
     If the list is non-empty, consider:
       - yielding (don't announce) and suggesting the user wait
       - or asking the user whether to escalate (both parties try anyway)
     """
     pid = _project_id()
+    body: dict[str, Any] = {
+        "project_id": pid,
+        "files": files,
+        "objective": objective,
+    }
+    if symbols:
+        body["symbols"] = symbols
+    if depends_on_symbols:
+        body["depends_on_symbols"] = depends_on_symbols
+    if intent_semantics:
+        body["intent_semantics"] = dict(intent_semantics)
     with _client() as c:
         r = c.post(
             "/api/agent/overlap",
-            json={"project_id": pid, "files": files},
+            json=body,
         )
         r.raise_for_status()
         return r.json()
@@ -181,6 +203,7 @@ def announce_intent(
     files: list[str],
     objective: str = "editing",
     symbols: list[str] | None = None,
+    depends_on_symbols: list[str] | None = None,
     intent_semantics: dict | None = None,
 ) -> dict:
     """Announce to the whole session that you're going to modify these files.
@@ -244,6 +267,13 @@ def announce_intent(
     fall back to file-level detection and behaviour is identical to
     v0.2.0.
 
+    ``depends_on_symbols`` (v0.2.19+, optional): a list of fully-qualified
+    names in OTHER files that this edit plans to call/use, e.g. when
+    editing ``api.py`` to add a handler that calls ``notes_app.db.sort_by_recent``.
+    Use this for future dependencies that are not visible in the current
+    file yet; it lets the coordinator warn if another participant is
+    concurrently adding/changing that symbol.
+
     ``intent_semantics`` (experimental, optional): structured hint for
     duplicate-candidate detection, e.g.
     ``{"action": "add_symbol", "targets": [{"file": "db.py",
@@ -258,6 +288,8 @@ def announce_intent(
     body: dict = {"project_id": pid, "files": files, "objective": objective}
     if symbols:
         body["symbols"] = symbols
+    if depends_on_symbols:
+        body["depends_on_symbols"] = depends_on_symbols
     if intent_semantics:
         body["intent_semantics"] = intent_semantics
     with _client() as c:
