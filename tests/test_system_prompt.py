@@ -28,7 +28,8 @@ from mpac_mcp.relay import _SYSTEM_PROMPT
 def test_prompt_says_defer_intent_is_mandatory_on_scope_overlap():
     # The bare word "MUST" + the tool name in the same sentence is the
     # signal Claude needs to override a user prompt that says "do nothing."
-    assert "you MUST call **defer_intent" in _SYSTEM_PROMPT
+    # v0.2.21 reframe capitalized "You" because of the new sentence start.
+    assert "You MUST call **defer_intent" in _SYSTEM_PROMPT
 
 
 def test_prompt_explicitly_calls_chat_only_yield_a_protocol_violation():
@@ -43,9 +44,12 @@ def test_prompt_disambiguates_do_nothing_from_skip_defer_intent():
     # The exact failure mode from case 4 round 1: user says "什么都不要做"
     # and Claude over-interprets it. The prompt must explicitly carve out
     # defer_intent from "doing."
+    # v0.2.21 reframe: scope_overlap is described as a FIFO queue, not a
+    # yield, so "queueing, not doing" replaces "yielding, not doing." Both
+    # phrasings carry the same protocol meaning (defer_intent is mandatory).
     assert "什么都不要做" in _SYSTEM_PROMPT
     assert "do nothing" in _SYSTEM_PROMPT.lower()
-    assert "defer_intent is part of yielding, not part of doing" in _SYSTEM_PROMPT
+    assert "defer_intent is part of queueing, not doing" in _SYSTEM_PROMPT
 
 
 def test_prompt_says_yield_branch_skips_announce():
@@ -67,10 +71,14 @@ def test_prompt_distinguishes_scope_overlap_from_dependency_breakage():
 
 
 def test_prompt_makes_default_explicit_per_category():
-    # Pin the exact "default YIELD" / "default PROCEED" wording so that a
-    # future prompt rewrite that softens these ("consider yielding",
-    # "you might proceed") gets caught.
-    assert "default YIELD" in _SYSTEM_PROMPT
+    # Pin the exact "default to QUEUE-AND-WAIT" / "default PROCEED"
+    # wording so that a future prompt rewrite that softens these
+    # ("consider queueing", "you might proceed") gets caught.
+    # v0.2.21 reframe: scope_overlap default switched from "YIELD"
+    # (which sounds like give-up) to "QUEUE-AND-WAIT" (FIFO queue,
+    # auto-continue when holder withdraws). The protocol behavior is
+    # identical; only the user-facing description changed.
+    assert "default to QUEUE-AND-WAIT" in _SYSTEM_PROMPT
     assert "default PROCEED" in _SYSTEM_PROMPT
 
 
