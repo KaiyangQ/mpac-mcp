@@ -73,6 +73,65 @@ log = logging.getLogger("mpac.relay")
 RELAY_VERSION = "0.1.0"
 
 
+# v0.2.25 (5-10): self-check for the "I upgraded mpac-mcp but the running
+# relay still serves the old prompt" trap. Python caches imported modules
+# in process memory, so `pip install --upgrade mpac-mcp` while a relay is
+# running does NOT take effect until the process is restarted. We capture
+# the version at startup and compare to the disk-reported version on each
+# chat turn — if they differ, we warn loudly so the user knows to restart.
+def _read_mpac_mcp_version_from_disk() -> str:
+    """Best-effort read of the on-disk mpac-mcp version (dist-info).
+    Returns "?" if unavailable so the warning logic still works."""
+    try:
+        import importlib.metadata as _md
+        return _md.version("mpac-mcp")
+    except Exception:
+        return "?"
+
+
+_STARTUP_MPAC_MCP_VERSION: str = _read_mpac_mcp_version_from_disk()
+_UPGRADE_WARNED: bool = False
+
+
+def _warn_if_mpac_mcp_upgraded_mid_session() -> None:
+    """Sticky one-shot warning. Called from the chat dispatch path so it
+    fires once per actual user-visible turn rather than on a timer."""
+    global _UPGRADE_WARNED
+    if _UPGRADE_WARNED:
+        return
+    current = _read_mpac_mcp_version_from_disk()
+    if current == "?" or current == _STARTUP_MPAC_MCP_VERSION:
+        return
+    log.warning(
+        "**mpac-mcp upgraded mid-relay**: this process loaded version %s "
+        "at startup, but the on-disk install is now %s. Python caches "
+        "imported modules in memory, so the agent is STILL using the old "
+        "system prompt. **Restart this relay process** (Ctrl-C in the "
+        "shell where you launched it, then re-run the same command) to "
+        "pick up the new prompt. Until you restart, the agent's behavior "
+        "won't reflect the upgrade.",
+        _STARTUP_MPAC_MCP_VERSION, current,
+    )
+    _UPGRADE_WARNED = True
+
+
+def _log_startup_version_banner() -> None:
+    """One-line banner at relay startup so the user can grep their log to
+    confirm what version this process is running."""
+    try:
+        from mpac_mcp import __file__ as _pkg_file
+        install_dir = os.path.dirname(os.path.abspath(_pkg_file))
+    except Exception:
+        install_dir = "?"
+    log.info(
+        "mpac-mcp version: %s (installed at %s). NOTE: if you upgrade "
+        "mpac-mcp via pip while this relay is running, restart this "
+        "process to pick up the new system prompt — Python caches "
+        "imported modules in memory.",
+        _STARTUP_MPAC_MCP_VERSION, install_dir,
+    )
+
+
 def _env_float(name: str, default: float) -> float:
     try:
         return float(os.environ.get(name, str(default)))
@@ -743,6 +802,9 @@ async def handle_chat(ctx: RelayContext, message: str) -> str:
 
 
 async def _handle_chat_locked(ctx: RelayContext, message: str) -> str:
+    # v0.2.25: catch the "I upgraded mpac-mcp on disk but this relay
+    # still serves the old system prompt" trap before it confuses the user.
+    _warn_if_mpac_mcp_upgraded_mid_session()
     if ctx.agent_runner == "codex":
         return await _handle_codex_chat_locked(ctx, message)
     return await _handle_claude_chat_locked(ctx, message)
@@ -1261,6 +1323,10 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # v0.2.25: log the version + install path immediately so the user can
+    # always grep their log to confirm what's actually running. Pairs with
+    # the per-turn upgrade-warning in _handle_chat_locked.
+    _log_startup_version_banner()
     # Optional event recorder — see web-app/api/main.py for the same hook.
     # No-op when the package is missing or MPAC_EVENT_LOG is unset.
     #
