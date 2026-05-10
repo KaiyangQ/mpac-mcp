@@ -288,24 +288,29 @@ def test_prompt_v0_2_14_teaches_directive_fields():
 #     "data-loss protocol violation" framing.
 
 
-def test_prompt_v0_2_23_queue_branch_does_not_promise_automatic():
-    # The misleading "automatically continue / no action needed" framing
-    # MUST be gone from both queue branches (scope_overlap and
-    # STALE_INTENT). Replace with the honest "send me any message"
-    # instruction so the user knows they have to re-engage.
+def test_prompt_v0_2_24_queue_branch_uses_friendly_resume_copy():
+    # 0.2.24 reverses 0.2.23's specific "send me 继续" wording now
+    # that the web UI's pendingResume auto-resume is shipped. The
+    # 0.2.23 wording was right when the relay subprocess was the
+    # only resume mechanism, but with auto-resume live in the
+    # browser, telling the user to type 继续 created two-replies
+    # confusion (auto-resume fires AND the first reply asks the
+    # user to act). New copy: future-tense "等他完成后我会接着写"
+    # / "I'll pick this up once they finish, after re-reading the
+    # latest file ..." — truthful in BOTH browser path (auto-resume
+    # is real) and CLI path (user can send any message to re-trigger).
+    assert "等他完成后我会接着写" in _SYSTEM_PROMPT
+    assert "I'll pick this up once they finish" in _SYSTEM_PROMPT
+    # Anti-pattern callout: don't tell users to type a specific
+    # word — that's the friction the web UI was built to remove.
+    assert "Do NOT instruct the user to type a specific message" in _SYSTEM_PROMPT
+    # The pre-0.2.23 lying copy still must NOT come back.
     assert "automatically continue writing my part" not in _SYSTEM_PROMPT
-    assert "No action needed" not in _SYSTEM_PROMPT
-    # The new copy MUST appear in both Chinese and English forms — one
-    # for the codex/claude-cn user prompts, one for English fallbacks.
-    assert "再发任意一句话" in _SYSTEM_PROMPT
-    assert "send me any message after they finish" in _SYSTEM_PROMPT
-    # Anti-pattern callout: explicit "DO NOT promise the user the
-    # write will happen automatically" must be present.
-    assert "DO NOT promise the user the write will happen" in _SYSTEM_PROMPT
-    # Architectural reason exposed to the agent so it understands WHY,
-    # not just blindly follows.
-    assert "turn-bound" in _SYSTEM_PROMPT.lower() \
-        or "subprocess that holds your turn ends" in _SYSTEM_PROMPT
+    # The 0.2.23 transitional copy must be GONE — these were what
+    # caused the 5-10 two-replies confusion.
+    assert "再发任意一句话" not in _SYSTEM_PROMPT
+    assert "send me any message after they finish" not in _SYSTEM_PROMPT
+    assert "DO NOT promise the user the write will happen" not in _SYSTEM_PROMPT
 
 
 def test_prompt_v0_2_23_retry_must_call_read_project_file_again():
