@@ -264,3 +264,60 @@ def test_prompt_v0_2_14_teaches_directive_fields():
     # pre-formed text as-is, not paraphrases.
     assert "COPY `surface_warning_text` verbatim" in _SYSTEM_PROMPT \
         or "copy `surface_warning_text` verbatim" in _SYSTEM_PROMPT.lower()
+
+
+# ── v0.2.23 lessons (queue prompt honesty + retry must re-read) ──────
+#
+# 5-9 two-person test (Alice user=1 Codex + Dave user=4 Claude) surfaced
+# two prompt-following misses that 0.2.21/0.2.22 didn't catch:
+#   * Scenario 2: Alice's chat reply said "我已排在后面…我会自动接着写,不
+#     需要你额外操作". But the codex relay subprocess is turn-bound — it
+#     dies as soon as the chat reply finishes. When Dave withdrew, Alice's
+#     side broadcast INTENT_DEFERRED status=resolved but no one was there
+#     to retry, so Alice's count() never got written. Misleading promise.
+#   * Scenario 6: Alice wrote hello(); Dave then retried his queued
+#     archive_note() write. Dave's codex used a CACHED read of db.py from
+#     before Alice's commit and silently overwrote hello(). Data loss.
+#
+# 0.2.23 fixes (prompt-only):
+#   - queue branches: replace "automatically continue / no action needed"
+#     with explicit "send me any message after they finish (e.g. 继续) and
+#     I'll resume" + DO NOT promise automatic.
+#   - duplicate_yield branches AND post-defer override retry rule: add
+#     "MUST call read_project_file before write_project_file" with the
+#     "data-loss protocol violation" framing.
+
+
+def test_prompt_v0_2_23_queue_branch_does_not_promise_automatic():
+    # The misleading "automatically continue / no action needed" framing
+    # MUST be gone from both queue branches (scope_overlap and
+    # STALE_INTENT). Replace with the honest "send me any message"
+    # instruction so the user knows they have to re-engage.
+    assert "automatically continue writing my part" not in _SYSTEM_PROMPT
+    assert "No action needed" not in _SYSTEM_PROMPT
+    # The new copy MUST appear in both Chinese and English forms — one
+    # for the codex/claude-cn user prompts, one for English fallbacks.
+    assert "再发任意一句话" in _SYSTEM_PROMPT
+    assert "send me any message after they finish" in _SYSTEM_PROMPT
+    # Anti-pattern callout: explicit "DO NOT promise the user the
+    # write will happen automatically" must be present.
+    assert "DO NOT promise the user the write will happen" in _SYSTEM_PROMPT
+    # Architectural reason exposed to the agent so it understands WHY,
+    # not just blindly follows.
+    assert "turn-bound" in _SYSTEM_PROMPT.lower() \
+        or "subprocess that holds your turn ends" in _SYSTEM_PROMPT
+
+
+def test_prompt_v0_2_23_retry_must_call_read_project_file_again():
+    # The hard rule that prevents silent overwrite. If a future prompt
+    # rewrite softens the MUST or drops the data-loss framing, this
+    # test fails so we re-add it.
+    assert "MUST call read_project_file" in _SYSTEM_PROMPT
+    # Anti-pattern callout: "Do NOT use cached file content from your
+    # earlier read" must be present so Claude/codex doesn't trust the
+    # in-context cached copy.
+    assert "Do NOT use cached file content" in _SYSTEM_PROMPT
+    # Severity framing — without this, codex weighs the cost of an
+    # extra read against "I think nothing changed" and skips it.
+    assert "data-loss protocol violation" in _SYSTEM_PROMPT
+    assert "most severe failure mode" in _SYSTEM_PROMPT
